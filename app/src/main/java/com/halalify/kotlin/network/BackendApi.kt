@@ -221,7 +221,7 @@ private suspend fun pollCleanAudioUrl(
                 else -> error("Unknown chunk status '$status': ${body.take(1200)}")
             }
         }
-        delay(if (attempt < 5) 1_000L else 2_000L)
+        delay(3_000L)
     }
     error("Timed out waiting for backend clean audio.")
 }

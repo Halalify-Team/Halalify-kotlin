@@ -1,10 +1,13 @@
 package com.halalify.kotlin.ui
 
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -58,20 +61,43 @@ internal fun ChunkPlaylistPlayer(
         }
     }
 
+    var lastPlayedPath by remember { mutableStateOf("") }
+
     LaunchedEffect(filePaths) {
+        if (filePaths.isEmpty()) return@LaunchedEffect
         val mediaItems = filePaths.map { path -> MediaItem.fromUri(Uri.fromFile(File(path))) }
+        val newPath = filePaths.first()
+        val isSinglePathChanged = filePaths.size == 1 && lastPlayedPath.isNotEmpty() && lastPlayedPath != newPath
+
         when {
+            player.mediaItemCount == 0 -> {
+                player.setMediaItems(mediaItems)
+                player.prepare()
+            }
+            isSinglePathChanged -> {
+                val currentPosition = player.currentPosition
+                val isPlaying = player.playWhenReady
+                player.setMediaItems(mediaItems, 0, currentPosition)
+                player.prepare()
+                player.playWhenReady = isPlaying
+            }
             mediaItems.size < player.mediaItemCount -> {
                 player.setMediaItems(mediaItems, player.currentMediaItemIndex, player.currentPosition)
                 player.prepare()
             }
             mediaItems.size > player.mediaItemCount -> {
-                player.addMediaItems(mediaItems.drop(player.mediaItemCount))
+                val oldSize = player.mediaItemCount
+                player.addMediaItems(mediaItems.drop(oldSize))
                 if (player.playbackState == Player.STATE_IDLE) {
                     player.prepare()
+                } else if (player.playbackState == Player.STATE_ENDED) {
+                    player.seekTo(oldSize, 0L)
+                    player.prepare()
+                    player.play()
                 }
             }
         }
+        lastPlayedPath = newPath
         player.playWhenReady = true
     }
 

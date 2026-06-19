@@ -1,7 +1,12 @@
 package com.halalify.kotlin.viewmodel
 
 import androidx.activity.ComponentActivity
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.ContentValues
+import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.media.CHUNK_DURATION_SECONDS
 import com.halalify.kotlin.media.calculateChunkCount
@@ -12,13 +17,19 @@ import com.halalify.kotlin.media.fetchVideoMetadata
 import com.halalify.kotlin.media.validateYoutubeUrl
 import com.halalify.kotlin.media.concatAudioSegments
 import com.halalify.kotlin.media.muxFullVideoWithCleanAudio
+import com.halalify.kotlin.media.normalizeAudio
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
 import com.halalify.kotlin.model.ProcessingState
+import com.halalify.kotlin.model.LibraryItem
 import com.halalify.kotlin.network.cleanAudioWithBackend
 import com.halalify.kotlin.network.loginWithBackendDevAccount
 import java.io.File
+import java.io.FileInputStream
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +42,213 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-internal class HalalifyViewModel : ViewModel() {
+internal class HalalifyViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val _libraryItems = MutableStateFlow<List<LibraryItem>>(emptyList())
+    val libraryItems: StateFlow<List<LibraryItem>> = _libraryItems.asStateFlow()
+
+    private val _exportStatus = MutableStateFlow<String?>(null)
+    val exportStatus: StateFlow<String?> = _exportStatus.asStateFlow()
+
+    init {
+        loadLibrary()
+    }
+
+    private fun getLibraryFile(): File {
+        return File(getApplication<Application>().filesDir, "library.json")
+    }
+
+    fun loadLibrary() {
+        viewModelScope.launch {
+            try {
+                val file = getLibraryFile()
+                if (!file.exists()) {
+                    _libraryItems.value = emptyList()
+                    return@launch
+                }
+                val jsonStr = file.readText()
+                val jsonArray = org.json.JSONArray(jsonStr)
+                val items = mutableListOf<LibraryItem>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    items.add(
+                        LibraryItem(
+                            id = obj.getString("id"),
+                            title = obj.getString("title"),
+                            filePath = obj.getString("filePath"),
+                            originalUrl = obj.getString("originalUrl"),
+                            durationSeconds = obj.getInt("durationSeconds"),
+                            timestamp = obj.getLong("timestamp")
+                        )
+                    )
+                }
+                _libraryItems.value = items.sortedByDescending { it.timestamp }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun saveToLibrary(title: String, filePath: String, originalUrl: String, durationSeconds: Int) {
+        viewModelScope.launch {
+            try {
+                val libraryDir = File(getApplication<Application>().filesDir, "halalify-library")
+                libraryDir.mkdirs()
+                
+                val sourceFile = File(filePath)
+                if (!sourceFile.exists()) return@launch
+                
+                val destFile = File(libraryDir, "lib_${UUID.randomUUID().toString().take(8)}.${sourceFile.extension}")
+                sourceFile.copyTo(destFile, overwrite = true)
+                
+                val item = LibraryItem(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    filePath = destFile.absolutePath,
+                    originalUrl = originalUrl,
+                    durationSeconds = durationSeconds,
+                    timestamp = System.currentTimeMillis()
+                )
+                
+                val currentList = _libraryItems.value.toMutableList()
+                currentList.add(0, item)
+                _libraryItems.value = currentList
+                
+                val jsonArray = org.json.JSONArray()
+                for (it in currentList) {
+                    val obj = org.json.JSONObject()
+                        .put("id", it.id)
+                        .put("title", it.title)
+                        .put("filePath", it.filePath)
+                        .put("originalUrl", it.originalUrl)
+                        .put("durationSeconds", it.durationSeconds)
+                        .put("timestamp", it.timestamp)
+                    jsonArray.put(obj)
+                }
+                
+                getLibraryFile().writeText(jsonArray.toString())
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun deleteFromLibrary(itemId: String) {
+        viewModelScope.launch {
+            try {
+                val currentList = _libraryItems.value.toMutableList()
+                val iterator = currentList.iterator()
+                while (iterator.hasNext()) {
+                    val it = iterator.next()
+                    if (it.id == itemId) {
+                        val file = File(it.filePath)
+                        if (file.exists()) {
+                            file.delete()
+                        }
+                        iterator.remove()
+                    }
+                }
+                _libraryItems.value = currentList
+                
+                val jsonArray = org.json.JSONArray()
+                for (it in currentList) {
+                    val obj = org.json.JSONObject()
+                        .put("id", it.id)
+                        .put("title", it.title)
+                        .put("filePath", it.filePath)
+                        .put("originalUrl", it.originalUrl)
+                        .put("durationSeconds", it.durationSeconds)
+                        .put("timestamp", it.timestamp)
+                    jsonArray.put(obj)
+                }
+                
+                getLibraryFile().writeText(jsonArray.toString())
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun clearExportStatus() {
+        _exportStatus.value = null
+    }
+
+    fun exportToGallery(context: Context, videoPath: String, title: String) {
+        viewModelScope.launch {
+            _exportStatus.value = "Saving to Gallery..."
+            val resultUri = withContext(Dispatchers.IO) {
+                saveVideoToGallery(context, videoPath, title)
+            }
+            if (resultUri != null) {
+                _exportStatus.value = "SUCCESS: Saved to Gallery (Movies/Halalify)!"
+            } else {
+                _exportStatus.value = "FAILED: Could not save video to Gallery."
+            }
+        }
+    }
+
+    private fun saveVideoToGallery(context: Context, videoFilePath: String, title: String): String? {
+        val sourceFile = File(videoFilePath)
+        if (!sourceFile.exists()) return null
+        
+        val resolver = context.contentResolver
+        val cleanTitle = title.replace("[^a-zA-Z0-9]".toRegex(), "_")
+        val fileName = "Halalify_${cleanTitle}_${System.currentTimeMillis()}.mp4"
+        
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Video.Media.TITLE, title)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Halalify")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+        }
+        
+        val collectionUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val itemUri = resolver.insert(collectionUri, contentValues) ?: return null
+        
+        try {
+            resolver.openOutputStream(itemUri).use { outputStream ->
+                if (outputStream == null) return null
+                FileInputStream(sourceFile).use { inputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                contentValues.clear()
+                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                resolver.update(itemUri, contentValues, null, null)
+            }
+            
+            return itemUri.toString()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            try {
+                resolver.delete(itemUri, null, null)
+            } catch (ignored: Exception) {}
+            return null
+        }
+    }
+
+    fun navigateToLibrary() {
+        _screen.value = AppScreen.LIBRARY
+    }
+
+    fun playLibraryItem(item: LibraryItem) {
+        _processing.value = ProcessingState(
+            videoTitle = item.title,
+            totalDurationSeconds = item.durationSeconds,
+            totalChunks = 1,
+            completedChunks = 1,
+            currentPhaseLabel = "Library Playback",
+            isComplete = true,
+            playablePaths = listOf(item.filePath),
+            firstChunkReady = true
+        )
+        _screen.value = AppScreen.RESULT
+    }
 
     private val _screen = MutableStateFlow(AppScreen.INPUT)
     val screen: StateFlow<AppScreen> = _screen.asStateFlow()
@@ -154,92 +371,88 @@ internal class HalalifyViewModel : ViewModel() {
                     }
                 }
 
-                // Phase 4: Clean all audio chunks in parallel (with Semaphore limit of 2)
-                val semaphore = Semaphore(2)
+                // Phase 4: Clean all audio chunks sequentially (ensures Chunk 1 completes first)
                 val cleanAudioChunks = Array<String?>(totalChunks) { null }
 
-                coroutineScope {
-                    repeat(totalChunks) { index ->
-                        launch {
-                            val start = index * CHUNK_DURATION_SECONDS
-                            val duration = (metadata.durationSeconds - start)
-                                .coerceAtMost(CHUNK_DURATION_SECONDS)
-                                .coerceAtLeast(1)
+                for (index in 0 until totalChunks) {
+                    val start = index * CHUNK_DURATION_SECONDS
+                    val duration = (metadata.durationSeconds - start)
+                        .coerceAtMost(CHUNK_DURATION_SECONDS)
+                        .coerceAtLeast(1)
 
-                            val audioChunkPath = audioChunkPaths[index] ?: error("Audio chunk $index not prepared.")
+                    val audioChunkPath = audioChunkPaths[index] ?: error("Audio chunk $index not prepared.")
 
-                            // Clean audio on backend (with concurrency limit)
-                            updateChunk(index, ChunkPhase.CLEANING_BACKEND)
-                            val cleanResult = semaphore.withPermit {
-                                updatePhase("Chunk ${index + 1}/$totalChunks: removing music...")
-                                cleanAudioWithBackend(
-                                    activity = activity,
-                                    inputPath = audioChunkPath,
-                                    backendUrl = baseUrl,
-                                    sessionToken = token,
-                                    chunkIndex = index,
-                                    durationSeconds = duration,
-                                )
+                    // Clean audio on backend (sequentially)
+                    updateChunk(index, ChunkPhase.CLEANING_BACKEND)
+                    updatePhase("Chunk ${index + 1}/$totalChunks: removing music...")
+                    val cleanResult = cleanAudioWithBackend(
+                        activity = activity,
+                        inputPath = audioChunkPath,
+                        backendUrl = baseUrl,
+                        sessionToken = token,
+                        chunkIndex = index,
+                        durationSeconds = duration,
+                    )
+                    val rawCleanPath = cleanResult.path ?: error(cleanResult.message)
+
+                    // Normalize audio to standard WAV to prevent no-sound / container-mismatch issues
+                    updatePhase("Chunk ${index + 1}/$totalChunks: normalizing audio format...")
+                    val normResult = normalizeAudio(activity, rawCleanPath, index)
+                    val cleanPath = normResult.path ?: error("Normalization failed for chunk $index: ${normResult.message}")
+
+                    // Delete raw clean audio file to free up space
+                    File(rawCleanPath).delete()
+
+                    cleanAudioChunks[index] = cleanPath
+                    updateChunk(index, ChunkPhase.DONE)
+
+                    // Mux full video with all contiguous clean audios (must wait for video download to complete!)
+                    val videoResult = videoDownloadDeferred.await()
+                    val videoPath = videoResult.path ?: error(videoResult.message)
+
+                    playUpdateMutex.withLock {
+                        // We only mux items that are contiguous from index 0!
+                        val contiguousCleanAudios = mutableListOf<String>()
+                        for (i in 0 until totalChunks) {
+                            val path = cleanAudioChunks[i]
+                            if (path != null) {
+                                contiguousCleanAudios.add(path)
+                            } else {
+                                break
                             }
-                            val cleanPath = cleanResult.path ?: error(cleanResult.message)
-                            cleanAudioChunks[index] = cleanPath
-                            updateChunk(index, ChunkPhase.DONE)
+                        }
 
-                            // Mux full video with all contiguous clean audios (must wait for video download to complete!)
-                            val videoResult = videoDownloadDeferred.await()
-                            val videoPath = videoResult.path ?: error(videoResult.message)
+                        if (contiguousCleanAudios.isNotEmpty()) {
+                            updatePhase("Muxing playable video (${contiguousCleanAudios.size}/$totalChunks)...")
+                            
+                            // Concat audio segments
+                            val audioConcatResult = concatAudioSegments(activity, contiguousCleanAudios)
+                            val audioConcatPath = audioConcatResult.path ?: error(audioConcatResult.message)
 
-                            playUpdateMutex.withLock {
-                                // We only mux items that are contiguous from index 0!
-                                val contiguousCleanAudios = mutableListOf<String>()
-                                for (i in 0 until totalChunks) {
-                                    val path = cleanAudioChunks[i]
-                                    if (path != null) {
-                                        contiguousCleanAudios.add(path)
-                                    } else {
-                                        break
-                                    }
+                            // Mux full video with clean concatenated audio
+                            val currentDuration = contiguousCleanAudios.size * CHUNK_DURATION_SECONDS
+                            val muxResult = muxFullVideoWithCleanAudio(
+                                activity = activity,
+                                videoPath = videoPath,
+                                cleanAudioPath = audioConcatPath,
+                                durationSeconds = currentDuration.coerceAtMost(metadata.durationSeconds),
+                            )
+                            val muxPath = muxResult.path ?: error(muxResult.message)
+
+                            // Safely delete old playable video files
+                            val playableDir = File(activity.filesDir, "halalify-playable")
+                            playableDir.listFiles()?.forEach { file ->
+                                if (file.absolutePath != muxPath) {
+                                    file.delete()
                                 }
+                            }
 
-                                if (contiguousCleanAudios.isNotEmpty()) {
-                                    updatePhase("Muxing playable video (${contiguousCleanAudios.size}/$totalChunks)...")
-                                    
-                                    // Concat audio segments
-                                    val audioConcatResult = concatAudioSegments(activity, contiguousCleanAudios)
-                                    val audioConcatPath = audioConcatResult.path ?: error(audioConcatResult.message)
-
-                                    // Mux full video with clean concatenated audio
-                                    val currentDuration = contiguousCleanAudios.size * CHUNK_DURATION_SECONDS
-                                    val muxResult = muxFullVideoWithCleanAudio(
-                                        activity = activity,
-                                        videoPath = videoPath,
-                                        cleanAudioPath = audioConcatPath,
-                                        durationSeconds = currentDuration.coerceAtMost(metadata.durationSeconds),
-                                    )
-                                    val muxPath = muxResult.path ?: error(muxResult.message)
-
-                                    // Safely delete old playable video files
-                                    val playableDir = File(activity.filesDir, "halalify-playable")
-                                    playableDir.listFiles()?.forEach { file ->
-                                        if (file.absolutePath != muxPath) {
-                                            file.delete()
-                                        }
-                                    }
-
-                                    _processing.update { state ->
-                                        state.copy(
-                                            completedChunks = cleanAudioChunks.count { it != null },
-                                            playablePaths = listOf(muxPath),
-                                            firstChunkReady = true,
-                                        )
-                                    }
-                                } else {
-                                    _processing.update { state ->
-                                        state.copy(
-                                            completedChunks = cleanAudioChunks.count { it != null },
-                                        )
-                                    }
-                                }
+                            _processing.update { state ->
+                                state.copy(
+                                    completedChunks = cleanAudioChunks.count { it != null },
+                                    playablePaths = listOf(muxPath),
+                                    firstChunkReady = true,
+                                )
                             }
                         }
                     }
@@ -283,6 +496,16 @@ internal class HalalifyViewModel : ViewModel() {
                         isComplete = true,
                         currentPhaseLabel = "Complete!",
                         playablePaths = finalPlayable,
+                    )
+                }
+
+                // Save to app local Library
+                if (finalPlayable.isNotEmpty()) {
+                    saveToLibrary(
+                        title = metadata.title,
+                        filePath = finalPlayable.first(),
+                        originalUrl = url,
+                        durationSeconds = metadata.durationSeconds
                     )
                 }
             } catch (error: Throwable) {

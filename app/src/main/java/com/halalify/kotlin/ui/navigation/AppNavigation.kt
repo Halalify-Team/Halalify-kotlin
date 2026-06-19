@@ -14,6 +14,7 @@ import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
 import com.halalify.kotlin.ui.screens.ProcessingScreen
 import com.halalify.kotlin.ui.screens.ResultScreen
+import com.halalify.kotlin.ui.screens.LibraryScreen
 import com.halalify.kotlin.viewmodel.HalalifyViewModel
 
 @Composable
@@ -28,6 +29,8 @@ internal fun AppNavigation(
     val sessionToken by viewModel.sessionToken.collectAsState()
     val loginStatus by viewModel.loginStatus.collectAsState()
     val isLoggingIn by viewModel.isLoggingIn.collectAsState()
+    val libraryItems by viewModel.libraryItems.collectAsState()
+    val exportStatus by viewModel.exportStatus.collectAsState()
 
     AnimatedContent(
         targetState = currentScreen,
@@ -59,6 +62,7 @@ internal fun AppNavigation(
                 onStartProcessing = { url ->
                     viewModel.startProcessing(activity, url)
                 },
+                onNavigateToLibrary = { viewModel.navigateToLibrary() },
             )
             AppScreen.PROCESSING -> ProcessingScreen(
                 state = processingState,
@@ -67,7 +71,25 @@ internal fun AppNavigation(
             )
             AppScreen.RESULT -> ResultScreen(
                 state = processingState,
+                exportStatus = exportStatus,
+                onSaveToGallery = {
+                    if (processingState.playablePaths.isNotEmpty()) {
+                        viewModel.exportToGallery(activity, processingState.playablePaths.first(), processingState.videoTitle)
+                    }
+                },
+                onClearExportStatus = { viewModel.clearExportStatus() },
                 onHalalifyAnother = { viewModel.resetToInput() },
+            )
+            AppScreen.LIBRARY -> LibraryScreen(
+                libraryItems = libraryItems,
+                exportStatus = exportStatus,
+                onBack = { viewModel.resetToInput() },
+                onPlayItem = { viewModel.playLibraryItem(it) },
+                onDeleteItem = { viewModel.deleteFromLibrary(it) },
+                onSaveToGallery = { item ->
+                    viewModel.exportToGallery(activity, item.filePath, item.title)
+                },
+                onClearExportStatus = { viewModel.clearExportStatus() },
             )
         }
     }

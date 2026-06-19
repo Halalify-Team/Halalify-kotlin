@@ -28,7 +28,18 @@ enum class AppScreen {
     INPUT,
     PROCESSING,
     RESULT,
+    LIBRARY,
 }
+
+data class LibraryItem(
+    val id: String,
+    val title: String,
+    val filePath: String,
+    val originalUrl: String,
+    val durationSeconds: Int,
+    val timestamp: Long
+)
+
 
 enum class ChunkPhase {
     WAITING,

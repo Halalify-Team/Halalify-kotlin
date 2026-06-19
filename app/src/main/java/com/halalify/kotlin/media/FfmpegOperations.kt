@@ -157,6 +157,58 @@ internal suspend fun extractAudioSegment(
     }
 }
 
+internal suspend fun normalizeAudio(
+    activity: ComponentActivity,
+    inputPath: String,
+    chunkIndex: Int,
+): FileResult = withContext(Dispatchers.IO) {
+    try {
+        val source = File(inputPath)
+        if (!source.isFile || source.length() <= 0L) {
+            error("Input audio file is missing or empty: ${source.absolutePath}")
+        }
+
+        val outputDir = File(activity.filesDir, "halalify-audio-normalized")
+        outputDir.mkdirs()
+
+        val outputFile = File(outputDir, "norm_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.wav")
+        val startedAt = System.currentTimeMillis()
+        
+        val command = listOf(
+            "-y",
+            "-i", source.absolutePath,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "44100",
+            "-ac", "2",
+            outputFile.absolutePath,
+        ).joinToString(" ") { it.ffmpegQuote() }
+
+        val session = FFmpegKit.execute(command)
+        val elapsedMs = System.currentTimeMillis() - startedAt
+        val returnCode = session.returnCode
+        if (!ReturnCode.isSuccess(returnCode)) {
+            error(
+                "ffmpeg audio normalization failed. code=${returnCode?.value}\n" +
+                    session.allLogsAsString.takeLast(1000)
+            )
+        }
+        if (!outputFile.isFile || outputFile.length() <= 0L) {
+            error("ffmpeg audio normalization finished but produced no output file.")
+        }
+
+        FileResult(
+            message = "SUCCESS: audio normalized.\npath: ${outputFile.absolutePath}\nelapsed: ${elapsedMs}ms",
+            path = outputFile.absolutePath,
+        )
+    } catch (error: Throwable) {
+        FileResult(
+            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            path = null,
+        )
+    }
+}
+
 internal suspend fun muxVideoWithCleanAudio(
     activity: ComponentActivity,
     videoPath: String?,

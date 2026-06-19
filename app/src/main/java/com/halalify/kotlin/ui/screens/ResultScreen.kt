@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -22,11 +23,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -46,9 +49,20 @@ import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 @Composable
 internal fun ResultScreen(
     state: ProcessingState,
+    exportStatus: String?,
+    onSaveToGallery: () -> Unit,
+    onClearExportStatus: () -> Unit,
     onHalalifyAnother: () -> Unit,
 ) {
     var activeChunkIndex by remember { mutableStateOf(0) }
+    val context = LocalContext.current
+
+    LaunchedEffect(exportStatus) {
+        if (exportStatus != null) {
+            android.widget.Toast.makeText(context, exportStatus, android.widget.Toast.LENGTH_LONG).show()
+            onClearExportStatus()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -135,6 +149,31 @@ internal fun ResultScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (state.isComplete) {
+                Button(
+                    onClick = onSaveToGallery,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = HalalifyTextPrimary,
+                    ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Save,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Save to Gallery",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    )
+                }
+            }
+
             Button(
                 onClick = onHalalifyAnother,
                 modifier = Modifier

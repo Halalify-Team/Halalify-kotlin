@@ -78,6 +78,7 @@ internal fun AppNavigation(
                     }
                 },
                 onClearExportStatus = { viewModel.clearExportStatus() },
+                onBack = { viewModel.navigateBackFromResult() },
                 onHalalifyAnother = { viewModel.resetToInput() },
             )
             AppScreen.LIBRARY -> LibraryScreen(

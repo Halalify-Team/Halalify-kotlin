@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         handleIntent(intent)
+        viewModel.warmUpLocalTools(this)
     }
 
     override fun onNewIntent(intent: Intent) {

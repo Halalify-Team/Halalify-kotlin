@@ -9,6 +9,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+internal const val FIRST_CHUNK_DURATION_SECONDS = 20
 internal const val CHUNK_DURATION_SECONDS = 60
 
 internal suspend fun cutFirstTenSeconds(
@@ -502,4 +503,3 @@ internal suspend fun muxFullVideoWithCleanAudio(
         )
     }
 }
-

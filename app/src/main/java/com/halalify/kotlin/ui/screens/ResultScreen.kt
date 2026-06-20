@@ -1,5 +1,6 @@
 package com.halalify.kotlin.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,10 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
@@ -52,10 +49,19 @@ internal fun ResultScreen(
     exportStatus: String?,
     onSaveToGallery: () -> Unit,
     onClearExportStatus: () -> Unit,
+    onBack: () -> Unit,
     onHalalifyAnother: () -> Unit,
 ) {
-    var activeChunkIndex by remember { mutableStateOf(0) }
     val context = LocalContext.current
+    val readyLabel = if (state.totalChunks > 0) {
+        "Ready ${state.completedChunks} / ${state.totalChunks} chunks"
+    } else {
+        "Preparing preview"
+    }
+
+    BackHandler {
+        onBack()
+    }
 
     LaunchedEffect(exportStatus) {
         if (exportStatus != null) {
@@ -77,7 +83,7 @@ internal fun ResultScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onHalalifyAnother) {
+            IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
@@ -107,7 +113,7 @@ internal fun ResultScreen(
         if (state.playablePaths.isNotEmpty()) {
             ChunkPlaylistPlayer(
                 filePaths = state.playablePaths,
-                onChunkChanged = { activeChunkIndex = it },
+                onChunkChanged = {},
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -125,11 +131,20 @@ internal fun ResultScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Chunk ${activeChunkIndex + 1} / ${state.playablePaths.size}",
+                text = readyLabel,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = HalalifyTextSecondary,
             )
-            if (state.totalDurationSeconds > 0) {
+            if (!state.isComplete && state.currentPhaseLabel.isNotBlank()) {
+                Text(
+                    text = state.currentPhaseLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HalalifyAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            } else if (state.totalDurationSeconds > 0) {
                 val minutes = state.totalDurationSeconds / 60
                 val seconds = state.totalDurationSeconds % 60
                 Text(
@@ -149,6 +164,25 @@ internal fun ResultScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (!state.isComplete) {
+                Button(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = HalalifyTextPrimary,
+                    ),
+                ) {
+                    Text(
+                        text = "Back to progress",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    )
+                }
+            }
+
             if (state.isComplete) {
                 Button(
                     onClick = onSaveToGallery,

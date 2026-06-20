@@ -82,7 +82,8 @@ internal fun ChunkPlaylistPlayer(
                 player.playWhenReady = isPlaying
             }
             mediaItems.size < player.mediaItemCount -> {
-                player.setMediaItems(mediaItems, player.currentMediaItemIndex, player.currentPosition)
+                val safeIndex = player.currentMediaItemIndex.coerceIn(0, mediaItems.lastIndex)
+                player.setMediaItems(mediaItems, safeIndex, player.currentPosition)
                 player.prepare()
             }
             mediaItems.size > player.mediaItemCount -> {

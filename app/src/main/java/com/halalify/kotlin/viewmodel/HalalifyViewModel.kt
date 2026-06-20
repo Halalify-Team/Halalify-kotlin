@@ -9,7 +9,8 @@ import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.media.CHUNK_DURATION_SECONDS
-import com.halalify.kotlin.media.calculateChunkCount
+import com.halalify.kotlin.media.FIRST_CHUNK_DURATION_SECONDS
+import com.halalify.kotlin.media.cutVideoSegment
 import com.halalify.kotlin.media.downloadAudio
 import com.halalify.kotlin.media.downloadVideo
 import com.halalify.kotlin.media.extractAudioSegment
@@ -17,7 +18,9 @@ import com.halalify.kotlin.media.fetchVideoMetadata
 import com.halalify.kotlin.media.validateYoutubeUrl
 import com.halalify.kotlin.media.concatAudioSegments
 import com.halalify.kotlin.media.muxFullVideoWithCleanAudio
+import com.halalify.kotlin.media.muxVideoWithCleanAudio
 import com.halalify.kotlin.media.normalizeAudio
+import com.halalify.kotlin.media.testYtDlpVersion
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
@@ -36,10 +39,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 
 internal class HalalifyViewModel(application: Application) : AndroidViewModel(application) {
@@ -256,7 +262,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _processing = MutableStateFlow(ProcessingState())
     val processing: StateFlow<ProcessingState> = _processing.asStateFlow()
 
-    private val _backendUrl = MutableStateFlow("http://10.0.2.2:3000")
+    private val _backendUrl = MutableStateFlow("http://192.168.8.6:3000")
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
     private val _devEmail = MutableStateFlow("tobegoodman5@gmail.com")
@@ -272,10 +278,21 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     val isLoggingIn: StateFlow<Boolean> = _isLoggingIn.asStateFlow()
 
     private val playUpdateMutex = Mutex()
+    private var processingJob: Job? = null
+    private var warmUpJob: Job? = null
 
     fun updateBackendUrl(url: String) { _backendUrl.value = url }
     fun updateDevEmail(email: String) { _devEmail.value = email }
     fun updateSessionToken(token: String) { _sessionToken.value = token }
+
+    fun warmUpLocalTools(activity: ComponentActivity) {
+        if (warmUpJob?.isActive == true) return
+        warmUpJob = viewModelScope.launch {
+            runCatching {
+                testYtDlpVersion(activity)
+            }
+        }
+    }
 
     fun devLogin() {
         viewModelScope.launch {
@@ -295,9 +312,11 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         val url = youtubeUrl.trim()
         val baseUrl = _backendUrl.value.trim()
 
-        viewModelScope.launch {
+        processingJob?.cancel()
+        processingJob = viewModelScope.launch {
             _screen.value = AppScreen.PROCESSING
             _processing.value = ProcessingState(currentPhaseLabel = "Initializing...")
+            clearPlaybackScratch(activity)
 
             try {
                 validateYoutubeUrl(url)
@@ -323,7 +342,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 // Phase 1: Get metadata
                 updatePhase("Reading video metadata...")
                 val metadata = fetchVideoMetadata(activity, url)
-                val totalChunks = calculateChunkCount(metadata.durationSeconds)
+                val chunkPlans = buildChunkPlans(metadata.durationSeconds)
+                val totalChunks = chunkPlans.size
 
                 val initialChunks = (0 until totalChunks).map { i ->
                     ChunkState(index = i, totalChunks = totalChunks)
@@ -334,132 +354,157 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         totalDurationSeconds = metadata.durationSeconds,
                         totalChunks = totalChunks,
                         chunks = initialChunks,
-                        currentPhaseLabel = "Downloading audio...",
+                        currentPhaseLabel = "Preparing chunk pipeline...",
                     )
                 }
 
-                // Phase 2: Start background video download in parallel
-                val videoDownloadDeferred = async {
-                    downloadVideo(activity, url)
+                var videoDownloadDeferred: Deferred<com.halalify.kotlin.model.DownloadResult>? = null
+                fun startFullVideoDownload(): Deferred<com.halalify.kotlin.model.DownloadResult> {
+                    val existing = videoDownloadDeferred
+                    if (existing != null) return existing
+                    val created = async { downloadVideo(activity, url) }
+                    videoDownloadDeferred = created
+                    return created
                 }
 
-                // Phase 3: Download full audio
-                updatePhase("Downloading audio...")
-                val audio = downloadAudio(activity, url)
-                val sourceAudioPath = audio.path ?: error(audio.message)
+                // Phase 2: Keep the critical path identical to the fast native host:
+                // audio range -> backend -> clean audio. Video work starts only after
+                // clean audio is ready so it never delays the first playable chunk.
+                val cleanAudioChunks = Array<String?>(totalChunks) { null }
+                val videoDownloadSemaphore = Semaphore(1)
+                val backendSemaphore = Semaphore(2)
+                val muxSemaphore = Semaphore(1)
 
-                // Cut all audio chunks locally (instantaneous)
-                updatePhase("Preparing audio chunks...")
-                val audioChunkPaths = Array<String?>(totalChunks) { null }
-                coroutineScope {
-                    repeat(totalChunks) { index ->
-                        launch {
-                            val start = index * CHUNK_DURATION_SECONDS
-                            val duration = (metadata.durationSeconds - start)
-                                .coerceAtMost(CHUNK_DURATION_SECONDS)
-                                .coerceAtLeast(1)
-                            updateChunk(index, ChunkPhase.EXTRACTING_AUDIO)
-                            val extracted = extractAudioSegment(
-                                activity = activity,
-                                inputPath = sourceAudioPath,
-                                startSeconds = start,
-                                durationSeconds = duration,
-                                chunkIndex = index,
-                            )
-                            audioChunkPaths[index] = extracted.path ?: error(extracted.message)
+                supervisorScope {
+                    val sourceAudioDeferred = async {
+                        updatePhase("Downloading source audio...")
+                        downloadAudio(activity, url)
+                    }
+                    startFullVideoDownload()
+
+                    val chunkJobs = chunkPlans.map { plan ->
+                        async {
+                            try {
+                                updateChunk(plan.index, ChunkPhase.EXTRACTING_AUDIO)
+                                updatePhase(
+                                    "Chunk ${plan.index + 1}/$totalChunks: preparing ${plan.durationSeconds}s audio..."
+                                )
+                                val audioChunkPath = run {
+                                    val sourceAudio = sourceAudioDeferred.await()
+                                    val sourceAudioPath = sourceAudio.path ?: error(sourceAudio.message)
+                                    val audioChunk = extractAudioSegment(
+                                        activity = activity,
+                                        inputPath = sourceAudioPath,
+                                        startSeconds = plan.startSeconds,
+                                        durationSeconds = plan.durationSeconds,
+                                        chunkIndex = plan.index,
+                                    )
+                                    audioChunk.path ?: error(audioChunk.message)
+                                }
+
+                                updateChunk(plan.index, ChunkPhase.CLEANING_BACKEND)
+                                updatePhase("Chunk ${plan.index + 1}/$totalChunks: removing music...")
+                                val rawCleanPath = backendSemaphore.withPermit {
+                                    val cleanResult = cleanAudioWithBackend(
+                                        activity = activity,
+                                        inputPath = audioChunkPath,
+                                        backendUrl = baseUrl,
+                                        sessionToken = token,
+                                        chunkIndex = plan.index,
+                                        durationSeconds = plan.durationSeconds,
+                                    )
+                                    cleanResult.path ?: error(cleanResult.message)
+                                }
+                                File(audioChunkPath).delete()
+
+                                updatePhase("Chunk ${plan.index + 1}/$totalChunks: normalizing audio...")
+                                val normResult = normalizeAudio(activity, rawCleanPath, plan.index)
+                                val cleanPath = normResult.path
+                                    ?: error("Normalization failed for chunk ${plan.index + 1}: ${normResult.message}")
+                                File(rawCleanPath).delete()
+
+                                Result.success(
+                                    CleanChunkResult(
+                                        index = plan.index,
+                                        cleanAudioPath = cleanPath,
+                                    )
+                                )
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                updateChunk(plan.index, ChunkPhase.ERROR, error.userFacingMessage())
+                                Result.failure(error)
+                            }
                         }
                     }
-                }
 
-                // Phase 4: Clean all audio chunks sequentially (ensures Chunk 1 completes first)
-                val cleanAudioChunks = Array<String?>(totalChunks) { null }
-
-                for (index in 0 until totalChunks) {
-                    val start = index * CHUNK_DURATION_SECONDS
-                    val duration = (metadata.durationSeconds - start)
-                        .coerceAtMost(CHUNK_DURATION_SECONDS)
-                        .coerceAtLeast(1)
-
-                    val audioChunkPath = audioChunkPaths[index] ?: error("Audio chunk $index not prepared.")
-
-                    // Clean audio on backend (sequentially)
-                    updateChunk(index, ChunkPhase.CLEANING_BACKEND)
-                    updatePhase("Chunk ${index + 1}/$totalChunks: removing music...")
-                    val cleanResult = cleanAudioWithBackend(
-                        activity = activity,
-                        inputPath = audioChunkPath,
-                        backendUrl = baseUrl,
-                        sessionToken = token,
-                        chunkIndex = index,
-                        durationSeconds = duration,
-                    )
-                    val rawCleanPath = cleanResult.path ?: error(cleanResult.message)
-
-                    // Normalize audio to standard WAV to prevent no-sound / container-mismatch issues
-                    updatePhase("Chunk ${index + 1}/$totalChunks: normalizing audio format...")
-                    val normResult = normalizeAudio(activity, rawCleanPath, index)
-                    val cleanPath = normResult.path ?: error("Normalization failed for chunk $index: ${normResult.message}")
-
-                    // Delete raw clean audio file to free up space
-                    File(rawCleanPath).delete()
-
-                    cleanAudioChunks[index] = cleanPath
-                    updateChunk(index, ChunkPhase.DONE)
-
-                    // Mux full video with all contiguous clean audios (must wait for video download to complete!)
-                    val videoResult = videoDownloadDeferred.await()
-                    val videoPath = videoResult.path ?: error(videoResult.message)
-
-                    playUpdateMutex.withLock {
-                        // We only mux items that are contiguous from index 0!
-                        val contiguousCleanAudios = mutableListOf<String>()
-                        for (i in 0 until totalChunks) {
-                            val path = cleanAudioChunks[i]
-                            if (path != null) {
-                                contiguousCleanAudios.add(path)
-                            } else {
-                                break
-                            }
+                    val playableSegments = mutableListOf<String>()
+                    for (index in 0 until totalChunks) {
+                        val result = chunkJobs[index].await().getOrElse { error ->
+                            updateChunk(index, ChunkPhase.ERROR, error.userFacingMessage())
+                            error("Chunk ${index + 1}/$totalChunks failed: ${error.userFacingMessage()}")
                         }
+                        cleanAudioChunks[index] = result.cleanAudioPath
+                        val plan = chunkPlans[index]
 
-                        if (contiguousCleanAudios.isNotEmpty()) {
-                            updatePhase("Muxing playable video (${contiguousCleanAudios.size}/$totalChunks)...")
-                            
-                            // Concat audio segments
-                            val audioConcatResult = concatAudioSegments(activity, contiguousCleanAudios)
-                            val audioConcatPath = audioConcatResult.path ?: error(audioConcatResult.message)
-
-                            // Mux full video with clean concatenated audio
-                            val currentDuration = contiguousCleanAudios.size * CHUNK_DURATION_SECONDS
-                            val muxResult = muxFullVideoWithCleanAudio(
-                                activity = activity,
-                                videoPath = videoPath,
-                                cleanAudioPath = audioConcatPath,
-                                durationSeconds = currentDuration.coerceAtMost(metadata.durationSeconds),
-                            )
-                            val muxPath = muxResult.path ?: error(muxResult.message)
-
-                            // Safely delete old playable video files
-                            val playableDir = File(activity.filesDir, "halalify-playable")
-                            playableDir.listFiles()?.forEach { file ->
-                                if (file.absolutePath != muxPath) {
-                                    file.delete()
+                        updateChunk(index, ChunkPhase.MUXING)
+                        updatePhase("Chunk ${index + 1}/$totalChunks: preparing video preview...")
+                        val playablePath = try {
+                            videoDownloadSemaphore.withPermit {
+                                val fullVideo = startFullVideoDownload().await()
+                                val fullVideoPath = fullVideo.path ?: error(fullVideo.message)
+                                val videoChunk = cutVideoSegment(
+                                    activity = activity,
+                                    inputPath = fullVideoPath,
+                                    startSeconds = plan.startSeconds,
+                                    durationSeconds = plan.durationSeconds,
+                                    chunkIndex = plan.index,
+                                )
+                                val videoSegmentPath = videoChunk.path ?: error(videoChunk.message)
+                                try {
+                                    muxSemaphore.withPermit {
+                                        val muxResult = muxVideoWithCleanAudio(
+                                            activity = activity,
+                                            videoPath = videoSegmentPath,
+                                            cleanAudioPath = result.cleanAudioPath,
+                                            durationSeconds = plan.durationSeconds,
+                                        )
+                                        muxResult.path ?: error(muxResult.message)
+                                    }
+                                } finally {
+                                    File(videoSegmentPath).delete()
                                 }
                             }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            updateChunk(index, ChunkPhase.ERROR, error.userFacingMessage())
+                            error("Chunk ${index + 1}/$totalChunks preview failed: ${error.userFacingMessage()}")
+                        }
 
-                            _processing.update { state ->
-                                state.copy(
-                                    completedChunks = cleanAudioChunks.count { it != null },
-                                    playablePaths = listOf(muxPath),
-                                    firstChunkReady = true,
-                                )
-                            }
+                        playableSegments += playablePath
+                        updateChunk(index, ChunkPhase.DONE)
+                        _processing.update { state ->
+                            state.copy(
+                                completedChunks = index + 1,
+                                playablePaths = playableSegments.toList(),
+                                firstChunkReady = true,
+                                currentPhaseLabel = if (index == 0) {
+                                    "Ready to watch. Processing continues..."
+                                } else {
+                                    "Ready ${index + 1}/$totalChunks chunks"
+                                },
+                            )
+                        }
+                        if (index == 0) {
+                            updatePhase("Ready to watch. Downloading the full video in background...")
+                            startFullVideoDownload()
                         }
                     }
                 }
 
                 // All done - finalize video
-                val videoResult = videoDownloadDeferred.await()
+                val videoResult = startFullVideoDownload().await()
                 val videoPath = videoResult.path ?: error(videoResult.message)
                 val finalCleanAudios = cleanAudioChunks.filterNotNull()
 
@@ -476,14 +521,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             durationSeconds = metadata.durationSeconds,
                         )
                         val muxPath = muxResult.path ?: error(muxResult.message)
-
-                        // Safely delete older playable video files
-                        val playableDir = File(activity.filesDir, "halalify-playable")
-                        playableDir.listFiles()?.forEach { file ->
-                            if (file.absolutePath != muxPath) {
-                                file.delete()
-                            }
-                        }
 
                         listOf(muxPath)
                     } else {
@@ -508,10 +545,12 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         durationSeconds = metadata.durationSeconds
                     )
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 _processing.update {
                     it.copy(
-                        errorMessage = "${error.javaClass.simpleName}: ${error.message}",
+                        errorMessage = error.userFacingMessage(),
                         currentPhaseLabel = "Failed",
                     )
                 }
@@ -525,7 +564,17 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         _screen.value = AppScreen.RESULT
     }
 
+    fun navigateBackFromResult() {
+        _screen.value = if (_processing.value.isComplete) {
+            AppScreen.INPUT
+        } else {
+            AppScreen.PROCESSING
+        }
+    }
+
     fun resetToInput() {
+        processingJob?.cancel()
+        processingJob = null
         _screen.value = AppScreen.INPUT
         _processing.value = ProcessingState()
     }
@@ -546,4 +595,67 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             state.copy(chunks = updatedChunks)
         }
     }
+
+    private fun clearPlaybackScratch(activity: ComponentActivity) {
+        listOf(
+            "halalify-playable",
+            "halalify-mux-test",
+            "halalify-video-preview-download",
+        ).forEach { dirName ->
+            File(activity.filesDir, dirName).listFiles()?.forEach { file ->
+                file.delete()
+            }
+        }
+    }
+
+    private fun buildChunkPlans(durationSeconds: Int): List<ChunkPlan> {
+        val totalDuration = durationSeconds.coerceAtLeast(1)
+        val plans = mutableListOf<ChunkPlan>()
+        var start = 0
+        var index = 0
+
+        val firstDuration = totalDuration.coerceAtMost(FIRST_CHUNK_DURATION_SECONDS).coerceAtLeast(1)
+        plans += ChunkPlan(
+            index = index,
+            startSeconds = start,
+            durationSeconds = firstDuration,
+        )
+        start += firstDuration
+        index += 1
+
+        while (start < totalDuration) {
+            val duration = (totalDuration - start).coerceAtMost(CHUNK_DURATION_SECONDS).coerceAtLeast(1)
+            plans += ChunkPlan(
+                index = index,
+                startSeconds = start,
+                durationSeconds = duration,
+            )
+            start += duration
+            index += 1
+        }
+
+        return plans
+    }
+}
+
+private data class ChunkPlan(
+    val index: Int,
+    val startSeconds: Int,
+    val durationSeconds: Int,
+)
+
+private data class CleanChunkResult(
+    val index: Int,
+    val cleanAudioPath: String,
+)
+
+private fun Throwable.userFacingMessage(): String {
+    val rawMessage = message
+        ?.lineSequence()
+        ?.filter { it.isNotBlank() }
+        ?.take(12)
+        ?.joinToString("\n")
+        ?.ifBlank { null }
+        ?: javaClass.simpleName
+    return "${javaClass.simpleName}: $rawMessage".take(1800)
 }

@@ -305,7 +305,7 @@ private fun ChunkRow(chunk: ChunkState) {
 private fun ChunkPhase.displayLabel(): String = when (this) {
     ChunkPhase.WAITING -> "Waiting..."
     ChunkPhase.CUTTING_VIDEO -> "Cutting video"
-    ChunkPhase.EXTRACTING_AUDIO -> "Extracting audio"
+    ChunkPhase.EXTRACTING_AUDIO -> "Downloading audio"
     ChunkPhase.CLEANING_BACKEND -> "Removing music"
     ChunkPhase.MUXING -> "Merging"
     ChunkPhase.DONE -> "Ready ✓"

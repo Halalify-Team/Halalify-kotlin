@@ -153,7 +153,14 @@ private fun uploadAudioChunk(
     chunkIndex: Int,
     durationSeconds: Int,
 ): UploadStart {
-    val audioType = "audio/mp4".toMediaType()
+    val audioType = when (source.extension.lowercase()) {
+        "m4a", "mp4" -> "audio/mp4"
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "webm" -> "audio/webm"
+        "ogg", "opus" -> "audio/ogg"
+        else -> "application/octet-stream"
+    }.toMediaType()
     val multipart = MultipartBody.Builder()
         .setType(MultipartBody.FORM)
         .addFormDataPart(

@@ -14,10 +14,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
     }
 
     compileOptions {
@@ -33,6 +29,19 @@ android {
         jniLibs {
             useLegacyPackaging = true
         }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
+        }
+    }
+
+    lint {
+        disable += "NullSafeMutableLiveData"
     }
 }
 
@@ -52,6 +61,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.7.1")
     implementation("io.github.maxrave-dev:ffmpeg-kit-audio:6.0.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

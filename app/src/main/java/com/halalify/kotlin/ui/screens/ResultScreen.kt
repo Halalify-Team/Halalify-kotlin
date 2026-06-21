@@ -17,14 +17,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
@@ -53,6 +59,18 @@ internal fun ResultScreen(
     onHalalifyAnother: () -> Unit,
 ) {
     val context = LocalContext.current
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    val shouldWarnBeforeLeaving = state.isComplete &&
+        !state.isSavedToGallery &&
+        !state.isLibraryPlayback &&
+        state.playablePaths.isNotEmpty()
+    fun requestLeave() {
+        if (shouldWarnBeforeLeaving) {
+            showDiscardDialog = true
+        } else {
+            onBack()
+        }
+    }
     val readyLabel = if (state.totalChunks > 0) {
         "Ready ${state.completedChunks} / ${state.totalChunks} chunks"
     } else {
@@ -60,7 +78,7 @@ internal fun ResultScreen(
     }
 
     BackHandler {
-        onBack()
+        requestLeave()
     }
 
     LaunchedEffect(exportStatus) {
@@ -83,7 +101,7 @@ internal fun ResultScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = ::requestLeave) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
@@ -209,7 +227,13 @@ internal fun ResultScreen(
             }
 
             Button(
-                onClick = onHalalifyAnother,
+                onClick = {
+                    if (shouldWarnBeforeLeaving) {
+                        showDiscardDialog = true
+                    } else {
+                        onHalalifyAnother()
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
@@ -231,5 +255,36 @@ internal fun ResultScreen(
                 )
             }
         }
+    }
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text(text = "Discard unsaved video?") },
+            text = {
+                Text(
+                    text = "This halalified video has not been saved to your gallery. If you leave now, the temporary file will be deleted from this device.",
+                    color = HalalifyTextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardDialog = false
+                        onBack()
+                    },
+                ) {
+                    Text(text = "Discard")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardDialog = false }) {
+                    Text(text = "Stay")
+                }
+            },
+            containerColor = HalalifyDarkCard,
+            titleContentColor = HalalifyTextPrimary,
+            textContentColor = HalalifyTextSecondary,
+        )
     }
 }

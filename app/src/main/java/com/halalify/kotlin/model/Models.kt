@@ -60,12 +60,15 @@ data class ChunkState(
 
 data class ProcessingState(
     val videoTitle: String = "",
+    val originalUrl: String = "",
     val totalDurationSeconds: Int = 0,
     val totalChunks: Int = 0,
     val chunks: List<ChunkState> = emptyList(),
     val completedChunks: Int = 0,
     val currentPhaseLabel: String = "Preparing...",
     val isComplete: Boolean = false,
+    val isSavedToGallery: Boolean = false,
+    val isLibraryPlayback: Boolean = false,
     val errorMessage: String? = null,
     val playablePaths: List<String> = emptyList(),
     val firstChunkReady: Boolean = false,

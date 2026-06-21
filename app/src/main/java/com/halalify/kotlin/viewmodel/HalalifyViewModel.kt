@@ -57,6 +57,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     val exportStatus: StateFlow<String?> = _exportStatus.asStateFlow()
 
     init {
+        cleanupAbandonedTemporaryFiles()
         loadLibrary()
     }
 
@@ -98,45 +99,54 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     fun saveToLibrary(title: String, filePath: String, originalUrl: String, durationSeconds: Int) {
         viewModelScope.launch {
             try {
-                val libraryDir = File(getApplication<Application>().filesDir, "halalify-library")
-                libraryDir.mkdirs()
-                
-                val sourceFile = File(filePath)
-                if (!sourceFile.exists()) return@launch
-                
-                val destFile = File(libraryDir, "lib_${UUID.randomUUID().toString().take(8)}.${sourceFile.extension}")
-                sourceFile.copyTo(destFile, overwrite = true)
-                
-                val item = LibraryItem(
-                    id = UUID.randomUUID().toString(),
-                    title = title,
-                    filePath = destFile.absolutePath,
-                    originalUrl = originalUrl,
-                    durationSeconds = durationSeconds,
-                    timestamp = System.currentTimeMillis()
-                )
-                
-                val currentList = _libraryItems.value.toMutableList()
-                currentList.add(0, item)
-                _libraryItems.value = currentList
-                
-                val jsonArray = org.json.JSONArray()
-                for (it in currentList) {
-                    val obj = org.json.JSONObject()
-                        .put("id", it.id)
-                        .put("title", it.title)
-                        .put("filePath", it.filePath)
-                        .put("originalUrl", it.originalUrl)
-                        .put("durationSeconds", it.durationSeconds)
-                        .put("timestamp", it.timestamp)
-                    jsonArray.put(obj)
-                }
-                
-                getLibraryFile().writeText(jsonArray.toString())
+                saveToLibraryInternal(title, filePath, originalUrl, durationSeconds)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+    }
+
+    private suspend fun saveToLibraryInternal(
+        title: String,
+        filePath: String,
+        originalUrl: String,
+        durationSeconds: Int,
+    ) = withContext(Dispatchers.IO) {
+        val libraryDir = File(getApplication<Application>().filesDir, "halalify-library")
+        libraryDir.mkdirs()
+
+        val sourceFile = File(filePath)
+        if (!sourceFile.exists()) return@withContext
+
+        val destFile = File(libraryDir, "lib_${UUID.randomUUID().toString().take(8)}.${sourceFile.extension}")
+        sourceFile.copyTo(destFile, overwrite = true)
+
+        val item = LibraryItem(
+            id = UUID.randomUUID().toString(),
+            title = title,
+            filePath = destFile.absolutePath,
+            originalUrl = originalUrl,
+            durationSeconds = durationSeconds,
+            timestamp = System.currentTimeMillis()
+        )
+
+        val currentList = _libraryItems.value.toMutableList()
+        currentList.add(0, item)
+
+        val jsonArray = org.json.JSONArray()
+        for (it in currentList) {
+            val obj = org.json.JSONObject()
+                .put("id", it.id)
+                .put("title", it.title)
+                .put("filePath", it.filePath)
+                .put("originalUrl", it.originalUrl)
+                .put("durationSeconds", it.durationSeconds)
+                .put("timestamp", it.timestamp)
+            jsonArray.put(obj)
+        }
+
+        getLibraryFile().writeText(jsonArray.toString())
+        _libraryItems.value = currentList
     }
 
     fun deleteFromLibrary(itemId: String) {
@@ -187,6 +197,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             }
             if (resultUri != null) {
                 _exportStatus.value = "SUCCESS: Saved to Gallery (Movies/Halalify)!"
+                _processing.update { it.copy(isSavedToGallery = true) }
+                val state = _processing.value
+                if (!state.isLibraryPlayback && state.originalUrl.isNotBlank()) {
+                    saveToLibraryInternal(
+                        title = state.videoTitle.ifBlank { title },
+                        filePath = videoPath,
+                        originalUrl = state.originalUrl,
+                        durationSeconds = state.totalDurationSeconds,
+                    )
+                }
             } else {
                 _exportStatus.value = "FAILED: Could not save video to Gallery."
             }
@@ -250,6 +270,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             completedChunks = 1,
             currentPhaseLabel = "Library Playback",
             isComplete = true,
+            isSavedToGallery = true,
+            isLibraryPlayback = true,
             playablePaths = listOf(item.filePath),
             firstChunkReady = true
         )
@@ -315,7 +337,10 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         processingJob?.cancel()
         processingJob = viewModelScope.launch {
             _screen.value = AppScreen.PROCESSING
-            _processing.value = ProcessingState(currentPhaseLabel = "Initializing...")
+            _processing.value = ProcessingState(
+                originalUrl = url,
+                currentPhaseLabel = "Initializing...",
+            )
             clearPlaybackScratch(activity)
 
             try {
@@ -351,6 +376,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 _processing.update {
                     it.copy(
                         videoTitle = metadata.title,
+                        originalUrl = url,
                         totalDurationSeconds = metadata.durationSeconds,
                         totalChunks = totalChunks,
                         chunks = initialChunks,
@@ -531,18 +557,10 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 _processing.update {
                     it.copy(
                         isComplete = true,
+                        isSavedToGallery = false,
+                        isLibraryPlayback = false,
                         currentPhaseLabel = "Complete!",
                         playablePaths = finalPlayable,
-                    )
-                }
-
-                // Save to app local Library
-                if (finalPlayable.isNotEmpty()) {
-                    saveToLibrary(
-                        title = metadata.title,
-                        filePath = finalPlayable.first(),
-                        originalUrl = url,
-                        durationSeconds = metadata.durationSeconds
                     )
                 }
             } catch (cancelled: CancellationException) {
@@ -565,18 +583,35 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun navigateBackFromResult() {
-        _screen.value = if (_processing.value.isComplete) {
+        val state = _processing.value
+        if (state.isComplete) {
+            discardCurrentTemporaryResult()
+        }
+        _screen.value = if (state.isComplete) {
             AppScreen.INPUT
         } else {
             AppScreen.PROCESSING
         }
     }
 
-    fun resetToInput() {
+    fun resetToInput(discardTemporaryResult: Boolean = true) {
         processingJob?.cancel()
         processingJob = null
+        if (discardTemporaryResult) {
+            discardCurrentTemporaryResult()
+        }
         _screen.value = AppScreen.INPUT
         _processing.value = ProcessingState()
+    }
+
+    fun discardCurrentTemporaryResult() {
+        val state = _processing.value
+        if (!state.isLibraryPlayback && !state.isSavedToGallery) {
+            state.playablePaths.forEach { path ->
+                runCatching { File(path).delete() }
+            }
+        }
+        cleanupTemporaryWorkDirs()
     }
 
     private fun updatePhase(label: String) {
@@ -597,14 +632,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     }
 
     private fun clearPlaybackScratch(activity: ComponentActivity) {
-        listOf(
-            "halalify-playable",
-            "halalify-mux-test",
-            "halalify-video-preview-download",
-        ).forEach { dirName ->
-            File(activity.filesDir, dirName).listFiles()?.forEach { file ->
-                file.delete()
-            }
+        cleanupTemporaryWorkDirs(activity.filesDir)
+    }
+
+    private fun cleanupAbandonedTemporaryFiles() {
+        cleanupTemporaryWorkDirs(getApplication<Application>().filesDir)
+    }
+
+    private fun cleanupTemporaryWorkDirs(root: File = getApplication<Application>().filesDir) {
+        temporaryWorkDirNames.forEach { dirName ->
+            File(root, dirName).deleteRecursively()
         }
     }
 
@@ -647,6 +684,22 @@ private data class ChunkPlan(
 private data class CleanChunkResult(
     val index: Int,
     val cleanAudioPath: String,
+)
+
+private val temporaryWorkDirNames = listOf(
+    "halalify-audio-chunk-download",
+    "halalify-audio-concat",
+    "halalify-audio-download-test",
+    "halalify-audio-extract-test",
+    "halalify-audio-normalized",
+    "halalify-clean-audio-backend",
+    "halalify-clean-audio-mock",
+    "halalify-concat",
+    "halalify-cut-test",
+    "halalify-download-test",
+    "halalify-mux-test",
+    "halalify-playable",
+    "halalify-video-preview-download",
 )
 
 private fun Throwable.userFacingMessage(): String {

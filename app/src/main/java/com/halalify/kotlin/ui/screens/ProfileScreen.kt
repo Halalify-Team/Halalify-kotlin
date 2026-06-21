@@ -63,6 +63,7 @@ internal fun ProfileScreen(
     loginStatus: String,
     isLoggingIn: Boolean,
     quotaState: QuotaState,
+    showDeveloperControls: Boolean,
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
@@ -119,6 +120,7 @@ internal fun ProfileScreen(
                 isSignedIn = isSignedIn,
                 sessionToken = sessionToken,
                 isLoggingIn = isLoggingIn,
+                showDeveloperControls = showDeveloperControls,
                 onBackendUrlChange = onBackendUrlChange,
                 onDevEmailChange = onDevEmailChange,
                 onDevLogin = onDevLogin,
@@ -206,6 +208,7 @@ private fun SettingsCard(
     isSignedIn: Boolean,
     sessionToken: String,
     isLoggingIn: Boolean,
+    showDeveloperControls: Boolean,
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
@@ -221,33 +224,36 @@ private fun SettingsCard(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Connection",
+                text = if (showDeveloperControls) "Connection" else "Account Access",
                 style = MaterialTheme.typography.titleMedium,
                 color = HalalifyTextPrimary,
                 fontWeight = FontWeight.Bold,
             )
 
-            OutlinedTextField(
-                value = backendUrl,
-                onValueChange = onBackendUrlChange,
-                label = { Text("Backend URL") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Cloud,
-                        contentDescription = null,
-                        tint = HalalifyAccent,
-                    )
-                },
-                singleLine = true,
-                colors = profileTextFieldColors(),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (showDeveloperControls) {
+                OutlinedTextField(
+                    value = backendUrl,
+                    onValueChange = onBackendUrlChange,
+                    label = { Text("Backend URL") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Cloud,
+                            contentDescription = null,
+                            tint = HalalifyAccent,
+                        )
+                    },
+                    singleLine = true,
+                    colors = profileTextFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             OutlinedTextField(
                 value = devEmail,
-                onValueChange = onDevEmailChange,
-                label = { Text("Account Email") },
+                onValueChange = if (showDeveloperControls) onDevEmailChange else { _ -> },
+                enabled = showDeveloperControls,
+                label = { Text(if (showDeveloperControls) "Account Email" else "Device Account") },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Email,
@@ -261,7 +267,9 @@ private fun SettingsCard(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            SessionTokenRow(sessionToken = sessionToken)
+            if (showDeveloperControls) {
+                SessionTokenRow(sessionToken = sessionToken)
+            }
 
             Button(
                 onClick = if (isSignedIn) onLogout else onDevLogin,

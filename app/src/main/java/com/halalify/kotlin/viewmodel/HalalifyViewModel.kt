@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.CHUNK_DURATION_SECONDS
 import com.halalify.kotlin.media.FIRST_CHUNK_DURATION_SECONDS
 import com.halalify.kotlin.media.cutVideoSegment
@@ -325,10 +326,10 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _processing = MutableStateFlow(ProcessingState())
     val processing: StateFlow<ProcessingState> = _processing.asStateFlow()
 
-    private val _backendUrl = MutableStateFlow("https://halalify-backend-2.onrender.com")
+    private val _backendUrl = MutableStateFlow(BuildConfig.DEFAULT_BACKEND_URL)
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
-    private val _devEmail = MutableStateFlow("tobegoodman5@gmail.com")
+    private val _devEmail = MutableStateFlow(getOrCreateInstallEmail())
     val devEmail: StateFlow<String> = _devEmail.asStateFlow()
 
     private val _sessionToken = MutableStateFlow("")
@@ -348,7 +349,14 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private var warmUpJob: Job? = null
 
     fun updateBackendUrl(url: String) { _backendUrl.value = url }
-    fun updateDevEmail(email: String) { _devEmail.value = email }
+    fun updateDevEmail(email: String) {
+        _devEmail.value = email
+        getApplication<Application>()
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_INSTALL_EMAIL, email)
+            .apply()
+    }
     fun updateSessionToken(token: String) { _sessionToken.value = token }
 
     fun warmUpLocalTools(activity: ComponentActivity) {
@@ -805,6 +813,18 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         }
     }
 
+    private fun getOrCreateInstallEmail(): String {
+        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(KEY_INSTALL_EMAIL, null)
+        if (!existing.isNullOrBlank()) return existing
+
+        val email = "mobile-${UUID.randomUUID().toString().replace("-", "").take(16)}@halalify.app"
+        prefs.edit()
+            .putString(KEY_INSTALL_EMAIL, email)
+            .apply()
+        return email
+    }
+
     private fun buildChunkPlans(durationSeconds: Int): List<ChunkPlan> {
         val totalDuration = durationSeconds.coerceAtLeast(1)
         val plans = mutableListOf<ChunkPlan>()
@@ -888,6 +908,9 @@ private data class CleanChunkResult(
 )
 
 private class PartialProcessingException(message: String) : RuntimeException(message)
+
+private const val PREFS_NAME = "halalify_mobile"
+private const val KEY_INSTALL_EMAIL = "install_email"
 
 private val temporaryWorkDirNames = listOf(
     "halalify-audio-chunk-download",

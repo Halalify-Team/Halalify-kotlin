@@ -69,6 +69,7 @@ internal fun InputScreen(
     sessionToken: String,
     loginStatus: String,
     isLoggingIn: Boolean,
+    showDeveloperControls: Boolean,
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onSessionTokenChange: (String) -> Unit,
@@ -183,25 +184,27 @@ internal fun InputScreen(
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // Dev Settings Toggle
-            TextButton(
-                onClick = { showDevSettings = !showDevSettings },
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = null,
-                    tint = HalalifyTextTertiary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = if (showDevSettings) "  Hide Dev Settings" else "  Dev Settings",
-                    color = HalalifyTextTertiary,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            if (showDeveloperControls) {
+                // Dev Settings Toggle
+                TextButton(
+                    onClick = { showDevSettings = !showDevSettings },
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        tint = HalalifyTextTertiary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = if (showDevSettings) "  Hide Dev Settings" else "  Dev Settings",
+                        color = HalalifyTextTertiary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             AnimatedVisibility(
-                visible = showDevSettings,
+                visible = showDeveloperControls && showDevSettings,
                 enter = expandVertically(),
                 exit = shrinkVertically(),
             ) {

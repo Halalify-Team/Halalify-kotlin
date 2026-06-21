@@ -13,6 +13,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
 import com.halalify.kotlin.ui.screens.ProfileScreen
@@ -73,6 +74,7 @@ internal fun AppNavigation(
                 sessionToken = sessionToken,
                 loginStatus = loginStatus,
                 isLoggingIn = isLoggingIn,
+                showDeveloperControls = BuildConfig.DEBUG,
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onSessionTokenChange = viewModel::updateSessionToken,
@@ -121,6 +123,7 @@ internal fun AppNavigation(
                 loginStatus = loginStatus,
                 isLoggingIn = isLoggingIn,
                 quotaState = quotaState,
+                showDeveloperControls = BuildConfig.DEBUG,
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onDevLogin = viewModel::devLogin,

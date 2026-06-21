@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
@@ -183,6 +185,11 @@ internal fun ResultScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            ResultStorageStatus(
+                state = state,
+                isExporting = isExporting,
+            )
+
             if (!state.isComplete) {
                 Button(
                     onClick = onBack,
@@ -294,5 +301,72 @@ internal fun ResultScreen(
             titleContentColor = HalalifyTextPrimary,
             textContentColor = HalalifyTextSecondary,
         )
+    }
+}
+
+@Composable
+private fun ResultStorageStatus(
+    state: ProcessingState,
+    isExporting: Boolean,
+) {
+    val (title, detail, iconTint) = when {
+        state.isLibraryPlayback -> Triple(
+            "Saved in Library",
+            "This video is already stored inside Halalify.",
+            HalalifySuccess,
+        )
+        isExporting -> Triple(
+            "Saving video",
+            "Keep this screen open while Halalify writes the video to your Gallery.",
+            HalalifyAccent,
+        )
+        state.isSavedToGallery -> Triple(
+            "Saved to Gallery",
+            "A copy was saved in Movies/Halalify and kept in your Halalify Library.",
+            HalalifySuccess,
+        )
+        state.isComplete -> Triple(
+            "Temporary result",
+            "Save it before leaving. Unsaved temporary files are deleted when you go back.",
+            HalalifyTextTertiary,
+        )
+        else -> Triple(
+            "Preview only",
+            "You can watch ready chunks while processing continues.",
+            HalalifyAccent,
+        )
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (state.isSavedToGallery || state.isLibraryPlayback) {
+                Icons.Default.CheckCircle
+            } else {
+                Icons.Default.Info
+            },
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = HalalifyTextPrimary,
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = HalalifyTextSecondary,
+            )
+        }
     }
 }

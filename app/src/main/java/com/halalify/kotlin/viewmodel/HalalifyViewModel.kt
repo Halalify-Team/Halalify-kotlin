@@ -325,7 +325,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _processing = MutableStateFlow(ProcessingState())
     val processing: StateFlow<ProcessingState> = _processing.asStateFlow()
 
-    private val _backendUrl = MutableStateFlow("http://192.168.8.6:3000")
+    private val _backendUrl = MutableStateFlow("https://halalify-backend-2.onrender.com")
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
     private val _devEmail = MutableStateFlow("tobegoodman5@gmail.com")

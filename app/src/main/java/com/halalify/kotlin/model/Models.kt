@@ -10,6 +10,7 @@ internal data class DownloadResult(
 internal data class FileResult(
     val message: String,
     val path: String?,
+    val minutesRemaining: Double? = null,
 )
 
 internal data class UploadStart(

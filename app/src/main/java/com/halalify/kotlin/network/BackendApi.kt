@@ -241,6 +241,7 @@ internal suspend fun cleanAudioWithBackend(
                 "path: ${outputFile.absolutePath}\n" +
                 "elapsed: ${elapsedMs}ms",
             path = outputFile.absolutePath,
+            minutesRemaining = uploadStart.minutesRemaining?.toDoubleOrNull(),
         )
     } catch (error: Throwable) {
         FileResult(

@@ -436,6 +436,20 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 // Phase 1: Get metadata
                 updatePhase("Reading video metadata...")
                 val metadata = fetchVideoMetadata(activity, url)
+                updatePhase("Checking account quota...")
+                val quota = runCatching {
+                    fetchQuotaState(
+                        backendUrl = baseUrl,
+                        sessionToken = token,
+                    )
+                }.getOrElse { quotaError ->
+                    throw IllegalStateException(
+                        "Quota check failed before processing: ${quotaError.userFacingMessage()}"
+                    )
+                }
+                _quotaState.value = quota.copy(isLoading = false)
+                validateEnoughQuotaForVideo(quota, metadata.durationSeconds)
+
                 val chunkPlans = buildChunkPlans(metadata.durationSeconds)
                 val totalChunks = chunkPlans.size
 
@@ -508,6 +522,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                         chunkIndex = plan.index,
                                         durationSeconds = plan.durationSeconds,
                                     )
+                                    cleanResult.minutesRemaining?.let { remaining ->
+                                        updateQuotaAfterChunk(remaining)
+                                    }
                                     cleanResult.path ?: error(cleanResult.message)
                                 }
                                 File(audioChunkPath).delete()
@@ -742,7 +759,48 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
         return plans
     }
+
+    private fun validateEnoughQuotaForVideo(quota: QuotaState, durationSeconds: Int) {
+        val total = quota.minutesTotal ?: 0.0
+        if (total < 0.0) return
+
+        if (!quota.hasLiveData) {
+            error("Quota is not available. Please sign in and refresh your quota.")
+        }
+        if (quota.accountStatus.isNotBlank() && quota.accountStatus.lowercase() != "active") {
+            error("Account is ${quota.accountStatus}. Please reactivate your subscription.")
+        }
+
+        val remaining = quota.minutesRemaining ?: 0.0
+        val needed = durationSeconds / 60.0
+        if (remaining + 0.001 < needed) {
+            error(
+                "Not enough quota. This video needs ${formatQuotaMinutes(needed)} minutes, " +
+                    "but you have ${formatQuotaMinutes(remaining)} left."
+            )
+        }
+    }
+
+    private fun updateQuotaAfterChunk(minutesRemaining: Double) {
+        _quotaState.update { quota ->
+            quota.copy(
+                minutesRemaining = minutesRemaining,
+                minutesUsed = quota.minutesTotal
+                    ?.takeIf { it >= 0.0 }
+                    ?.let { total -> (total - minutesRemaining).coerceAtLeast(0.0) }
+                    ?: quota.minutesUsed,
+                usagePercent = quota.minutesTotal
+                    ?.takeIf { it > 0.0 }
+                    ?.let { total -> (((total - minutesRemaining).coerceAtLeast(0.0) / total) * 100).toInt().coerceIn(0, 100) }
+                    ?: quota.usagePercent,
+                statusMessage = "Quota updated after processing a chunk.",
+                isLoading = false,
+            )
+        }
+    }
 }
+
+private fun formatQuotaMinutes(value: Double): String = "%.1f".format(value)
 
 private data class ChunkPlan(
     val index: Int,

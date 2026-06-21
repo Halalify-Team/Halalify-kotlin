@@ -1,5 +1,8 @@
 package com.halalify.kotlin.ui.navigation
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -35,6 +38,17 @@ internal fun AppNavigation(
     val exportStatus by viewModel.exportStatus.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
+
+    fun openExternalUrl(url: String) {
+        runCatching {
+            activity.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure {
+            Toast.makeText(activity, "Could not open billing page.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     AnimatedContent(
         targetState = currentScreen,
@@ -111,6 +125,7 @@ internal fun AppNavigation(
                 onDevEmailChange = viewModel::updateDevEmail,
                 onDevLogin = viewModel::devLogin,
                 onRefreshQuota = viewModel::refreshQuota,
+                onOpenSubscription = ::openExternalUrl,
                 onLogout = viewModel::logout,
                 onBack = { viewModel.resetToInput(discardTemporaryResult = false) },
             )

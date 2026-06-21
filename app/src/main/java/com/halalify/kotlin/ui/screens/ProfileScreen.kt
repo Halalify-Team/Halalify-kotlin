@@ -67,6 +67,7 @@ internal fun ProfileScreen(
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
     onRefreshQuota: () -> Unit,
+    onOpenSubscription: (String) -> Unit,
     onLogout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -128,6 +129,12 @@ internal fun ProfileScreen(
                 quotaState = quotaState,
                 isSignedIn = isSignedIn,
                 onRefreshQuota = onRefreshQuota,
+            )
+
+            SubscriptionCard(
+                quotaState = quotaState,
+                isSignedIn = isSignedIn,
+                onOpenSubscription = onOpenSubscription,
             )
         }
     }
@@ -442,6 +449,68 @@ private fun QuotaCard(
 }
 
 @Composable
+private fun SubscriptionCard(
+    quotaState: QuotaState,
+    isSignedIn: Boolean,
+    onOpenSubscription: (String) -> Unit,
+) {
+    val plan = quotaState.plan.ifBlank { "free" }
+    val billingUrl = quotaState.customerPortalUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_BILLING_URL
+    val remaining = quotaState.minutesRemaining
+    val total = quotaState.minutesTotal
+    val isUnlimited = total != null && total < 0.0
+    val isLowQuota = !isUnlimited && remaining != null && remaining <= LOW_QUOTA_WARNING_MINUTES
+    val isFree = plan.equals("free", ignoreCase = true)
+    val needsAttention = isLowQuota || isFree || quotaState.accountStatus.equals("expired", ignoreCase = true)
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = HalalifyDarkCard),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Subscription",
+                style = MaterialTheme.typography.titleMedium,
+                color = HalalifyTextPrimary,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = when {
+                    !isSignedIn -> "Sign in to manage your plan and quota."
+                    needsAttention -> "Your quota or plan may need attention before longer videos."
+                    isUnlimited -> "Your account is active with an unlimited plan."
+                    else -> "Your account is active. Manage billing or upgrade any time."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (needsAttention) HalalifyWarning else HalalifyTextSecondary,
+            )
+
+            Button(
+                onClick = { onOpenSubscription(billingUrl) },
+                enabled = isSignedIn,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (needsAttention) HalalifyAccent else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (needsAttention) HalalifyTextOnAccent else HalalifyTextPrimary,
+                ),
+            ) {
+                Text(
+                    text = if (needsAttention) "Upgrade Plan" else "Manage Plan",
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun InfoLine(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -465,6 +534,9 @@ private fun InfoLine(label: String, value: String) {
 private fun formatMinutes(value: Double?): String {
     return value?.let { "%.1f".format(it) } ?: "--"
 }
+
+private const val DEFAULT_BILLING_URL = "https://halalify.lemonsqueezy.com/billing"
+private const val LOW_QUOTA_WARNING_MINUTES = 2.0
 
 @Composable
 private fun profileTextFieldColors() = OutlinedTextFieldDefaults.colors(

@@ -81,6 +81,7 @@ internal suspend fun loginWithBackendDevAccountDetailed(
                 error("Dev login response has no sessionToken: ${body.take(1200)}")
             }
             val quota = payload.optJSONObject("quota")
+            val subscription = payload.optJSONObject("subscription")
             val quotaState = QuotaState(
                 userId = payload.optString("userId"),
                 email = payload.optString("email", cleanEmail),
@@ -88,6 +89,7 @@ internal suspend fun loginWithBackendDevAccountDetailed(
                 accountStatus = payload.optString("status", "unknown"),
                 minutesRemaining = quota?.optDoubleOrNull("minutesRemaining"),
                 minutesTotal = quota?.optDoubleOrNull("minutesTotal"),
+                customerPortalUrl = subscription?.optString("customerPortalUrl")?.takeIf { it.isNotBlank() && it != "null" },
                 statusMessage = "Quota loaded from login.",
             )
             DevLoginResult(

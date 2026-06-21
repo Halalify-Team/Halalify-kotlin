@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -73,6 +75,7 @@ internal fun InputScreen(
     onDevLogin: () -> Unit,
     onStartProcessing: (youtubeUrl: String) -> Unit,
     onNavigateToLibrary: () -> Unit,
+    onNavigateToProfile: () -> Unit,
 ) {
     var youtubeUrl by remember { mutableStateOf("") }
     var showDevSettings by remember { mutableStateOf(false) }
@@ -283,20 +286,38 @@ internal fun InputScreen(
             }
         }
 
-        IconButton(
-            onClick = onNavigateToLibrary,
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 48.dp, end = 16.dp)
-                .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
+                .padding(top = 48.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(
-                imageVector = Icons.Default.VideoLibrary,
-                contentDescription = "Library",
-                tint = HalalifyAccent,
-            )
+            IconButton(
+                onClick = onNavigateToProfile,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = "Profile",
+                    tint = HalalifyAccent,
+                )
+            }
+            IconButton(
+                onClick = onNavigateToLibrary,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VideoLibrary,
+                    contentDescription = "Library",
+                    tint = HalalifyAccent,
+                )
+            }
         }
 
         // Decorative gradient at top

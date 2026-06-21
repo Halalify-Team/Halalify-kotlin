@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
+import com.halalify.kotlin.ui.screens.ProfileScreen
 import com.halalify.kotlin.ui.screens.ProcessingScreen
 import com.halalify.kotlin.ui.screens.ResultScreen
 import com.halalify.kotlin.ui.screens.LibraryScreen
@@ -64,6 +65,7 @@ internal fun AppNavigation(
                     viewModel.startProcessing(activity, url)
                 },
                 onNavigateToLibrary = { viewModel.navigateToLibrary() },
+                onNavigateToProfile = { viewModel.navigateToProfile() },
             )
             AppScreen.PROCESSING -> ProcessingScreen(
                 state = processingState,
@@ -94,6 +96,18 @@ internal fun AppNavigation(
                 },
                 onClearExportStatus = { viewModel.clearExportStatus() },
                 onClearLibraryStatus = { viewModel.clearLibraryStatus() },
+            )
+            AppScreen.PROFILE -> ProfileScreen(
+                backendUrl = backendUrl,
+                devEmail = devEmail,
+                sessionToken = sessionToken,
+                loginStatus = loginStatus,
+                isLoggingIn = isLoggingIn,
+                onBackendUrlChange = viewModel::updateBackendUrl,
+                onDevEmailChange = viewModel::updateDevEmail,
+                onDevLogin = viewModel::devLogin,
+                onLogout = viewModel::logout,
+                onBack = { viewModel.resetToInput(discardTemporaryResult = false) },
             )
         }
     }

@@ -270,6 +270,15 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         _screen.value = AppScreen.LIBRARY
     }
 
+    fun navigateToProfile() {
+        _screen.value = AppScreen.PROFILE
+    }
+
+    fun logout() {
+        _sessionToken.value = ""
+        _loginStatus.value = "Signed out."
+    }
+
     fun playLibraryItem(item: LibraryItem) {
         val file = File(item.filePath)
         if (!file.isFile || file.length() <= 0L) {

@@ -29,6 +29,7 @@ enum class AppScreen {
     PROCESSING,
     RESULT,
     LIBRARY,
+    PROFILE,
 }
 
 data class LibraryItem(

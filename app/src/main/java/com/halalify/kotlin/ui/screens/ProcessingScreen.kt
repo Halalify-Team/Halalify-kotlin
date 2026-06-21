@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,6 +73,15 @@ internal fun ProcessingScreen(
         label = "progressAnim",
     )
     val hasReadyPreview = state.firstChunkReady && state.playablePaths.isNotEmpty()
+    val remainingChunks = (state.totalChunks - state.completedChunks).coerceAtLeast(0)
+    val statusText = when {
+        state.isComplete -> "All chunks are ready."
+        state.errorMessage != null && hasReadyPreview -> "Processing stopped, but your ready part is watchable."
+        state.errorMessage != null -> "Processing stopped before a playable chunk was ready."
+        hasReadyPreview -> "You can watch now while the rest continues."
+        state.totalChunks > 0 -> "Preparing the first playable chunk."
+        else -> "Reading the video and preparing the pipeline."
+    }
 
     Column(
         modifier = Modifier
@@ -99,6 +109,14 @@ internal fun ProcessingScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+
+        ProcessingSummary(
+            state = state,
+            remainingChunks = remainingChunks,
+            statusText = statusText,
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Overall progress bar
         Column {
@@ -241,6 +259,69 @@ internal fun ProcessingScreen(
 }
 
 @Composable
+private fun ProcessingSummary(
+    state: ProcessingState,
+    remainingChunks: Int,
+    statusText: String,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(HalalifyDarkCard.copy(alpha = 0.8f))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = statusText,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = if (state.errorMessage != null) HalalifyAccentGold else HalalifyTextPrimary,
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SummaryPill(
+                label = "Duration",
+                value = state.totalDurationSeconds.takeIf { it > 0 }?.let(::formatDuration) ?: "--",
+            )
+            SummaryPill(
+                label = "Ready",
+                value = "${state.completedChunks}/${state.totalChunks.takeIf { it > 0 } ?: "--"}",
+            )
+            SummaryPill(
+                label = "Remaining",
+                value = if (state.totalChunks > 0) remainingChunks.toString() else "--",
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryPill(
+    label: String,
+    value: String,
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = HalalifyTextTertiary,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            color = HalalifyTextPrimary,
+        )
+    }
+}
+
+@Composable
 private fun ChunkRow(chunk: ChunkState) {
     Row(
         modifier = Modifier
@@ -311,4 +392,14 @@ private fun ChunkPhase.displayLabel(): String = when (this) {
     ChunkPhase.MUXING -> "Merging"
     ChunkPhase.DONE -> "Ready ✓"
     ChunkPhase.ERROR -> "Failed"
+}
+
+private fun formatDuration(totalSeconds: Int): String {
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes > 0) {
+        "${minutes}m ${seconds}s"
+    } else {
+        "${seconds}s"
+    }
 }

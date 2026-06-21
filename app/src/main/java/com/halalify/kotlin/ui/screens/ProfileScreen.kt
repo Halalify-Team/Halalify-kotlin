@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -43,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.ui.theme.HalalifyAccent
 import com.halalify.kotlin.ui.theme.HalalifyDarkCard
 import com.halalify.kotlin.ui.theme.HalalifySuccess
@@ -60,9 +62,11 @@ internal fun ProfileScreen(
     sessionToken: String,
     loginStatus: String,
     isLoggingIn: Boolean,
+    quotaState: QuotaState,
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
+    onRefreshQuota: () -> Unit,
     onLogout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -120,7 +124,11 @@ internal fun ProfileScreen(
                 onLogout = onLogout,
             )
 
-            QuotaPreviewCard()
+            QuotaCard(
+                quotaState = quotaState,
+                isSignedIn = isSignedIn,
+                onRefreshQuota = onRefreshQuota,
+            )
         }
     }
 }
@@ -319,7 +327,24 @@ private fun SessionTokenRow(sessionToken: String) {
 }
 
 @Composable
-private fun QuotaPreviewCard() {
+private fun QuotaCard(
+    quotaState: QuotaState,
+    isSignedIn: Boolean,
+    onRefreshQuota: () -> Unit,
+) {
+    val usedPercent = quotaState.usagePercent
+        ?: quotaState.minutesUsed?.let { used ->
+            quotaState.minutesTotal
+                ?.takeIf { it > 0.0 }
+                ?.let { total -> ((used / total) * 100).toInt().coerceIn(0, 100) }
+        }
+        ?: quotaState.minutesRemaining?.let { remaining ->
+            quotaState.minutesTotal
+                ?.takeIf { it > 0.0 }
+                ?.let { total -> (((total - remaining).coerceAtLeast(0.0) / total) * 100).toInt().coerceIn(0, 100) }
+        }
+    val progress = usedPercent?.let { it / 100f } ?: 0f
+
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = HalalifyDarkCard),
@@ -329,19 +354,116 @@ private fun QuotaPreviewCard() {
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "Quota",
-                style = MaterialTheme.typography.titleMedium,
-                color = HalalifyTextPrimary,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "Backend quota endpoints are available. The next task will fetch live minutes, enforce preflight checks, and handle quota exhaustion cleanly.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = HalalifyTextSecondary,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Quota",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = HalalifyTextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = onRefreshQuota,
+                    enabled = isSignedIn && !quotaState.isLoading,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HalalifyAccent,
+                        contentColor = HalalifyTextOnAccent,
+                    ),
+                ) {
+                    if (quotaState.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = HalalifyTextOnAccent,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("Refresh")
+                }
+            }
+
+            if (quotaState.hasLiveData) {
+                Text(
+                    text = "${formatMinutes(quotaState.minutesRemaining)} / ${formatMinutes(quotaState.minutesTotal)} minutes left",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = HalalifyTextPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    color = HalalifyAccent,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+                Text(
+                    text = "${usedPercent ?: 0}% used",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HalalifyTextSecondary,
+                )
+            } else {
+                Text(
+                    text = if (isSignedIn) {
+                        "Quota is not loaded yet. Tap Refresh."
+                    } else {
+                        "Sign in to load your live quota."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = HalalifyTextSecondary,
+                )
+            }
+
+            InfoLine(label = "Plan", value = quotaState.plan.ifBlank { "Unknown" })
+            InfoLine(label = "Account", value = quotaState.accountStatus.ifBlank { "Unknown" })
+            quotaState.resetDate?.let { resetDate ->
+                InfoLine(label = "Reset", value = resetDate)
+            }
+
+            if (quotaState.statusMessage.isNotBlank()) {
+                Text(
+                    text = quotaState.statusMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (quotaState.statusMessage.startsWith("FAILED")) HalalifyWarning else HalalifyTextSecondary,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = HalalifyTextTertiary,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = HalalifyTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun formatMinutes(value: Double?): String {
+    return value?.let { "%.1f".format(it) } ?: "--"
 }
 
 @Composable

@@ -2,6 +2,7 @@ package com.halalify.kotlin.network
 
 import androidx.activity.ComponentActivity
 import com.halalify.kotlin.model.FileResult
+import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.model.UploadStart
 import java.io.File
 import java.io.FileOutputStream
@@ -22,6 +23,20 @@ internal suspend fun loginWithBackendDevAccount(
     backendUrl: String,
     email: String,
 ): Pair<String, String?> = withContext(Dispatchers.IO) {
+    val result = loginWithBackendDevAccountDetailed(backendUrl, email)
+    result.message to result.sessionToken
+}
+
+internal data class DevLoginResult(
+    val message: String,
+    val sessionToken: String?,
+    val quota: QuotaState? = null,
+)
+
+internal suspend fun loginWithBackendDevAccountDetailed(
+    backendUrl: String,
+    email: String,
+): DevLoginResult = withContext(Dispatchers.IO) {
     try {
         val baseUrl = backendUrl.trim().trimEnd('/')
         if (baseUrl.isBlank()) {
@@ -62,14 +77,104 @@ internal suspend fun loginWithBackendDevAccount(
                 error("Dev login response has no sessionToken: ${body.take(1200)}")
             }
             val quota = payload.optJSONObject("quota")
-            "SUCCESS: dev session ready.\n" +
+            val quotaState = QuotaState(
+                userId = payload.optString("userId"),
+                email = payload.optString("email", cleanEmail),
+                plan = payload.optString("plan", "unknown"),
+                accountStatus = payload.optString("status", "unknown"),
+                minutesRemaining = quota?.optDoubleOrNull("minutesRemaining"),
+                minutesTotal = quota?.optDoubleOrNull("minutesTotal"),
+                statusMessage = "Quota loaded from login.",
+            )
+            DevLoginResult(
+                message = "SUCCESS: dev session ready.\n" +
                 "email: ${payload.optString("email", cleanEmail)}\n" +
                 "plan: ${payload.optString("plan", "unknown")}\n" +
                 "minutesRemaining: ${quota?.opt("minutesRemaining") ?: "unknown"}\n" +
-                "token: ${token.take(10)}..." to token
+                    "token: ${token.take(10)}...",
+                sessionToken = token,
+                quota = quotaState,
+            )
         }
     } catch (error: Throwable) {
-        "FAILED: ${error.javaClass.simpleName}: ${error.message}" to null
+        DevLoginResult(
+            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            sessionToken = null,
+        )
+    }
+}
+
+internal suspend fun fetchQuotaState(
+    backendUrl: String,
+    sessionToken: String,
+): QuotaState = withContext(Dispatchers.IO) {
+    val baseUrl = backendUrl.trim().trimEnd('/')
+    if (baseUrl.isBlank()) {
+        error("Backend URL is required.")
+    }
+    val token = sessionToken.trim()
+    if (token.isBlank()) {
+        error("Session token is required.")
+    }
+
+    val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .build()
+
+    val validateRequest = Request.Builder()
+        .url("$baseUrl/auth/validate")
+        .header("Authorization", "Bearer $token")
+        .get()
+        .build()
+    val identity = client.newCall(validateRequest).execute().use { response ->
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            error("Session validation failed. http=${response.code} body=${body.take(1200)}")
+        }
+        val json = JSONObject(body)
+        if (!json.optBoolean("valid")) {
+            error("Session is invalid or expired.")
+        }
+        json
+    }
+
+    val userId = identity.optString("userId")
+    if (userId.isBlank()) {
+        error("Session validation response has no userId.")
+    }
+
+    val statusRequest = Request.Builder()
+        .url("$baseUrl/user/status?user_id=$userId")
+        .header("Authorization", "Bearer $token")
+        .get()
+        .build()
+    client.newCall(statusRequest).execute().use { response ->
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            error("Quota refresh failed. http=${response.code} body=${body.take(1200)}")
+        }
+        val json = JSONObject(body)
+        if (json.optString("status") != "success") {
+            error("Quota refresh rejected: ${body.take(1200)}")
+        }
+        val data = json.getJSONObject("data")
+        val usage = data.getJSONObject("usage")
+        val subscription = data.optJSONObject("subscription")
+        QuotaState(
+            userId = userId,
+            email = data.optString("email", identity.optString("email")),
+            plan = data.optString("plan", "unknown"),
+            accountStatus = data.optString("status", "unknown"),
+            minutesRemaining = usage.optDoubleOrNull("minutesRemaining"),
+            minutesTotal = usage.optDoubleOrNull("minutesTotal"),
+            minutesUsed = usage.optDoubleOrNull("minutesUsed"),
+            usagePercent = usage.optIntOrNull("usagePercent"),
+            resetDate = subscription?.optString("resetDate")?.takeIf { it.isNotBlank() && it != "null" },
+            customerPortalUrl = subscription?.optString("customerPortalUrl")?.takeIf { it.isNotBlank() && it != "null" },
+            statusMessage = "Quota refreshed.",
+        )
     }
 }
 
@@ -248,4 +353,16 @@ private fun downloadFile(client: OkHttpClient, url: String, outputFile: File) {
             body.byteStream().copyTo(output)
         }
     }
+}
+
+private fun JSONObject.optDoubleOrNull(name: String): Double? {
+    if (!has(name) || isNull(name)) return null
+    return runCatching { optDouble(name) }
+        .getOrNull()
+        ?.takeIf { !it.isNaN() }
+}
+
+private fun JSONObject.optIntOrNull(name: String): Int? {
+    if (!has(name) || isNull(name)) return null
+    return runCatching { optInt(name) }.getOrNull()
 }

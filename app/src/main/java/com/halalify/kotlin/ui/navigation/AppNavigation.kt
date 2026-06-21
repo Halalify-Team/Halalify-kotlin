@@ -30,6 +30,7 @@ internal fun AppNavigation(
     val sessionToken by viewModel.sessionToken.collectAsState()
     val loginStatus by viewModel.loginStatus.collectAsState()
     val isLoggingIn by viewModel.isLoggingIn.collectAsState()
+    val quotaState by viewModel.quotaState.collectAsState()
     val libraryItems by viewModel.libraryItems.collectAsState()
     val exportStatus by viewModel.exportStatus.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
@@ -103,9 +104,11 @@ internal fun AppNavigation(
                 sessionToken = sessionToken,
                 loginStatus = loginStatus,
                 isLoggingIn = isLoggingIn,
+                quotaState = quotaState,
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onDevLogin = viewModel::devLogin,
+                onRefreshQuota = viewModel::refreshQuota,
                 onLogout = viewModel::logout,
                 onBack = { viewModel.resetToInput(discardTemporaryResult = false) },
             )

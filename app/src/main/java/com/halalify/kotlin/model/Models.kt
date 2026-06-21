@@ -22,6 +22,24 @@ internal data class VideoMetadata(
     val durationSeconds: Int,
 )
 
+internal data class QuotaState(
+    val userId: String = "",
+    val email: String = "",
+    val plan: String = "",
+    val accountStatus: String = "",
+    val minutesRemaining: Double? = null,
+    val minutesTotal: Double? = null,
+    val minutesUsed: Double? = null,
+    val usagePercent: Int? = null,
+    val resetDate: String? = null,
+    val customerPortalUrl: String? = null,
+    val statusMessage: String = "",
+    val isLoading: Boolean = false,
+) {
+    val hasLiveData: Boolean
+        get() = minutesRemaining != null && minutesTotal != null
+}
+
 // --- App state models ---
 
 enum class AppScreen {

@@ -26,8 +26,10 @@ import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
 import com.halalify.kotlin.model.ProcessingState
 import com.halalify.kotlin.model.LibraryItem
+import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.network.cleanAudioWithBackend
-import com.halalify.kotlin.network.loginWithBackendDevAccount
+import com.halalify.kotlin.network.fetchQuotaState
+import com.halalify.kotlin.network.loginWithBackendDevAccountDetailed
 import java.io.File
 import java.io.FileInputStream
 import java.util.UUID
@@ -277,6 +279,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     fun logout() {
         _sessionToken.value = ""
         _loginStatus.value = "Signed out."
+        _quotaState.value = QuotaState(statusMessage = "Signed out.")
     }
 
     fun playLibraryItem(item: LibraryItem) {
@@ -323,6 +326,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _isLoggingIn = MutableStateFlow(false)
     val isLoggingIn: StateFlow<Boolean> = _isLoggingIn.asStateFlow()
 
+    private val _quotaState = MutableStateFlow(QuotaState())
+    val quotaState: StateFlow<QuotaState> = _quotaState.asStateFlow()
+
     private val playUpdateMutex = Mutex()
     private var processingJob: Job? = null
     private var warmUpJob: Job? = null
@@ -344,13 +350,49 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         viewModelScope.launch {
             _isLoggingIn.value = true
             _loginStatus.value = "Requesting dev session..."
-            val result = loginWithBackendDevAccount(
+            _quotaState.value = _quotaState.value.copy(
+                isLoading = true,
+                statusMessage = "Signing in...",
+            )
+            val result = loginWithBackendDevAccountDetailed(
                 backendUrl = _backendUrl.value,
                 email = _devEmail.value,
             )
-            _loginStatus.value = result.first
-            _sessionToken.value = result.second.orEmpty()
+            _loginStatus.value = result.message
+            _sessionToken.value = result.sessionToken.orEmpty()
+            _quotaState.value = result.quota?.copy(isLoading = false)
+                ?: QuotaState(
+                    statusMessage = result.message,
+                    isLoading = false,
+                )
             _isLoggingIn.value = false
+        }
+    }
+
+    fun refreshQuota() {
+        viewModelScope.launch {
+            val token = _sessionToken.value.trim()
+            if (token.isBlank()) {
+                _quotaState.value = QuotaState(statusMessage = "Sign in to load quota.")
+                return@launch
+            }
+            _quotaState.value = _quotaState.value.copy(
+                isLoading = true,
+                statusMessage = "Refreshing quota...",
+            )
+            runCatching {
+                fetchQuotaState(
+                    backendUrl = _backendUrl.value,
+                    sessionToken = token,
+                )
+            }.onSuccess { quota ->
+                _quotaState.value = quota.copy(isLoading = false)
+            }.onFailure { error ->
+                _quotaState.value = _quotaState.value.copy(
+                    isLoading = false,
+                    statusMessage = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+                )
+            }
         }
     }
 
@@ -375,16 +417,19 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 var token = _sessionToken.value.trim()
                 if (token.isBlank()) {
                     updatePhase("Authenticating dev session...")
-                    val result = loginWithBackendDevAccount(
+                    val result = loginWithBackendDevAccountDetailed(
                         backendUrl = baseUrl,
                         email = _devEmail.value,
                     )
-                    val returnedToken = result.second
+                    val returnedToken = result.sessionToken
                     if (returnedToken.isNullOrBlank()) {
-                        error("Auto dev-login failed: ${result.first}")
+                        error("Auto dev-login failed: ${result.message}")
                     }
                     _sessionToken.value = returnedToken
-                    _loginStatus.value = result.first
+                    _loginStatus.value = result.message
+                    result.quota?.let { quota ->
+                        _quotaState.value = quota.copy(isLoading = false)
+                    }
                     token = returnedToken
                 }
 

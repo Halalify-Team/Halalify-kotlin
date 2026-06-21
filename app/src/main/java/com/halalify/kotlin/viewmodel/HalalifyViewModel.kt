@@ -56,6 +56,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _exportStatus = MutableStateFlow<String?>(null)
     val exportStatus: StateFlow<String?> = _exportStatus.asStateFlow()
 
+    private val _libraryStatus = MutableStateFlow<String?>(null)
+    val libraryStatus: StateFlow<String?> = _libraryStatus.asStateFlow()
+
     init {
         cleanupAbandonedTemporaryFiles()
         loadLibrary()
@@ -78,18 +81,25 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 val items = mutableListOf<LibraryItem>()
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
+                    val filePath = obj.getString("filePath")
+                    val file = File(filePath)
+                    if (!file.isFile || file.length() <= 0L) {
+                        continue
+                    }
                     items.add(
                         LibraryItem(
                             id = obj.getString("id"),
                             title = obj.getString("title"),
-                            filePath = obj.getString("filePath"),
+                            filePath = filePath,
                             originalUrl = obj.getString("originalUrl"),
                             durationSeconds = obj.getInt("durationSeconds"),
+                            fileSizeBytes = obj.optLong("fileSizeBytes", file.length()),
                             timestamp = obj.getLong("timestamp")
                         )
                     )
                 }
                 _libraryItems.value = items.sortedByDescending { it.timestamp }
+                persistLibrary(items)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -127,26 +137,32 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             filePath = destFile.absolutePath,
             originalUrl = originalUrl,
             durationSeconds = durationSeconds,
+            fileSizeBytes = destFile.length(),
             timestamp = System.currentTimeMillis()
         )
 
         val currentList = _libraryItems.value.toMutableList()
         currentList.add(0, item)
 
+        persistLibrary(currentList)
+        _libraryItems.value = currentList
+    }
+
+    private fun persistLibrary(items: List<LibraryItem>) {
         val jsonArray = org.json.JSONArray()
-        for (it in currentList) {
+        for (it in items) {
             val obj = org.json.JSONObject()
                 .put("id", it.id)
                 .put("title", it.title)
                 .put("filePath", it.filePath)
                 .put("originalUrl", it.originalUrl)
                 .put("durationSeconds", it.durationSeconds)
+                .put("fileSizeBytes", it.fileSizeBytes)
                 .put("timestamp", it.timestamp)
             jsonArray.put(obj)
         }
 
         getLibraryFile().writeText(jsonArray.toString())
-        _libraryItems.value = currentList
     }
 
     fun deleteFromLibrary(itemId: String) {
@@ -165,24 +181,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     }
                 }
                 _libraryItems.value = currentList
-                
-                val jsonArray = org.json.JSONArray()
-                for (it in currentList) {
-                    val obj = org.json.JSONObject()
-                        .put("id", it.id)
-                        .put("title", it.title)
-                        .put("filePath", it.filePath)
-                        .put("originalUrl", it.originalUrl)
-                        .put("durationSeconds", it.durationSeconds)
-                        .put("timestamp", it.timestamp)
-                    jsonArray.put(obj)
-                }
-                
-                getLibraryFile().writeText(jsonArray.toString())
+                persistLibrary(currentList)
+                _libraryStatus.value = "Removed from Library."
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+    }
+
+    fun clearLibraryStatus() {
+        _libraryStatus.value = null
     }
 
     fun clearExportStatus() {
@@ -263,8 +271,15 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun playLibraryItem(item: LibraryItem) {
+        val file = File(item.filePath)
+        if (!file.isFile || file.length() <= 0L) {
+            deleteFromLibrary(item.id)
+            _libraryStatus.value = "This saved video file is missing, so it was removed from Library."
+            return
+        }
         _processing.value = ProcessingState(
             videoTitle = item.title,
+            originalUrl = item.originalUrl,
             totalDurationSeconds = item.durationSeconds,
             totalChunks = 1,
             completedChunks = 1,

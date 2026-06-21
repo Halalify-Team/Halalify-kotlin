@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -31,11 +32,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,11 +66,13 @@ import java.util.Locale
 internal fun LibraryScreen(
     libraryItems: List<LibraryItem>,
     exportStatus: String?,
+    libraryStatus: String?,
     onBack: () -> Unit,
     onPlayItem: (LibraryItem) -> Unit,
     onDeleteItem: (String) -> Unit,
     onSaveToGallery: (LibraryItem) -> Unit,
     onClearExportStatus: () -> Unit,
+    onClearLibraryStatus: () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -76,15 +83,31 @@ internal fun LibraryScreen(
         }
     }
 
+    LaunchedEffect(libraryStatus) {
+        if (libraryStatus != null) {
+            android.widget.Toast.makeText(context, libraryStatus, android.widget.Toast.LENGTH_LONG).show()
+            onClearLibraryStatus()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Library",
-                        fontWeight = FontWeight.Bold,
-                        color = HalalifyTextPrimary
-                    )
+                    Column {
+                        Text(
+                            text = "Library",
+                            fontWeight = FontWeight.Bold,
+                            color = HalalifyTextPrimary
+                        )
+                        if (libraryItems.isNotEmpty()) {
+                            Text(
+                                text = "${libraryItems.size} saved video${if (libraryItems.size == 1) "" else "s"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = HalalifyTextSecondary,
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -127,7 +150,7 @@ internal fun LibraryScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Any videos you Halalify will appear here for you to replay or save to your gallery anytime.",
+                        text = "Saved halalified videos will appear here. Unsaved results are deleted when you leave them.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = HalalifyTextSecondary,
                         textAlign = TextAlign.Center
@@ -162,6 +185,7 @@ private fun LibraryCard(
     onDelete: () -> Unit,
     onSave: () -> Unit,
 ) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
     val dateString = remember(item.timestamp) {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
         sdf.format(Date(item.timestamp))
@@ -171,6 +195,9 @@ private fun LibraryCard(
         val minutes = item.durationSeconds / 60
         val seconds = item.durationSeconds % 60
         String.format(Locale.US, "%d:%02d", minutes, seconds)
+    }
+    val sizeText = remember(item.fileSizeBytes) {
+        item.fileSizeBytes.toHumanFileSize()
     }
 
     Card(
@@ -222,7 +249,7 @@ private fun LibraryCard(
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = dateString,
+                            text = "$sizeText · $dateString",
                             style = MaterialTheme.typography.bodySmall,
                             color = HalalifyTextTertiary
                         )
@@ -237,7 +264,7 @@ private fun LibraryCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDelete) {
+                IconButton(onClick = { showDeleteDialog = true }) {
                     Icon(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "Delete",
@@ -277,5 +304,47 @@ private fun LibraryCard(
                 }
             }
         }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text(text = "Delete from Library?") },
+            text = {
+                Text(
+                    text = "This removes the saved copy from the app. Gallery exports are not affected.",
+                    color = HalalifyTextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteDialog = false
+                        onDelete()
+                    },
+                ) {
+                    Text(text = "Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text(text = "Cancel")
+                }
+            },
+            containerColor = HalalifyDarkCard,
+            titleContentColor = HalalifyTextPrimary,
+            textContentColor = HalalifyTextSecondary,
+        )
+    }
+}
+
+private fun Long.toHumanFileSize(): String {
+    if (this <= 0L) return "Unknown size"
+    val mb = this / (1024.0 * 1024.0)
+    return if (mb >= 1.0) {
+        String.format(Locale.US, "%.1f MB", mb)
+    } else {
+        val kb = (this / 1024.0).coerceAtLeast(1.0)
+        String.format(Locale.US, "%.0f KB", kb)
     }
 }

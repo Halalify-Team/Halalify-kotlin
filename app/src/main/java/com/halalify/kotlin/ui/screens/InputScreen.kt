@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,27 +94,6 @@ internal fun InputScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        // Floating Library Button
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 48.dp, end = 16.dp),
-            horizontalArrangement = Arrangement.End
-        ) {
-            IconButton(
-                onClick = onNavigateToLibrary,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.VideoLibrary,
-                    contentDescription = "Library",
-                    tint = HalalifyAccent,
-                )
-            }
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -303,6 +281,22 @@ internal fun InputScreen(
                     }
                 }
             }
+        }
+
+        IconButton(
+            onClick = onNavigateToLibrary,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 48.dp, end = 16.dp)
+                .size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f))
+        ) {
+            Icon(
+                imageVector = Icons.Default.VideoLibrary,
+                contentDescription = "Library",
+                tint = HalalifyAccent,
+            )
         }
 
         // Decorative gradient at top

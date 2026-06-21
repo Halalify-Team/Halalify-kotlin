@@ -37,6 +37,7 @@ data class LibraryItem(
     val filePath: String,
     val originalUrl: String,
     val durationSeconds: Int,
+    val fileSizeBytes: Long = 0L,
     val timestamp: Long
 )
 

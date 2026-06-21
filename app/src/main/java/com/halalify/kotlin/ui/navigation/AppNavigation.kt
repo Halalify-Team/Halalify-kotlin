@@ -31,6 +31,7 @@ internal fun AppNavigation(
     val isLoggingIn by viewModel.isLoggingIn.collectAsState()
     val libraryItems by viewModel.libraryItems.collectAsState()
     val exportStatus by viewModel.exportStatus.collectAsState()
+    val libraryStatus by viewModel.libraryStatus.collectAsState()
 
     AnimatedContent(
         targetState = currentScreen,
@@ -84,6 +85,7 @@ internal fun AppNavigation(
             AppScreen.LIBRARY -> LibraryScreen(
                 libraryItems = libraryItems,
                 exportStatus = exportStatus,
+                libraryStatus = libraryStatus,
                 onBack = { viewModel.resetToInput() },
                 onPlayItem = { viewModel.playLibraryItem(it) },
                 onDeleteItem = { viewModel.deleteFromLibrary(it) },
@@ -91,6 +93,7 @@ internal fun AppNavigation(
                     viewModel.exportToGallery(activity, item.filePath, item.title)
                 },
                 onClearExportStatus = { viewModel.clearExportStatus() },
+                onClearLibraryStatus = { viewModel.clearLibraryStatus() },
             )
         }
     }

@@ -3,6 +3,8 @@ package com.halalify.kotlin.ui.navigation
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -13,6 +15,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
@@ -39,6 +44,50 @@ internal fun AppNavigation(
     val exportStatus by viewModel.exportStatus.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        runCatching {
+            task.getResult(ApiException::class.java)
+        }.onSuccess { account ->
+            val idToken = account.idToken
+            if (idToken.isNullOrBlank()) {
+                Toast.makeText(
+                    activity,
+                    "Google sign-in is not configured. Add GOOGLE_WEB_CLIENT_ID to the Android build.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                viewModel.googleLogin(idToken)
+            }
+        }.onFailure { error ->
+            Toast.makeText(
+                activity,
+                "Google sign-in failed: ${error.message ?: "try again"}",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    fun launchGoogleSignIn() {
+        val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+        if (webClientId.isBlank()) {
+            Toast.makeText(
+                activity,
+                "Google sign-in needs GOOGLE_WEB_CLIENT_ID in the Android build.",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .requestIdToken(webClientId)
+            .build()
+        googleSignInLauncher.launch(GoogleSignIn.getClient(activity, options).signInIntent)
+    }
 
     fun openExternalUrl(url: String) {
         runCatching {
@@ -79,6 +128,7 @@ internal fun AppNavigation(
                 onDevEmailChange = viewModel::updateDevEmail,
                 onSessionTokenChange = viewModel::updateSessionToken,
                 onDevLogin = viewModel::devLogin,
+                onGoogleLogin = ::launchGoogleSignIn,
                 onStartProcessing = { url ->
                     viewModel.startProcessing(activity, url)
                 },
@@ -127,6 +177,7 @@ internal fun AppNavigation(
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onDevLogin = viewModel::devLogin,
+                onGoogleLogin = ::launchGoogleSignIn,
                 onRefreshQuota = viewModel::refreshQuota,
                 onOpenSubscription = ::openExternalUrl,
                 onLogout = viewModel::logout,

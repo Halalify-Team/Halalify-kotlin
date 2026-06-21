@@ -74,6 +74,7 @@ internal fun InputScreen(
     onDevEmailChange: (String) -> Unit,
     onSessionTokenChange: (String) -> Unit,
     onDevLogin: () -> Unit,
+    onGoogleLogin: () -> Unit,
     onStartProcessing: (youtubeUrl: String) -> Unit,
     onNavigateToLibrary: () -> Unit,
     onNavigateToProfile: () -> Unit,
@@ -160,10 +161,42 @@ internal fun InputScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            if (sessionToken.isBlank()) {
+                Button(
+                    onClick = onGoogleLogin,
+                    enabled = !isLoggingIn,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HalalifyAccent,
+                        contentColor = HalalifyTextOnAccent,
+                        disabledContainerColor = HalalifyTextTertiary.copy(alpha = 0.3f),
+                    ),
+                ) {
+                    if (isLoggingIn) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = HalalifyTextOnAccent,
+                        )
+                    } else {
+                        Text(
+                            text = "Sign in with Google",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // Main CTA Button
             Button(
                 onClick = { onStartProcessing(youtubeUrl) },
-                enabled = youtubeUrl.isNotBlank(),
+                enabled = youtubeUrl.isNotBlank() && sessionToken.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -175,7 +208,7 @@ internal fun InputScreen(
                 ),
             ) {
                 Text(
-                    text = "✨ Halalify It",
+                    text = if (sessionToken.isBlank()) "Sign in first" else "✨ Halalify It",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                     ),

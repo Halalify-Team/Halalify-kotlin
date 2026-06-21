@@ -110,6 +110,79 @@ internal suspend fun loginWithBackendDevAccountDetailed(
     }
 }
 
+internal suspend fun loginWithGoogleIdTokenDetailed(
+    backendUrl: String,
+    idToken: String,
+): DevLoginResult = withContext(Dispatchers.IO) {
+    try {
+        val baseUrl = backendUrl.trim().trimEnd('/')
+        if (baseUrl.isBlank()) {
+            error("Backend URL is required.")
+        }
+        val cleanIdToken = idToken.trim()
+        if (cleanIdToken.isBlank()) {
+            error("Google sign-in did not return an ID token.")
+        }
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+        val json = JSONObject()
+            .put("idToken", cleanIdToken)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("$baseUrl/auth/google")
+            .header("Content-Type", "application/json")
+            .header("X-Platform", "android")
+            .post(json)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                error(httpErrorMessage("Google sign-in failed", response.code, body))
+            }
+            val payload = JSONObject(body)
+            if (!payload.optBoolean("success")) {
+                error("Google sign-in rejected: ${body.take(1200)}")
+            }
+            val token = payload.optString("sessionToken")
+            if (token.isBlank()) {
+                error("Google sign-in response has no sessionToken: ${body.take(1200)}")
+            }
+            val quota = payload.optJSONObject("quota")
+            val subscription = payload.optJSONObject("subscription")
+            val email = payload.optString("email", "Google account")
+            val quotaState = QuotaState(
+                userId = payload.optString("userId"),
+                email = email,
+                plan = payload.optString("plan", "unknown"),
+                accountStatus = payload.optString("status", "unknown"),
+                minutesRemaining = quota?.optDoubleOrNull("minutesRemaining"),
+                minutesTotal = quota?.optDoubleOrNull("minutesTotal"),
+                customerPortalUrl = subscription?.optString("customerPortalUrl")?.takeIf { it.isNotBlank() && it != "null" },
+                statusMessage = "Quota loaded from Google sign-in.",
+            )
+            DevLoginResult(
+                message = "SUCCESS: signed in with Google.\n" +
+                    "email: $email\n" +
+                    "plan: ${payload.optString("plan", "unknown")}\n" +
+                    "minutesRemaining: ${quota?.opt("minutesRemaining") ?: "unknown"}",
+                sessionToken = token,
+                quota = quotaState,
+            )
+        }
+    } catch (error: Throwable) {
+        DevLoginResult(
+            message = "FAILED: ${error.toBackendUserMessage("sign in with Google")}",
+            sessionToken = null,
+        )
+    }
+}
+
 internal suspend fun fetchQuotaState(
     backendUrl: String,
     sessionToken: String,

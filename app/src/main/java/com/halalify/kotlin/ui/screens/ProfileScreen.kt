@@ -67,6 +67,7 @@ internal fun ProfileScreen(
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
+    onGoogleLogin: () -> Unit,
     onRefreshQuota: () -> Unit,
     onOpenSubscription: (String) -> Unit,
     onLogout: () -> Unit,
@@ -124,6 +125,7 @@ internal fun ProfileScreen(
                 onBackendUrlChange = onBackendUrlChange,
                 onDevEmailChange = onDevEmailChange,
                 onDevLogin = onDevLogin,
+                onGoogleLogin = onGoogleLogin,
                 onLogout = onLogout,
             )
 
@@ -212,6 +214,7 @@ private fun SettingsCard(
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onDevLogin: () -> Unit,
+    onGoogleLogin: () -> Unit,
     onLogout: () -> Unit,
 ) {
     Card(
@@ -253,7 +256,7 @@ private fun SettingsCard(
                 value = devEmail,
                 onValueChange = if (showDeveloperControls) onDevEmailChange else { _ -> },
                 enabled = showDeveloperControls,
-                label = { Text(if (showDeveloperControls) "Account Email" else "Device Account") },
+                label = { Text(if (showDeveloperControls) "Account Email" else "Google Account") },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Email,
@@ -272,7 +275,13 @@ private fun SettingsCard(
             }
 
             Button(
-                onClick = if (isSignedIn) onLogout else onDevLogin,
+                onClick = if (isSignedIn) {
+                    onLogout
+                } else if (showDeveloperControls) {
+                    onDevLogin
+                } else {
+                    onGoogleLogin
+                },
                 enabled = !isLoggingIn,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -297,7 +306,11 @@ private fun SettingsCard(
                     )
                     Spacer(modifier = Modifier.size(8.dp))
                     Text(
-                        text = if (isSignedIn) "Sign Out" else "Sign In",
+                        text = when {
+                            isSignedIn -> "Sign Out"
+                            showDeveloperControls -> "Sign In"
+                            else -> "Sign in with Google"
+                        },
                         fontWeight = FontWeight.Bold,
                     )
                 }

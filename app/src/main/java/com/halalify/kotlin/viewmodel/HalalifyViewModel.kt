@@ -30,6 +30,7 @@ import com.halalify.kotlin.model.LibraryItem
 import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.network.cleanAudioWithBackend
 import com.halalify.kotlin.network.fetchQuotaState
+import com.halalify.kotlin.network.loginWithGoogleIdTokenDetailed
 import com.halalify.kotlin.network.loginWithBackendDevAccountDetailed
 import java.io.File
 import java.io.FileInputStream
@@ -329,7 +330,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _backendUrl = MutableStateFlow(BuildConfig.DEFAULT_BACKEND_URL)
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
-    private val _devEmail = MutableStateFlow(getOrCreateInstallEmail())
+    private val _devEmail = MutableStateFlow("")
     val devEmail: StateFlow<String> = _devEmail.asStateFlow()
 
     private val _sessionToken = MutableStateFlow("")
@@ -351,11 +352,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     fun updateBackendUrl(url: String) { _backendUrl.value = url }
     fun updateDevEmail(email: String) {
         _devEmail.value = email
-        getApplication<Application>()
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_INSTALL_EMAIL, email)
-            .apply()
     }
     fun updateSessionToken(token: String) { _sessionToken.value = token }
 
@@ -382,6 +378,32 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             )
             _loginStatus.value = result.message
             _sessionToken.value = result.sessionToken.orEmpty()
+            _quotaState.value = result.quota?.copy(isLoading = false)
+                ?: QuotaState(
+                    statusMessage = result.message,
+                    isLoading = false,
+                )
+            _isLoggingIn.value = false
+        }
+    }
+
+    fun googleLogin(idToken: String) {
+        viewModelScope.launch {
+            _isLoggingIn.value = true
+            _loginStatus.value = "Signing in with Google..."
+            _quotaState.value = _quotaState.value.copy(
+                isLoading = true,
+                statusMessage = "Signing in with Google...",
+            )
+            val result = loginWithGoogleIdTokenDetailed(
+                backendUrl = _backendUrl.value,
+                idToken = idToken,
+            )
+            _loginStatus.value = result.message
+            _sessionToken.value = result.sessionToken.orEmpty()
+            result.quota?.let { quota ->
+                _devEmail.value = quota.email
+            }
             _quotaState.value = result.quota?.copy(isLoading = false)
                 ?: QuotaState(
                     statusMessage = result.message,
@@ -435,24 +457,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 validateYoutubeUrl(url)
                 if (baseUrl.isBlank()) error("Backend URL is required.")
 
-                // Auto Dev-Login if session token is empty
                 var token = _sessionToken.value.trim()
                 if (token.isBlank()) {
-                    updatePhase("Authenticating dev session...")
-                    val result = loginWithBackendDevAccountDetailed(
-                        backendUrl = baseUrl,
-                        email = _devEmail.value,
-                    )
-                    val returnedToken = result.sessionToken
-                    if (returnedToken.isNullOrBlank()) {
-                        error("Auto dev-login failed: ${result.message}")
-                    }
-                    _sessionToken.value = returnedToken
-                    _loginStatus.value = result.message
-                    result.quota?.let { quota ->
-                        _quotaState.value = quota.copy(isLoading = false)
-                    }
-                    token = returnedToken
+                    error("Please sign in with Google before processing a video.")
                 }
 
                 // Phase 1: Get metadata
@@ -813,18 +820,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         }
     }
 
-    private fun getOrCreateInstallEmail(): String {
-        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val existing = prefs.getString(KEY_INSTALL_EMAIL, null)
-        if (!existing.isNullOrBlank()) return existing
-
-        val email = "mobile-${UUID.randomUUID().toString().replace("-", "").take(16)}@halalify.app"
-        prefs.edit()
-            .putString(KEY_INSTALL_EMAIL, email)
-            .apply()
-        return email
-    }
-
     private fun buildChunkPlans(durationSeconds: Int): List<ChunkPlan> {
         val totalDuration = durationSeconds.coerceAtLeast(1)
         val plans = mutableListOf<ChunkPlan>()
@@ -908,9 +903,6 @@ private data class CleanChunkResult(
 )
 
 private class PartialProcessingException(message: String) : RuntimeException(message)
-
-private const val PREFS_NAME = "halalify_mobile"
-private const val KEY_INSTALL_EMAIL = "install_email"
 
 private val temporaryWorkDirNames = listOf(
     "halalify-audio-chunk-download",

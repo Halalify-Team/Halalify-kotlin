@@ -62,6 +62,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _exportStatus = MutableStateFlow<String?>(null)
     val exportStatus: StateFlow<String?> = _exportStatus.asStateFlow()
 
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+
     private val _libraryStatus = MutableStateFlow<String?>(null)
     val libraryStatus: StateFlow<String?> = _libraryStatus.asStateFlow()
 
@@ -204,25 +207,31 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun exportToGallery(context: Context, videoPath: String, title: String) {
+        if (_isExporting.value || _processing.value.isSavedToGallery) return
         viewModelScope.launch {
+            _isExporting.value = true
             _exportStatus.value = "Saving to Gallery..."
-            val resultUri = withContext(Dispatchers.IO) {
-                saveVideoToGallery(context, videoPath, title)
-            }
-            if (resultUri != null) {
-                _exportStatus.value = "SUCCESS: Saved to Gallery (Movies/Halalify)!"
-                _processing.update { it.copy(isSavedToGallery = true) }
-                val state = _processing.value
-                if (!state.isLibraryPlayback && state.originalUrl.isNotBlank()) {
-                    saveToLibraryInternal(
-                        title = state.videoTitle.ifBlank { title },
-                        filePath = videoPath,
-                        originalUrl = state.originalUrl,
-                        durationSeconds = state.totalDurationSeconds,
-                    )
+            try {
+                val resultUri = withContext(Dispatchers.IO) {
+                    saveVideoToGallery(context, videoPath, title)
                 }
-            } else {
-                _exportStatus.value = "FAILED: Could not save video to Gallery."
+                if (resultUri != null) {
+                    _exportStatus.value = "SUCCESS: Saved to Gallery (Movies/Halalify)!"
+                    _processing.update { it.copy(isSavedToGallery = true) }
+                    val state = _processing.value
+                    if (!state.isLibraryPlayback && state.originalUrl.isNotBlank()) {
+                        saveToLibraryInternal(
+                            title = state.videoTitle.ifBlank { title },
+                            filePath = videoPath,
+                            originalUrl = state.originalUrl,
+                            durationSeconds = state.totalDurationSeconds,
+                        )
+                    }
+                } else {
+                    _exportStatus.value = "FAILED: Could not save video to Gallery."
+                }
+            } finally {
+                _isExporting.value = false
             }
         }
     }

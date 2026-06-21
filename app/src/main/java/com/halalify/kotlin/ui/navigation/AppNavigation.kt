@@ -33,6 +33,7 @@ internal fun AppNavigation(
     val quotaState by viewModel.quotaState.collectAsState()
     val libraryItems by viewModel.libraryItems.collectAsState()
     val exportStatus by viewModel.exportStatus.collectAsState()
+    val isExporting by viewModel.isExporting.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
 
     AnimatedContent(
@@ -76,6 +77,7 @@ internal fun AppNavigation(
             AppScreen.RESULT -> ResultScreen(
                 state = processingState,
                 exportStatus = exportStatus,
+                isExporting = isExporting,
                 onSaveToGallery = {
                     if (processingState.playablePaths.isNotEmpty()) {
                         viewModel.exportToGallery(activity, processingState.playablePaths.first(), processingState.videoTitle)

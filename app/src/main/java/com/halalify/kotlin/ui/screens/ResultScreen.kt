@@ -53,6 +53,7 @@ import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 internal fun ResultScreen(
     state: ProcessingState,
     exportStatus: String?,
+    isExporting: Boolean,
     onSaveToGallery: () -> Unit,
     onClearExportStatus: () -> Unit,
     onBack: () -> Unit,
@@ -204,13 +205,16 @@ internal fun ResultScreen(
             if (state.isComplete) {
                 Button(
                     onClick = onSaveToGallery,
+                    enabled = !state.isSavedToGallery && !isExporting,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = HalalifyTextPrimary,
+                        containerColor = if (state.isSavedToGallery) HalalifySuccess else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (state.isSavedToGallery) HalalifyTextOnAccent else HalalifyTextPrimary,
+                        disabledContainerColor = HalalifySuccess,
+                        disabledContentColor = HalalifyTextOnAccent,
                     ),
                 ) {
                     Icon(
@@ -220,7 +224,11 @@ internal fun ResultScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Save to Gallery",
+                        text = when {
+                            isExporting -> "Saving..."
+                            state.isSavedToGallery -> "Saved to Gallery"
+                            else -> "Save to Gallery"
+                        },
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                     )
                 }

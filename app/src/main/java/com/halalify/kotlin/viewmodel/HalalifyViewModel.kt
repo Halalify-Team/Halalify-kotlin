@@ -32,6 +32,10 @@ import com.halalify.kotlin.network.fetchQuotaState
 import com.halalify.kotlin.network.loginWithBackendDevAccountDetailed
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -390,7 +394,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             }.onFailure { error ->
                 _quotaState.value = _quotaState.value.copy(
                     isLoading = false,
-                    statusMessage = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+                    statusMessage = "FAILED: ${error.userFacingMessage()}",
                 )
             }
         }
@@ -444,7 +448,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     )
                 }.getOrElse { quotaError ->
                     throw IllegalStateException(
-                        "Quota check failed before processing: ${quotaError.userFacingMessage()}"
+                        "Could not verify your quota before processing. ${quotaError.userFacingMessage()}"
                     )
                 }
                 _quotaState.value = quota.copy(isLoading = false)
@@ -833,9 +837,38 @@ private fun Throwable.userFacingMessage(): String {
     val rawMessage = message
         ?.lineSequence()
         ?.filter { it.isNotBlank() }
-        ?.take(12)
+        ?.take(6)
         ?.joinToString("\n")
         ?.ifBlank { null }
         ?: javaClass.simpleName
-    return "${javaClass.simpleName}: $rawMessage".take(1800)
+    val cleaned = rawMessage
+        .removePrefix("FAILED:")
+        .trim()
+
+    return when {
+        this is SocketTimeoutException || cleaned.contains("timeout", ignoreCase = true) -> {
+            "The backend took too long to respond. Check that the backend and database are running, then try again."
+        }
+        this is UnknownHostException -> {
+            "Cannot find the backend host. Check the backend URL in Profile."
+        }
+        this is ConnectException || cleaned.contains("failed to connect", ignoreCase = true) -> {
+            "Cannot reach the backend. Make sure your phone and backend are on the same network."
+        }
+        this is IOException || cleaned.contains("network", ignoreCase = true) -> {
+            "Network request failed. Check Wi-Fi and backend status, then try again."
+        }
+        cleaned.contains("session", ignoreCase = true) &&
+            (cleaned.contains("expired", ignoreCase = true) || cleaned.contains("invalid", ignoreCase = true)) -> {
+            "Your session expired. Please sign in again from Profile."
+        }
+        cleaned.contains("quota", ignoreCase = true) ||
+            cleaned.contains("not enough", ignoreCase = true) -> {
+            cleaned.take(700)
+        }
+        cleaned.contains("HTTP 403", ignoreCase = true) || cleaned.contains("403") -> {
+            "Your account cannot process this chunk. Check your quota or sign in again."
+        }
+        else -> cleaned.take(700)
+    }
 }

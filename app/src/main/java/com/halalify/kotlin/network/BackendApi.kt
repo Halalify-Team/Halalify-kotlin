@@ -6,6 +6,10 @@ import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.model.UploadStart
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +70,7 @@ internal suspend fun loginWithBackendDevAccountDetailed(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                error("Dev login failed. http=${response.code} body=${body.take(1200)}")
+                error(httpErrorMessage("Sign in failed", response.code, body))
             }
             val payload = JSONObject(body)
             if (!payload.optBoolean("success")) {
@@ -98,7 +102,7 @@ internal suspend fun loginWithBackendDevAccountDetailed(
         }
     } catch (error: Throwable) {
         DevLoginResult(
-            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            message = "FAILED: ${error.toBackendUserMessage("sign in")}",
             sessionToken = null,
         )
     }
@@ -131,7 +135,7 @@ internal suspend fun fetchQuotaState(
     val identity = client.newCall(validateRequest).execute().use { response ->
         val body = response.body?.string().orEmpty()
         if (!response.isSuccessful) {
-            error("Session validation failed. http=${response.code} body=${body.take(1200)}")
+            error(httpErrorMessage("Session validation failed", response.code, body))
         }
         val json = JSONObject(body)
         if (!json.optBoolean("valid")) {
@@ -153,7 +157,7 @@ internal suspend fun fetchQuotaState(
     client.newCall(statusRequest).execute().use { response ->
         val body = response.body?.string().orEmpty()
         if (!response.isSuccessful) {
-            error("Quota refresh failed. http=${response.code} body=${body.take(1200)}")
+            error(httpErrorMessage("Quota refresh failed", response.code, body))
         }
         val json = JSONObject(body)
         if (json.optString("status") != "success") {
@@ -245,7 +249,7 @@ internal suspend fun cleanAudioWithBackend(
         )
     } catch (error: Throwable) {
         FileResult(
-            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            message = "FAILED: ${error.toBackendUserMessage("remove music")}",
             path = null,
         )
     }
@@ -287,7 +291,7 @@ private fun uploadAudioChunk(
     client.newCall(request).execute().use { response ->
         val body = response.body?.string().orEmpty()
         if (!response.isSuccessful) {
-            error("Upload failed. http=${response.code} body=${body.take(1200)}")
+            error(httpErrorMessage("Audio upload failed", response.code, body))
         }
         val json = JSONObject(body)
         if (json.optString("status") != "processing") {
@@ -318,7 +322,7 @@ private suspend fun pollCleanAudioUrl(
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                error("Status failed. http=${response.code} body=${body.take(1200)}")
+                error(httpErrorMessage("Clean audio status failed", response.code, body))
             }
             val json = JSONObject(body)
             when (val status = json.optString("status")) {
@@ -347,7 +351,7 @@ private fun downloadFile(client: OkHttpClient, url: String, outputFile: File) {
 
     client.newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
-            error("Clean audio download failed. http=${response.code}")
+            error(httpErrorMessage("Clean audio download failed", response.code, ""))
         }
         val body = response.body ?: error("Clean audio download returned an empty body.")
         FileOutputStream(outputFile).use { output ->
@@ -366,4 +370,38 @@ private fun JSONObject.optDoubleOrNull(name: String): Double? {
 private fun JSONObject.optIntOrNull(name: String): Int? {
     if (!has(name) || isNull(name)) return null
     return runCatching { optInt(name) }.getOrNull()
+}
+
+private fun httpErrorMessage(prefix: String, code: Int, body: String): String {
+    val serverMessage = body.extractServerMessage()
+    return when (code) {
+        401 -> "$prefix: please sign in again."
+        403 -> serverMessage?.let { "$prefix: $it" } ?: "$prefix: your account cannot perform this action."
+        404 -> "$prefix: backend route was not found."
+        413 -> "$prefix: this chunk is too large to upload."
+        429 -> "$prefix: too many requests. Please wait a moment and try again."
+        in 500..599 -> "$prefix: backend service is unavailable right now."
+        else -> serverMessage?.let { "$prefix: $it" } ?: "$prefix: HTTP $code."
+    }
+}
+
+private fun String.extractServerMessage(): String? {
+    if (isBlank()) return null
+    return runCatching {
+        val json = JSONObject(this)
+        json.optString("message")
+            .ifBlank { json.optString("error") }
+            .ifBlank { null }
+    }.getOrNull() ?: take(240).ifBlank { null }
+}
+
+private fun Throwable.toBackendUserMessage(action: String): String {
+    val rawMessage = message.orEmpty()
+    return when (this) {
+        is SocketTimeoutException -> "The backend took too long to $action. Check the backend/database connection and try again."
+        is UnknownHostException -> "Cannot find the backend host. Check the backend URL."
+        is ConnectException -> "Cannot reach the backend. Make sure your phone and backend are on the same network."
+        is IOException -> "Network connection failed while trying to $action. Check Wi-Fi and backend status."
+        else -> rawMessage.ifBlank { javaClass.simpleName }.take(500)
+    }
 }

@@ -71,6 +71,7 @@ internal fun ProcessingScreen(
         animationSpec = tween(600),
         label = "progressAnim",
     )
+    val hasReadyPreview = state.firstChunkReady && state.playablePaths.isNotEmpty()
 
     Column(
         modifier = Modifier
@@ -140,9 +141,9 @@ internal fun ProcessingScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Watch now button (appears when first chunk is ready)
+        // Watch button stays available even if later chunks fail.
         AnimatedVisibility(
-            visible = state.firstChunkReady && !state.isComplete && state.errorMessage == null,
+            visible = hasReadyPreview && !state.isComplete,
             enter = fadeIn() + slideInVertically(),
         ) {
             Button(
@@ -163,7 +164,7 @@ internal fun ProcessingScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Watch while processing",
+                    text = if (state.errorMessage == null) "Watch while processing" else "Watch ready part",
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
@@ -194,7 +195,7 @@ internal fun ProcessingScreen(
                     containerColor = HalalifyAccentDim,
                 ),
             ) {
-                Text("Try Again")
+                Text(if (hasReadyPreview) "Start Over" else "Try Again")
             }
         }
 

@@ -565,9 +565,26 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                     val playableSegments = mutableListOf<String>()
                     for (index in 0 until totalChunks) {
-                        val result = chunkJobs[index].await().getOrElse { error ->
-                            updateChunk(index, ChunkPhase.ERROR, error.userFacingMessage())
-                            error("Chunk ${index + 1}/$totalChunks failed: ${error.userFacingMessage()}")
+                        val result = chunkJobs[index].await().getOrElse { chunkError ->
+                            val message = "Chunk ${index + 1}/$totalChunks failed: ${chunkError.userFacingMessage()}"
+                            chunkJobs.drop(index + 1).forEach { pendingJob ->
+                                pendingJob.cancel()
+                            }
+                            sourceAudioDeferred.cancel()
+                            updateChunk(index, ChunkPhase.ERROR, chunkError.userFacingMessage())
+                            _processing.update { state ->
+                                state.copy(
+                                    playablePaths = playableSegments.toList(),
+                                    firstChunkReady = playableSegments.isNotEmpty(),
+                                    currentPhaseLabel = if (playableSegments.isNotEmpty()) {
+                                        "Stopped after ${playableSegments.size}/$totalChunks chunks"
+                                    } else {
+                                        "Failed"
+                                    },
+                                    errorMessage = message,
+                                )
+                            }
+                            throw PartialProcessingException(message)
                         }
                         cleanAudioChunks[index] = result.cleanAudioPath
                         val plan = chunkPlans[index]
@@ -664,6 +681,17 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (partial: PartialProcessingException) {
+                _processing.update {
+                    it.copy(
+                        errorMessage = partial.message ?: "Processing stopped.",
+                        currentPhaseLabel = if (it.playablePaths.isNotEmpty()) {
+                            "Stopped after ${it.completedChunks}/${it.totalChunks} chunks"
+                        } else {
+                            "Failed"
+                        },
+                    )
+                }
             } catch (error: Throwable) {
                 _processing.update {
                     it.copy(
@@ -825,6 +853,8 @@ private data class CleanChunkResult(
     val index: Int,
     val cleanAudioPath: String,
 )
+
+private class PartialProcessingException(message: String) : RuntimeException(message)
 
 private val temporaryWorkDirNames = listOf(
     "halalify-audio-chunk-download",

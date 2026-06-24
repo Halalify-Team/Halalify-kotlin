@@ -5,12 +5,12 @@ import android.app.Application
 import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.BuildConfig
-import com.halalify.kotlin.media.CHUNK_DURATION_SECONDS
-import com.halalify.kotlin.media.FIRST_CHUNK_DURATION_SECONDS
 import com.halalify.kotlin.media.downloadAudioChunk
 import com.halalify.kotlin.media.downloadVideo
 import com.halalify.kotlin.media.downloadVideoSection
@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.supervisorScope
@@ -442,9 +443,15 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     fun startProcessing(activity: ComponentActivity, youtubeUrl: String) {
         val url = youtubeUrl.trim()
         val baseUrl = _backendUrl.value.trim()
+        val processingStartedAt = SystemClock.elapsedRealtime()
+
+        fun perf(stage: String) {
+            Log.i("HalalifyPerf", "+${SystemClock.elapsedRealtime() - processingStartedAt}ms $stage")
+        }
 
         processingJob?.cancel()
         processingJob = viewModelScope.launch {
+            perf("processing-start")
             _screen.value = AppScreen.PROCESSING
             _processing.value = ProcessingState(
                 originalUrl = url,
@@ -461,23 +468,43 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     error("Please sign in with Google before processing a video.")
                 }
 
-                // Resolve metadata and reusable direct media URLs in one yt-dlp call.
+                val quotaDeferred = async {
+                    runCatching {
+                        fetchQuotaState(
+                            backendUrl = baseUrl,
+                            sessionToken = token,
+                        )
+                    }
+                }
+
+                // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
                 val directMedia = extractDirectMediaSession(activity, url)
+                perf(
+                    "media-session-ready audio=${directMedia.audio.formatId} " +
+                        "video=${directMedia.video.formatId}"
+                )
                 val metadata = directMedia.metadata
                 updatePhase("Checking account quota...")
-                val quota = runCatching {
-                    fetchQuotaState(
-                        backendUrl = baseUrl,
-                        sessionToken = token,
-                    )
-                }.getOrElse { quotaError ->
+                val cachedQuota = _quotaState.value.takeIf {
+                    it.hasLiveData && !it.isLoading
+                }
+                val quota = cachedQuota ?: quotaDeferred.await().getOrElse { quotaError ->
                     throw IllegalStateException(
-                        "Could not verify your quota before processing. ${quotaError.userFacingMessage()}"
+                        "Could not verify your quota before processing. " +
+                            quotaError.userFacingMessage()
                     )
                 }
                 _quotaState.value = quota.copy(isLoading = false)
                 validateEnoughQuotaForVideo(quota, metadata.durationSeconds)
+                perf("quota-verified cached=${cachedQuota != null}")
+                if (cachedQuota != null) {
+                    launch {
+                        quotaDeferred.await().onSuccess { refreshedQuota ->
+                            _quotaState.value = refreshedQuota.copy(isLoading = false)
+                        }
+                    }
+                }
 
                 val chunkPlans = buildChunkPlans(metadata.durationSeconds)
                 val totalChunks = chunkPlans.size
@@ -508,14 +535,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 // Each audio range is read directly from YouTube. No full source audio
                 // is downloaded or cut before the first chunk reaches the backend.
                 val cleanAudioChunks = Array<String?>(totalChunks) { null }
-                val audioRangeSemaphore = Semaphore(2)
+                val audioRangeSemaphore = Semaphore(1)
                 val videoRangeSemaphore = Semaphore(1)
-                val backendSemaphore = Semaphore(2)
+                val backendSemaphore = Semaphore(1)
                 val muxSemaphore = Semaphore(1)
+                val firstChunkPlayable = CompletableDeferred<Unit>()
 
                 supervisorScope {
                     val videoChunkJobs = chunkPlans.map { plan ->
                         async {
+                            if (plan.index > 0) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
                                 val videoChunk = downloadVideoSection(
                                     activity = activity,
@@ -524,13 +553,15 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     durationSeconds = plan.durationSeconds,
                                     chunkIndex = plan.index,
                                 )
-                                videoChunk.path ?: error(videoChunk.message)
+                                (videoChunk.path ?: error(videoChunk.message))
+                                    .also { perf("chunk-${plan.index}-video-ready") }
                             }
                         }
                     }
                     val chunkJobs = chunkPlans.map { plan ->
                         async {
                             try {
+                                if (plan.index > 0) firstChunkPlayable.await()
                                 updateChunk(plan.index, ChunkPhase.EXTRACTING_AUDIO)
                                 updatePhase(
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
@@ -543,12 +574,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                         durationSeconds = plan.durationSeconds,
                                         chunkIndex = plan.index,
                                     )
-                                    audioChunk.path ?: error(audioChunk.message)
+                                    (audioChunk.path ?: error(audioChunk.message))
+                                        .also { perf("chunk-${plan.index}-audio-ready") }
                                 }
 
-                                updateChunk(plan.index, ChunkPhase.CLEANING_BACKEND)
-                                updatePhase("Chunk ${plan.index + 1}/$totalChunks: removing music...")
                                 val rawCleanPath = backendSemaphore.withPermit {
+                                    updateChunk(plan.index, ChunkPhase.CLEANING_BACKEND)
+                                    updatePhase(
+                                        "Chunk ${plan.index + 1}/$totalChunks: removing music..."
+                                    )
+                                    perf("chunk-${plan.index}-backend-start")
                                     val cleanResult = cleanAudioWithBackend(
                                         activity = activity,
                                         inputPath = audioChunkPath,
@@ -560,7 +595,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     cleanResult.minutesRemaining?.let { remaining ->
                                         updateQuotaAfterChunk(remaining)
                                     }
-                                    cleanResult.path ?: error(cleanResult.message)
+                                    (cleanResult.path ?: error(cleanResult.message))
+                                        .also { perf("chunk-${plan.index}-backend-ready") }
                                 }
                                 File(audioChunkPath).delete()
 
@@ -638,6 +674,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         }
 
                         playableSegments += playablePath
+                        perf("chunk-$index-playable-ready")
                         updateChunk(index, ChunkPhase.DONE)
                         _processing.update { state ->
                             state.copy(
@@ -652,6 +689,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             )
                         }
                         if (index == 0) {
+                            firstChunkPlayable.complete(Unit)
                             updatePhase("Ready to watch. Final video is downloading in background...")
                             startFullVideoDownload()
                         }
@@ -823,17 +861,14 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         var start = 0
         var index = 0
 
-        val firstDuration = totalDuration.coerceAtMost(FIRST_CHUNK_DURATION_SECONDS).coerceAtLeast(1)
-        plans += ChunkPlan(
-            index = index,
-            startSeconds = start,
-            durationSeconds = firstDuration,
-        )
-        start += firstDuration
-        index += 1
-
         while (start < totalDuration) {
-            val duration = (totalDuration - start).coerceAtMost(CHUNK_DURATION_SECONDS).coerceAtLeast(1)
+            val targetDuration = when (index) {
+                0 -> 10
+                1, 2 -> 15
+                3 -> 30
+                else -> 60
+            }
+            val duration = (totalDuration - start).coerceAtMost(targetDuration).coerceAtLeast(1)
             plans += ChunkPlan(
                 index = index,
                 startSeconds = start,

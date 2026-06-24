@@ -1,6 +1,8 @@
 package com.halalify.kotlin.media
 
 import androidx.activity.ComponentActivity
+import android.net.Uri
+import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.halalify.kotlin.model.DownloadResult
@@ -17,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 private const val YOUTUBE_USER_AGENT =
@@ -61,12 +65,19 @@ internal suspend fun extractDirectMediaSession(
     youtubeUrl: String,
 ): DirectMediaSession = withContext(Dispatchers.IO) {
     validateYoutubeUrl(youtubeUrl)
+    runCatching {
+        extractFastAndroidMediaSession(youtubeUrl)
+    }.onSuccess {
+        return@withContext it
+    }.onFailure { error ->
+        Log.w("HalalifyPerf", "Innertube fast path failed, using yt-dlp: ${error.message}")
+    }
+
     initYoutubeDl(activity)
 
     val extractorAttempts = listOf(
-        "youtube:player_client=android_vr",
-        "youtube:player_client=android_vr,android",
-        "youtube:player_client=android_vr,mweb",
+        "youtube:player_client=android,mweb",
+        "youtube:player_client=mweb,android",
     )
     var lastError = ""
 
@@ -79,9 +90,10 @@ internal suspend fun extractDirectMediaSession(
         request.addOption("--fragment-retries", "1")
         request.addOption("--extractor-retries", "1")
         request.addOption("--extractor-args", extractorArgs)
+        request.addOption("-f", "18/best[height<=480][vcodec!=none][acodec!=none]/best[height<=480]")
         request.addOption("--user-agent", YOUTUBE_USER_AGENT)
         request.addOption("--referer", "https://www.youtube.com/")
-        request.addOption("-J")
+        request.addOption("-j")
 
         val response = runCatching {
             YoutubeDL.getInstance().execute(
@@ -90,7 +102,7 @@ internal suspend fun extractDirectMediaSession(
                 true,
             )
         }.getOrElse { error ->
-            lastError = "attempt ${index + 1}: ${error.javaClass.simpleName}: ${error.message}"
+            lastError = "attempt ${index + 1}: ${error.javaClass.simpleName}: ${error.message ?: error}"
             return@forEachIndexed
         }
         if (response.exitCode != 0) {
@@ -115,6 +127,117 @@ internal suspend fun extractDirectMediaSession(
     }
 
     error("Could not extract seekable YouTube media URLs. $lastError")
+}
+
+private fun extractFastAndroidMediaSession(youtubeUrl: String): DirectMediaSession {
+    val videoId = extractYoutubeVideoId(youtubeUrl)
+        ?: error("Could not identify the YouTube video ID.")
+    val clientVersion = "20.10.38"
+    val androidUserAgent =
+        "com.google.android.youtube/$clientVersion (Linux; U; Android 11) gzip"
+    val requestJson = JSONObject()
+        .put("videoId", videoId)
+        .put(
+            "context",
+            JSONObject().put(
+                "client",
+                JSONObject()
+                    .put("clientName", "ANDROID")
+                    .put("clientVersion", clientVersion)
+                    .put("androidSdkVersion", 30)
+                    .put("osName", "Android")
+                    .put("osVersion", "11")
+            )
+        )
+        .toString()
+        .toRequestBody("application/json".toMediaType())
+    val request = Request.Builder()
+        .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+        .header("User-Agent", androidUserAgent)
+        .header("X-YouTube-Client-Name", "3")
+        .header("X-YouTube-Client-Version", clientVersion)
+        .post(requestJson)
+        .build()
+    val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    return client.newCall(request).execute().use { response ->
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            error("YouTube player API returned HTTP ${response.code}.")
+        }
+        val json = JSONObject(body)
+        val playability = json.optJSONObject("playabilityStatus")?.optString("status")
+        if (playability != "OK") {
+            val reason = json.optJSONObject("playabilityStatus")?.optString("reason")
+            error(reason.ifNullOrBlank { "YouTube video is not playable." })
+        }
+        val details = json.optJSONObject("videoDetails")
+            ?: error("YouTube response did not include video details.")
+        val title = details.optString("title").ifBlank { "Untitled video" }
+        val duration = details.optString("lengthSeconds").toDoubleOrNull()?.toInt()
+            ?.takeIf { it > 0 }
+            ?: error("YouTube response did not include a valid duration.")
+        val formats = json.optJSONObject("streamingData")?.optJSONArray("formats")
+            ?: error("YouTube response did not include progressive formats.")
+        val candidates = buildList {
+            for (index in 0 until formats.length()) {
+                val format = formats.optJSONObject(index) ?: continue
+                val url = format.optString("url")
+                val mimeType = format.optString("mimeType")
+                if (!url.startsWith("http") || !mimeType.contains("video/") ||
+                    !mimeType.contains("mp4a")
+                ) {
+                    continue
+                }
+                add(format)
+            }
+        }
+        val selected = candidates.firstOrNull { it.optInt("itag") == 18 }
+            ?: candidates
+                .filter { it.optInt("height", 0) in 1..480 }
+                .maxByOrNull { it.optInt("height", 0) }
+            ?: error("No progressive YouTube format up to 480p was available.")
+        val media = DirectMediaResource(
+            url = selected.getString("url"),
+            headers = mapOf(
+                "User-Agent" to androidUserAgent,
+                "Referer" to "https://www.youtube.com/",
+            ),
+            extension = "mp4",
+            formatId = selected.optInt("itag").toString(),
+        )
+        DirectMediaSession(
+            metadata = VideoMetadata(title = title, durationSeconds = duration),
+            audio = media,
+            video = media,
+        )
+    }
+}
+
+private fun extractYoutubeVideoId(url: String): String? {
+    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+    val host = uri.host?.lowercase().orEmpty()
+    return when {
+        host == "youtu.be" || host.endsWith(".youtu.be") -> {
+            uri.pathSegments.firstOrNull()
+        }
+        host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com") -> {
+            uri.getQueryParameter("v")
+                ?: uri.pathSegments
+                    .let { segments ->
+                        val marker = segments.indexOfFirst { it == "shorts" || it == "embed" }
+                        if (marker >= 0) segments.getOrNull(marker + 1) else null
+                    }
+            }
+        else -> null
+    }?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{6,}")) }
+}
+
+private inline fun String?.ifNullOrBlank(defaultValue: () -> String): String {
+    return if (isNullOrBlank()) defaultValue() else this
 }
 
 internal fun calculateChunkCount(durationSeconds: Int): Int =
@@ -194,8 +317,12 @@ internal suspend fun downloadVideoSection(
             "-movflags", "+faststart",
             outputFile.absolutePath,
         )
-        val command = commandParts.joinToString(" ") { it.ffmpegQuote() }
-        val session = FFmpegKit.execute(command)
+        val session = LocalMediaProxy(media).use { proxy ->
+            val localCommand = commandParts
+                .map { part -> if (part == media.url) proxy.url else part }
+                .joinToString(" ") { it.ffmpegQuote() }
+            FFmpegKit.execute(localCommand)
+        }
         if (!ReturnCode.isSuccess(session.returnCode)) {
             error(
                 "ffmpeg remote video section failed. code=${session.returnCode?.value}\n" +
@@ -239,19 +366,20 @@ internal suspend fun downloadAudioChunk(
         outputDir.mkdirs()
 
         val outputFile = File(outputDir, "audio_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.m4a")
-        val command = listOf(
-            "-y",
-            "-rw_timeout", "20000000",
-            "-headers", media.toFfmpegHeaders(),
-            "-ss", startSeconds.toCliNumber(),
-            "-i", media.url,
-            "-t", safeDuration.toCliNumber(),
-            "-vn",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            outputFile.absolutePath,
-        ).joinToString(" ") { it.ffmpegQuote() }
-        val session = FFmpegKit.execute(command)
+        val session = LocalMediaProxy(media).use { proxy ->
+            val command = listOf(
+                "-y",
+                "-rw_timeout", "20000000",
+                "-ss", startSeconds.toCliNumber(),
+                "-i", proxy.url,
+                "-t", safeDuration.toCliNumber(),
+                "-vn",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                outputFile.absolutePath,
+            ).joinToString(" ") { it.ffmpegQuote() }
+            FFmpegKit.execute(command)
+        }
         if (!ReturnCode.isSuccess(session.returnCode)) {
             error(
                 "ffmpeg remote audio section failed. code=${session.returnCode?.value}\n" +
@@ -335,6 +463,22 @@ private fun parseDirectMediaSession(json: JSONObject): DirectMediaSession {
     if (duration <= 0) {
         error("yt-dlp media JSON did not include a valid duration.")
     }
+    val selectedUrl = json.optString("url")
+    val selectedVideoCodec = json.optString("vcodec")
+    val selectedAudioCodec = json.optString("acodec")
+    if (
+        selectedUrl.startsWith("http") &&
+        selectedVideoCodec.isNotBlank() && selectedVideoCodec != "none" &&
+        selectedAudioCodec.isNotBlank() && selectedAudioCodec != "none"
+    ) {
+        val selected = json.toDirectMediaResource()
+        return DirectMediaSession(
+            metadata = VideoMetadata(title = title, durationSeconds = duration),
+            audio = selected,
+            video = selected,
+        )
+    }
+
     val formats = json.optJSONArray("formats")
         ?: error("yt-dlp media JSON did not include formats.")
     val candidates = buildList {
@@ -350,22 +494,10 @@ private fun parseDirectMediaSession(json: JSONObject): DirectMediaSession {
         }
     }
 
-    val audioFormat = candidates
-        .filter {
-            it.optString("vcodec") == "none" &&
-                it.optString("acodec").let { codec -> codec.isNotBlank() && codec != "none" }
-        }
-        .maxWithOrNull(
-            compareBy<JSONObject>(
-                { if (it.optString("ext") == "m4a") 1 else 0 },
-                { it.optDouble("abr", 0.0) },
-            )
-        )
-        ?: error("No seekable audio-only format was available.")
-
     val videoFormat = candidates
         .filter {
             it.optString("vcodec").let { codec -> codec.isNotBlank() && codec != "none" } &&
+                it.optString("acodec").let { codec -> codec.isNotBlank() && codec != "none" } &&
                 it.optInt("height", 0).let { height -> height in 1..480 }
         }
         .maxWithOrNull(
@@ -377,6 +509,21 @@ private fun parseDirectMediaSession(json: JSONObject): DirectMediaSession {
             )
         )
         ?: error("No seekable video format up to 480p was available.")
+
+    val audioFormat = candidates
+        .filter {
+            it.optString("vcodec") == "none" &&
+                it.optString("acodec").let { codec -> codec.isNotBlank() && codec != "none" }
+        }
+        .maxWithOrNull(
+            compareBy<JSONObject>(
+                { if (it.optString("ext") == "m4a") 1 else 0 },
+                { it.optDouble("abr", 0.0) },
+            )
+        )
+        // Progressive format 18 is a reliable fallback when YouTube hides
+        // audio-only URLs behind PO tokens. FFmpeg still reads only the range.
+        ?: videoFormat
 
     return DirectMediaSession(
         metadata = VideoMetadata(title = title, durationSeconds = duration),

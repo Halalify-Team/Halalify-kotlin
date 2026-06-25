@@ -61,19 +61,27 @@ internal data class YoutubeFormatCatalog(
 
 internal fun discoverFastYoutubeFormats(
     youtubeUrl: String,
+): YoutubeFormatCatalog =
+    extractFastAndroidFormatCatalog(youtubeUrl)
+
+private fun extractFastAndroidMediaSession(
+    youtubeUrl: String,
+    maxVideoHeight: Int,
+): DirectMediaSession {
+    val catalog = extractFastAndroidFormatCatalog(youtubeUrl)
+    val requestedQuality = VideoQuality.entries
+        .filter { it.maxHeight <= maxVideoHeight }
+        .maxByOrNull { it.maxHeight }
+        ?: VideoQuality.P360
+    return catalog.sessionFor(requestedQuality)
+        ?: error("No YouTube format up to ${maxVideoHeight}p was available.")
+}
+
+private fun extractFastAndroidFormatCatalog(
+    youtubeUrl: String,
 ): YoutubeFormatCatalog {
     validateYoutubeUrl(youtubeUrl)
-    val session = extractFastAndroidMediaSession(
-        youtubeUrl = youtubeUrl,
-        maxVideoHeight = VideoQuality.P2160.maxHeight,
-    )
-    val quality = VideoQuality.entries
-        .firstOrNull { it.maxHeight == 360 }
-        ?: VideoQuality.P360
-    return YoutubeFormatCatalog(
-        metadata = session.metadata,
-        sessionsByQuality = mapOf(quality to session),
-    )
+    return requestFastAndroidFormatCatalog(youtubeUrl)
 }
 
 internal suspend fun discoverYoutubeFormats(
@@ -271,10 +279,9 @@ internal suspend fun extractDirectMediaSession(
     error("Could not extract seekable YouTube media URLs. $lastError")
 }
 
-private fun extractFastAndroidMediaSession(
+private fun requestFastAndroidFormatCatalog(
     youtubeUrl: String,
-    maxVideoHeight: Int,
-): DirectMediaSession {
+): YoutubeFormatCatalog {
     val videoId = extractYoutubeVideoId(youtubeUrl)
         ?: error("Could not identify the YouTube video ID.")
     val clientVersion = "20.10.38"
@@ -327,26 +334,27 @@ private fun extractFastAndroidMediaSession(
             ?: error("YouTube response did not include a valid duration.")
         val streamingData = json.optJSONObject("streamingData")
             ?: error("YouTube response did not include streaming data.")
-        val formats = streamingData.optJSONArray("formats")
-            ?: error("YouTube response did not include progressive formats.")
-        val candidates = buildList {
-            for (index in 0 until formats.length()) {
-                val format = formats.optJSONObject(index) ?: continue
-                val url = format.optString("url")
-                val mimeType = format.optString("mimeType")
-                if (!url.startsWith("http") || !mimeType.contains("video/") ||
-                    !mimeType.contains("mp4a")
-                ) {
-                    continue
+        val allFormats = buildList {
+            listOf("formats", "adaptiveFormats").forEach { arrayName ->
+                val array = streamingData.optJSONArray(arrayName) ?: return@forEach
+                for (index in 0 until array.length()) {
+                    array.optJSONObject(index)?.let(::add)
                 }
-                add(format)
             }
         }
-        val selectedProgressive = candidates.firstOrNull { it.optInt("itag") == 18 }
-            ?: candidates
-                .filter { it.optInt("height", 0) in 1..maxVideoHeight }
-                .maxByOrNull { it.optInt("height", 0) }
-            ?: error("No progressive YouTube format up to 480p was available.")
+        val directFormats = allFormats.filter { it.optString("url").startsWith("http") }
+        val audioFormats = directFormats.filter {
+            val mimeType = it.optString("mimeType")
+            mimeType.startsWith("audio/") ||
+                (mimeType.startsWith("video/") && mimeType.contains("mp4a"))
+        }
+        val bestAudio = audioFormats.maxWithOrNull(
+            compareBy<JSONObject>(
+                { if (it.optString("mimeType").startsWith("audio/")) 1 else 0 },
+                { if (it.optString("mimeType").contains("mp4a")) 1 else 0 },
+                { it.optInt("bitrate", 0) },
+            )
+        ) ?: error("YouTube response did not include a direct audio stream.")
 
         fun resource(format: JSONObject) = DirectMediaResource(
             url = format.getString("url"),
@@ -354,15 +362,46 @@ private fun extractFastAndroidMediaSession(
                 "User-Agent" to androidUserAgent,
                 "Referer" to "https://www.youtube.com/",
             ),
-            extension = "mp4",
+            extension = if (format.optString("mimeType").contains("webm")) "webm" else "mp4",
             formatId = format.optInt("itag").toString(),
         )
-        val progressive = resource(selectedProgressive)
-        DirectMediaSession(
-            metadata = VideoMetadata(title = title, durationSeconds = duration),
-            audio = progressive,
-            video = progressive,
+        val metadata = VideoMetadata(title = title, durationSeconds = duration)
+        val sessions = VideoQuality.entries.mapNotNull { quality ->
+            val candidates = directFormats.filter { format ->
+                format.optInt("height", 0) == quality.maxHeight &&
+                    format.optString("mimeType").startsWith("video/")
+            }
+            val selectedVideo = candidates.maxWithOrNull(
+                compareBy<JSONObject>(
+                    { if (it.optString("mimeType").contains("video/mp4")) 1 else 0 },
+                    { if (it.optString("mimeType").contains("avc1")) 1 else 0 },
+                    { if (it.optString("mimeType").contains("mp4a")) 1 else 0 },
+                    { it.optInt("fps", 0) },
+                    { it.optInt("bitrate", 0) },
+                )
+            ) ?: return@mapNotNull null
+            val selectedAudio = if (selectedVideo.optString("mimeType").contains("mp4a")) {
+                selectedVideo
+            } else {
+                bestAudio
+            }
+            quality to DirectMediaSession(
+                metadata = metadata,
+                audio = resource(selectedAudio),
+                video = resource(selectedVideo),
+            )
+        }.toMap()
+        if (sessions.isEmpty()) {
+            error("YouTube response did not include direct video formats.")
+        }
+        Log.i(
+            "HalalifyDownload",
+            "Fast available qualities for $title: " +
+                sessions.entries.joinToString { (quality, session) ->
+                    "${quality.label}(v=${session.video.formatId},a=${session.audio.formatId})"
+                }
         )
+        YoutubeFormatCatalog(metadata = metadata, sessionsByQuality = sessions)
     }
 }
 

@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra(Intent.EXTRA_TEXT)?.let { sharedText ->
                 val youtubeUrl = extractYoutubeUrl(sharedText)
                 if (youtubeUrl != null) {
-                    viewModel.startProcessing(this, youtubeUrl)
+                    viewModel.acceptSharedYoutubeUrl(youtubeUrl)
                 }
             }
         }

@@ -40,6 +40,7 @@ internal fun AppNavigation(
     val currentScreen by viewModel.screen.collectAsState()
     val processingState by viewModel.processing.collectAsState()
     val formatDiscovery by viewModel.formatDiscovery.collectAsState()
+    val sharedYoutubeUrl by viewModel.sharedYoutubeUrl.collectAsState()
     val backendUrl by viewModel.backendUrl.collectAsState()
     val devEmail by viewModel.devEmail.collectAsState()
     val sessionToken by viewModel.sessionToken.collectAsState()
@@ -140,6 +141,7 @@ internal fun AppNavigation(
     ) { screen ->
         when (screen) {
             AppScreen.INPUT -> InputScreen(
+                sharedYoutubeUrl = sharedYoutubeUrl,
                 backendUrl = backendUrl,
                 devEmail = devEmail,
                 sessionToken = sessionToken,
@@ -152,6 +154,7 @@ internal fun AppNavigation(
                 onSessionTokenChange = viewModel::updateSessionToken,
                 onDevLogin = viewModel::devLogin,
                 onGoogleLogin = ::launchGoogleSignIn,
+                onSharedYoutubeUrlConsumed = viewModel::consumeSharedYoutubeUrl,
                 onDiscoverFormats = { url ->
                     viewModel.discoverFormats(activity, url)
                 },

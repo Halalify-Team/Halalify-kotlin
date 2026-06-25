@@ -71,6 +71,7 @@ import kotlinx.coroutines.delay
 
 @Composable
 internal fun InputScreen(
+    sharedYoutubeUrl: String,
     backendUrl: String,
     devEmail: String,
     sessionToken: String,
@@ -83,6 +84,7 @@ internal fun InputScreen(
     onSessionTokenChange: (String) -> Unit,
     onDevLogin: () -> Unit,
     onGoogleLogin: () -> Unit,
+    onSharedYoutubeUrlConsumed: () -> Unit,
     onDiscoverFormats: (youtubeUrl: String) -> Unit,
     onStartProcessing: (
         youtubeUrl: String,
@@ -92,14 +94,24 @@ internal fun InputScreen(
     onNavigateToLibrary: () -> Unit,
     onNavigateToProfile: () -> Unit,
 ) {
-    var youtubeUrl by remember { mutableStateOf("") }
+    var youtubeUrl by remember { mutableStateOf(sharedYoutubeUrl) }
     var removeMusic by remember { mutableStateOf(true) }
     var quality by remember { mutableStateOf(VideoQuality.P360) }
+    var qualityUrl by remember { mutableStateOf("") }
     var showDevSettings by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
     val normalizedUrl = youtubeUrl.trim()
     val formatsReadyForUrl = formatDiscovery.url == normalizedUrl &&
         formatDiscovery.availableQualities.isNotEmpty()
+
+    LaunchedEffect(sharedYoutubeUrl) {
+        if (sharedYoutubeUrl.isNotBlank()) {
+            if (sharedYoutubeUrl != youtubeUrl) {
+                youtubeUrl = sharedYoutubeUrl
+            }
+            onSharedYoutubeUrlConsumed()
+        }
+    }
 
     LaunchedEffect(normalizedUrl) {
         if (normalizedUrl.isBlank()) {
@@ -112,12 +124,17 @@ internal fun InputScreen(
 
     LaunchedEffect(formatDiscovery.url, formatDiscovery.availableQualities) {
         if (formatDiscovery.url == normalizedUrl &&
-            formatDiscovery.availableQualities.isNotEmpty() &&
-            quality !in formatDiscovery.availableQualities
+            formatDiscovery.availableQualities.isNotEmpty()
         ) {
-            quality = formatDiscovery.availableQualities
-                .firstOrNull { it == VideoQuality.P360 }
-                ?: formatDiscovery.availableQualities.last()
+            if (qualityUrl != normalizedUrl || quality !in formatDiscovery.availableQualities) {
+                quality = formatDiscovery.availableQualities
+                    .firstOrNull { it == VideoQuality.P720 }
+                    ?: formatDiscovery.availableQualities
+                        .filter { it.maxHeight <= VideoQuality.P720.maxHeight }
+                        .lastOrNull()
+                    ?: formatDiscovery.availableQualities.last()
+                qualityUrl = normalizedUrl
+            }
         }
     }
 

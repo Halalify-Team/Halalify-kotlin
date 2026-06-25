@@ -343,6 +343,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _formatDiscovery = MutableStateFlow(FormatDiscoveryState())
     val formatDiscovery: StateFlow<FormatDiscoveryState> = _formatDiscovery.asStateFlow()
 
+    private val _sharedYoutubeUrl = MutableStateFlow("")
+    val sharedYoutubeUrl: StateFlow<String> = _sharedYoutubeUrl.asStateFlow()
+
     private val _backendUrl = MutableStateFlow(
         prefs.getString("backend_url", BuildConfig.DEFAULT_BACKEND_URL)
             .orEmpty()
@@ -471,9 +474,10 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         url = url,
                         videoTitle = fastCatalog.metadata.title,
                         availableQualities = fastCatalog.availableQualities,
-                        isLoading = true,
+                        isLoading = false,
                     )
                 }
+                return@launch
             }
             runCatching {
                 discoverYoutubeFormats(activity, url)
@@ -499,6 +503,16 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 }
             }
         }
+    }
+
+    fun acceptSharedYoutubeUrl(url: String) {
+        processingJob?.cancel()
+        _screen.value = AppScreen.INPUT
+        _sharedYoutubeUrl.value = url.trim()
+    }
+
+    fun consumeSharedYoutubeUrl() {
+        _sharedYoutubeUrl.value = ""
     }
 
     fun warmUpLocalTools(activity: ComponentActivity) {

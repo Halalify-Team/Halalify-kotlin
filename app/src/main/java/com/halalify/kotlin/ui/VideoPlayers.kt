@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import java.io.File
@@ -49,6 +51,7 @@ internal fun LocalVideoPlayer(filePath: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 internal fun ChunkPlaylistPlayer(
     filePaths: List<String>,
     onChunkChanged: (Int) -> Unit,
@@ -75,7 +78,7 @@ internal fun ChunkPlaylistPlayer(
                 player.prepare()
             }
             isSinglePathChanged -> {
-                val currentPosition = player.currentPosition
+                val currentPosition = player.absolutePlaylistPositionMs()
                 val isPlaying = player.playWhenReady
                 player.setMediaItems(mediaItems, 0, currentPosition)
                 player.prepare()
@@ -122,11 +125,25 @@ internal fun ChunkPlaylistPlayer(
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 useController = true
+                setShowMultiWindowTimeBar(true)
                 this.player = player
             }
         },
         update = { playerView ->
             playerView.player = player
+            playerView.setShowMultiWindowTimeBar(true)
         },
     )
+}
+
+private fun Player.absolutePlaylistPositionMs(): Long {
+    if (mediaItemCount <= 1) return currentPosition
+    val window = Timeline.Window()
+    var positionMs = currentPosition
+    for (index in 0 until currentMediaItemIndex) {
+        currentTimeline.getWindow(index, window)
+        val durationMs = window.durationMs
+        if (durationMs > 0) positionMs += durationMs
+    }
+    return positionMs
 }

@@ -12,12 +12,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.downloadAudioChunk
-import com.halalify.kotlin.media.downloadVideo
 import com.halalify.kotlin.media.downloadVideoSection
 import com.halalify.kotlin.media.extractDirectMediaSession
 import com.halalify.kotlin.media.validateYoutubeUrl
-import com.halalify.kotlin.media.concatAudioSegments
-import com.halalify.kotlin.media.muxFullVideoWithCleanAudio
+import com.halalify.kotlin.media.concatVideoSegments
 import com.halalify.kotlin.media.muxVideoWithCleanAudio
 import com.halalify.kotlin.media.normalizeAudio
 import com.halalify.kotlin.media.testYtDlpVersion
@@ -48,7 +46,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
@@ -479,7 +476,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                 // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
-                val directMedia = extractDirectMediaSession(activity, url)
+                var directMedia = extractDirectMediaSession(activity, url)
                 perf(
                     "media-session-ready audio=${directMedia.audio.formatId} " +
                         "video=${directMedia.video.formatId}"
@@ -523,36 +520,52 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     )
                 }
 
-                var videoDownloadDeferred: Deferred<com.halalify.kotlin.model.DownloadResult>? = null
-                fun startFullVideoDownload(): Deferred<com.halalify.kotlin.model.DownloadResult> {
-                    val existing = videoDownloadDeferred
-                    if (existing != null) return existing
-                    val created = async { downloadVideo(activity, directMedia.video) }
-                    videoDownloadDeferred = created
-                    return created
-                }
-
                 // Each audio range is read directly from YouTube. No full source audio
                 // is downloaded or cut before the first chunk reaches the backend.
-                val cleanAudioChunks = Array<String?>(totalChunks) { null }
                 val audioRangeSemaphore = Semaphore(1)
                 val videoRangeSemaphore = Semaphore(1)
                 val backendSemaphore = Semaphore(1)
                 val muxSemaphore = Semaphore(1)
+                val mediaRefreshMutex = Mutex()
                 val firstChunkPlayable = CompletableDeferred<Unit>()
+                val playableSegments = mutableListOf<String>()
+
+                suspend fun refreshMediaIfUnchanged(failedMediaUrl: String) {
+                    mediaRefreshMutex.withLock {
+                        if (directMedia.audio.url == failedMediaUrl ||
+                            directMedia.video.url == failedMediaUrl
+                        ) {
+                            updatePhase("Refreshing YouTube stream...")
+                            directMedia = extractDirectMediaSession(activity, url)
+                            perf("media-session-refreshed")
+                        }
+                    }
+                }
 
                 supervisorScope {
                     val videoChunkJobs = chunkPlans.map { plan ->
                         async {
                             if (plan.index > 0) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
-                                val videoChunk = downloadVideoSection(
+                                var media = directMedia.video
+                                var videoChunk = downloadVideoSection(
                                     activity = activity,
-                                    media = directMedia.video,
+                                    media = media,
                                     startSeconds = plan.startSeconds,
                                     durationSeconds = plan.durationSeconds,
                                     chunkIndex = plan.index,
                                 )
+                                if (videoChunk.path == null) {
+                                    refreshMediaIfUnchanged(media.url)
+                                    media = directMedia.video
+                                    videoChunk = downloadVideoSection(
+                                        activity = activity,
+                                        media = media,
+                                        startSeconds = plan.startSeconds,
+                                        durationSeconds = plan.durationSeconds,
+                                        chunkIndex = plan.index,
+                                    )
+                                }
                                 (videoChunk.path ?: error(videoChunk.message))
                                     .also { perf("chunk-${plan.index}-video-ready") }
                             }
@@ -567,13 +580,25 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
                                 )
                                 val audioChunkPath = audioRangeSemaphore.withPermit {
-                                    val audioChunk = downloadAudioChunk(
+                                    var media = directMedia.audio
+                                    var audioChunk = downloadAudioChunk(
                                         activity = activity,
-                                        media = directMedia.audio,
+                                        media = media,
                                         startSeconds = plan.startSeconds,
                                         durationSeconds = plan.durationSeconds,
                                         chunkIndex = plan.index,
                                     )
+                                    if (audioChunk.path == null) {
+                                        refreshMediaIfUnchanged(media.url)
+                                        media = directMedia.audio
+                                        audioChunk = downloadAudioChunk(
+                                            activity = activity,
+                                            media = media,
+                                            startSeconds = plan.startSeconds,
+                                            durationSeconds = plan.durationSeconds,
+                                            chunkIndex = plan.index,
+                                        )
+                                    }
                                     (audioChunk.path ?: error(audioChunk.message))
                                         .also { perf("chunk-${plan.index}-audio-ready") }
                                 }
@@ -621,7 +646,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         }
                     }
 
-                    val playableSegments = mutableListOf<String>()
                     for (index in 0 until totalChunks) {
                         val result = chunkJobs[index].await().getOrElse { chunkError ->
                             val message = "Chunk ${index + 1}/$totalChunks failed: ${chunkError.userFacingMessage()}"
@@ -646,7 +670,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             }
                             throw PartialProcessingException(message)
                         }
-                        cleanAudioChunks[index] = result.cleanAudioPath
                         val plan = chunkPlans[index]
 
                         updateChunk(index, ChunkPhase.MUXING)
@@ -665,6 +688,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                 }
                             } finally {
                                 File(videoSegmentPath).delete()
+                                File(result.cleanAudioPath).delete()
                             }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -690,32 +714,25 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         }
                         if (index == 0) {
                             firstChunkPlayable.complete(Unit)
-                            updatePhase("Ready to watch. Final video is downloading in background...")
-                            startFullVideoDownload()
+                            updatePhase("Ready to watch. More clean chunks are being added...")
                         }
                     }
                 }
 
-                // All done - finalize video
-                val videoResult = startFullVideoDownload().await()
-                val videoPath = videoResult.path ?: error(videoResult.message)
-                val finalCleanAudios = cleanAudioChunks.filterNotNull()
-
+                // The clean playable chunks are the final source. Joining them avoids
+                // downloading the original full video a second time.
                 val finalPlayable = playUpdateMutex.withLock {
-                    if (finalCleanAudios.isNotEmpty()) {
+                    if (playableSegments.isNotEmpty()) {
                         updatePhase("Finalizing video...")
-                        val audioConcatResult = concatAudioSegments(activity, finalCleanAudios)
-                        val audioConcatPath = audioConcatResult.path ?: error(audioConcatResult.message)
-                        
-                        val muxResult = muxFullVideoWithCleanAudio(
+                        val concatResult = concatVideoSegments(
                             activity = activity,
-                            videoPath = videoPath,
-                            cleanAudioPath = audioConcatPath,
-                            durationSeconds = metadata.durationSeconds,
+                            segmentPaths = playableSegments,
                         )
-                        val muxPath = muxResult.path ?: error(muxResult.message)
-
-                        listOf(muxPath)
+                        val finalPath = concatResult.path ?: error(concatResult.message)
+                        playableSegments.forEach { segmentPath ->
+                            if (segmentPath != finalPath) File(segmentPath).delete()
+                        }
+                        listOf(finalPath)
                     } else {
                         emptyList()
                     }

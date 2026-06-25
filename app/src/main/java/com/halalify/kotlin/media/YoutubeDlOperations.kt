@@ -381,9 +381,22 @@ internal suspend fun downloadAudioChunk(
             FFmpegKit.execute(command)
         }
         if (!ReturnCode.isSuccess(session.returnCode)) {
+            val logs = session.allLogsAsString
+            val reason = when {
+                logs.contains("403 Forbidden", ignoreCase = true) ||
+                    logs.contains("Server returned 403", ignoreCase = true) ->
+                    "YouTube stream URL expired."
+                logs.contains("Connection refused", ignoreCase = true) ->
+                    "The local media stream could not be opened."
+                else -> "The requested audio range could not be read."
+            }
+            Log.w(
+                "HalalifyMedia",
+                "Audio chunk $chunkIndex failed with code=${session.returnCode?.value}\n" +
+                    logs.takeLast(2500)
+            )
             error(
-                "ffmpeg remote audio section failed. code=${session.returnCode?.value}\n" +
-                    session.allLogsAsString.takeLast(2500)
+                "$reason Retrying with a fresh YouTube stream."
             )
         }
         if (!outputFile.isFile || outputFile.length() <= 0L) {

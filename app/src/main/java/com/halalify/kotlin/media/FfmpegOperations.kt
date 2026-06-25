@@ -350,6 +350,7 @@ internal suspend fun concatVideoSegments(
             "-safe", "0",
             "-i", listFile.absolutePath,
             "-c", "copy",
+            "-movflags", "+faststart",
             outputFile.absolutePath,
         ).joinToString(" ") { it.ffmpegQuote() }
 

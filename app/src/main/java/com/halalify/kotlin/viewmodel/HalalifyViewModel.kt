@@ -466,6 +466,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 }
             }.onSuccess { fastCatalog ->
                 if (_formatDiscovery.value.url == url) {
+                    cacheFormatCatalog(url, fastCatalog)
                     _formatDiscovery.value = FormatDiscoveryState(
                         url = url,
                         videoTitle = fastCatalog.metadata.title,
@@ -606,6 +607,11 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         }
 
         processingJob?.cancel()
+        // Quality discovery may still be enriching the provisional 360p result through
+        // yt-dlp. Stop that duplicate work once processing starts; the selected format
+        // is already cached and ready to use.
+        formatDiscoveryJob?.cancel()
+        formatDiscoveryJob = null
         processingJob = viewModelScope.launch {
             perf("processing-start")
             _screen.value = if (removeMusic) AppScreen.PROCESSING else AppScreen.DOWNLOAD

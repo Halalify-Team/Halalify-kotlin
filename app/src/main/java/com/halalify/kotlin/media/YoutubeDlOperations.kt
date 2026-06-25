@@ -468,36 +468,53 @@ internal suspend fun downloadVideoSection(
             outputDir,
             "preview_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.mp4",
         )
+        val canCopyFirstChunk = startSeconds == 0 &&
+            media.extension.equals("mp4", ignoreCase = true)
         val inputSeekSeconds = (startSeconds - VIDEO_SEEK_PREROLL_SECONDS).coerceAtLeast(0)
         val preciseTrimSeconds = startSeconds - inputSeekSeconds
-        val commandParts = mutableListOf(
-            "-y",
-            "-rw_timeout", "20000000",
-            "-headers", media.toFfmpegHeaders(),
-            "-ss", inputSeekSeconds.toCliNumber(),
-            "-i", media.url,
-        )
-        if (preciseTrimSeconds > 0) {
-            commandParts += listOf("-ss", preciseTrimSeconds.toCliNumber())
+
+        fun execute(transcodeVideo: Boolean) = LocalMediaProxy(media).use { proxy ->
+            val commandParts = mutableListOf(
+                "-y",
+                "-rw_timeout", "20000000",
+                "-ss", inputSeekSeconds.toCliNumber(),
+                "-i", proxy.url,
+            )
+            if (preciseTrimSeconds > 0) {
+                commandParts += listOf("-ss", preciseTrimSeconds.toCliNumber())
+            }
+            commandParts += listOf(
+                "-t", safeDuration.toCliNumber(),
+                "-map", "0:v:0",
+                "-an",
+            )
+            commandParts += if (transcodeVideo) {
+                listOf(
+                    "-c:v", "mpeg4",
+                    "-b:v", "700k",
+                    "-maxrate", "900k",
+                    "-bufsize", "1400k",
+                    "-pix_fmt", "yuv420p",
+                )
+            } else {
+                listOf("-c:v", "copy")
+            }
+            commandParts += listOf(
+                "-reset_timestamps", "1",
+                "-movflags", "+faststart",
+                outputFile.absolutePath,
+            )
+            FFmpegKit.execute(commandParts.joinToString(" ") { it.ffmpegQuote() })
         }
-        commandParts += listOf(
-            "-t", safeDuration.toCliNumber(),
-            "-map", "0:v:0",
-            "-an",
-            "-c:v", "mpeg4",
-            "-b:v", "700k",
-            "-maxrate", "900k",
-            "-bufsize", "1400k",
-            "-pix_fmt", "yuv420p",
-            "-reset_timestamps", "1",
-            "-movflags", "+faststart",
-            outputFile.absolutePath,
-        )
-        val session = LocalMediaProxy(media).use { proxy ->
-            val localCommand = commandParts
-                .map { part -> if (part == media.url) proxy.url else part }
-                .joinToString(" ") { it.ffmpegQuote() }
-            FFmpegKit.execute(localCommand)
+        var session = execute(transcodeVideo = !canCopyFirstChunk)
+        if (canCopyFirstChunk && !ReturnCode.isSuccess(session.returnCode)) {
+            Log.w(
+                "HalalifyMedia",
+                "First chunk stream copy failed; retrying with video transcoding.\n" +
+                    session.allLogsAsString.takeLast(1200)
+            )
+            outputFile.delete()
+            session = execute(transcodeVideo = true)
         }
         if (!ReturnCode.isSuccess(session.returnCode)) {
             error(

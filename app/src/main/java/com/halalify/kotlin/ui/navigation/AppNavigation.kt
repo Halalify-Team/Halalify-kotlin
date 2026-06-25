@@ -21,6 +21,7 @@ import com.google.android.gms.common.api.ApiException
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
+import com.halalify.kotlin.ui.screens.DownloadScreen
 import com.halalify.kotlin.ui.screens.ProfileScreen
 import com.halalify.kotlin.ui.screens.ProcessingScreen
 import com.halalify.kotlin.ui.screens.ResultScreen
@@ -129,16 +130,41 @@ internal fun AppNavigation(
                 onSessionTokenChange = viewModel::updateSessionToken,
                 onDevLogin = viewModel::devLogin,
                 onGoogleLogin = ::launchGoogleSignIn,
-                onStartProcessing = { url ->
-                    viewModel.startProcessing(activity, url)
+                onStartProcessing = { url, removeMusic, quality ->
+                    viewModel.startProcessing(activity, url, removeMusic, quality)
                 },
                 onNavigateToLibrary = { viewModel.navigateToLibrary() },
                 onNavigateToProfile = { viewModel.navigateToProfile() },
             )
             AppScreen.PROCESSING -> ProcessingScreen(
                 state = processingState,
+                isExporting = isExporting,
                 onWatchNow = { viewModel.navigateToResult() },
+                onSaveToGallery = {
+                    processingState.playablePaths.firstOrNull()?.let { path ->
+                        viewModel.exportToGallery(
+                            activity,
+                            path,
+                            processingState.videoTitle,
+                        )
+                    }
+                },
                 onRetry = { viewModel.resetToInput() },
+            )
+            AppScreen.DOWNLOAD -> DownloadScreen(
+                state = processingState,
+                isExporting = isExporting,
+                onWatch = { viewModel.navigateToResult() },
+                onSaveToGallery = {
+                    processingState.playablePaths.firstOrNull()?.let { path ->
+                        viewModel.exportToGallery(
+                            activity,
+                            path,
+                            processingState.videoTitle,
+                        )
+                    }
+                },
+                onBack = { viewModel.resetToInput() },
             )
             AppScreen.RESULT -> ResultScreen(
                 state = processingState,

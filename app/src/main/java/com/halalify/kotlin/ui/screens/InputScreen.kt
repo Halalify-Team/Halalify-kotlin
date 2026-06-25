@@ -30,7 +30,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +64,7 @@ import com.halalify.kotlin.ui.theme.HalalifyTextOnAccent
 import com.halalify.kotlin.ui.theme.HalalifyTextPrimary
 import com.halalify.kotlin.ui.theme.HalalifyTextSecondary
 import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
+import com.halalify.kotlin.model.VideoQuality
 
 @Composable
 internal fun InputScreen(
@@ -75,11 +79,17 @@ internal fun InputScreen(
     onSessionTokenChange: (String) -> Unit,
     onDevLogin: () -> Unit,
     onGoogleLogin: () -> Unit,
-    onStartProcessing: (youtubeUrl: String) -> Unit,
+    onStartProcessing: (
+        youtubeUrl: String,
+        removeMusic: Boolean,
+        quality: VideoQuality,
+    ) -> Unit,
     onNavigateToLibrary: () -> Unit,
     onNavigateToProfile: () -> Unit,
 ) {
     var youtubeUrl by remember { mutableStateOf("") }
+    var removeMusic by remember { mutableStateOf(true) }
+    var quality by remember { mutableStateOf(VideoQuality.P360) }
     var showDevSettings by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
 
@@ -159,7 +169,82 @@ internal fun InputScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = removeMusic,
+                    onCheckedChange = {
+                        removeMusic = it
+                        if (it) quality = VideoQuality.P360
+                    },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = HalalifyAccent,
+                        checkmarkColor = HalalifyTextOnAccent,
+                    ),
+                )
+                Column {
+                    Text(
+                        text = "Remove music",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = HalalifyTextPrimary,
+                    )
+                    Text(
+                        text = if (removeMusic) {
+                            "Stream clean chunks while processing"
+                        } else {
+                            "Download the original video normally"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HalalifyTextSecondary,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = if (removeMusic) {
+                    "Video quality (clean streaming)"
+                } else {
+                    "Video quality"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = HalalifyTextSecondary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                VideoQuality.entries.forEach { option ->
+                    FilterChip(
+                        selected = quality == option,
+                        onClick = { quality = option },
+                        enabled = option == VideoQuality.P360,
+                        label = { Text(option.label) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "360p is available now. Higher qualities require YouTube PO-token support.",
+                style = MaterialTheme.typography.bodySmall,
+                color = HalalifyTextTertiary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             if (sessionToken.isBlank()) {
                 Button(
@@ -195,7 +280,7 @@ internal fun InputScreen(
 
             // Main CTA Button
             Button(
-                onClick = { onStartProcessing(youtubeUrl) },
+                onClick = { onStartProcessing(youtubeUrl, removeMusic, quality) },
                 enabled = youtubeUrl.isNotBlank() && sessionToken.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -208,7 +293,11 @@ internal fun InputScreen(
                 ),
             ) {
                 Text(
-                    text = if (sessionToken.isBlank()) "Sign in first" else "✨ Halalify It",
+                    text = when {
+                        sessionToken.isBlank() -> "Sign in first"
+                        removeMusic -> "✨ Halalify It"
+                        else -> "Download Video"
+                    },
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                     ),

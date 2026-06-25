@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.downloadAudioChunk
+import com.halalify.kotlin.media.downloadVideo
 import com.halalify.kotlin.media.downloadVideoSection
 import com.halalify.kotlin.media.extractDirectMediaSession
 import com.halalify.kotlin.media.validateYoutubeUrl
@@ -25,6 +26,7 @@ import com.halalify.kotlin.model.ChunkState
 import com.halalify.kotlin.model.ProcessingState
 import com.halalify.kotlin.model.LibraryItem
 import com.halalify.kotlin.model.QuotaState
+import com.halalify.kotlin.model.VideoQuality
 import com.halalify.kotlin.network.cleanAudioWithBackend
 import com.halalify.kotlin.network.fetchQuotaState
 import com.halalify.kotlin.network.loginWithGoogleIdTokenDetailed
@@ -437,7 +439,12 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         }
     }
 
-    fun startProcessing(activity: ComponentActivity, youtubeUrl: String) {
+    fun startProcessing(
+        activity: ComponentActivity,
+        youtubeUrl: String,
+        removeMusic: Boolean = true,
+        quality: VideoQuality = VideoQuality.P360,
+    ) {
         val url = youtubeUrl.trim()
         val baseUrl = _backendUrl.value.trim()
         val processingStartedAt = SystemClock.elapsedRealtime()
@@ -449,21 +456,31 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         processingJob?.cancel()
         processingJob = viewModelScope.launch {
             perf("processing-start")
-            _screen.value = AppScreen.PROCESSING
+            _screen.value = if (removeMusic) AppScreen.PROCESSING else AppScreen.DOWNLOAD
             _processing.value = ProcessingState(
                 originalUrl = url,
                 currentPhaseLabel = "Initializing...",
+                removeMusic = removeMusic,
+                quality = quality,
             )
             clearPlaybackScratch(activity)
 
             try {
                 validateYoutubeUrl(url)
-                if (baseUrl.isBlank()) error("Backend URL is required.")
-
-                var token = _sessionToken.value.trim()
+                val token = _sessionToken.value.trim()
                 if (token.isBlank()) {
-                    error("Please sign in with Google before processing a video.")
+                    error("Please sign in with Google before downloading a video.")
                 }
+                if (!removeMusic) {
+                    downloadOriginalVideo(
+                        activity = activity,
+                        url = url,
+                        quality = quality,
+                        perf = ::perf,
+                    )
+                    return@launch
+                }
+                if (baseUrl.isBlank()) error("Backend URL is required.")
 
                 val quotaDeferred = async {
                     runCatching {
@@ -476,7 +493,11 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                 // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
-                var directMedia = extractDirectMediaSession(activity, url)
+                var directMedia = extractDirectMediaSession(
+                    activity = activity,
+                    youtubeUrl = url,
+                    maxVideoHeight = quality.maxHeight,
+                )
                 perf(
                     "media-session-ready audio=${directMedia.audio.formatId} " +
                         "video=${directMedia.video.formatId}"
@@ -536,7 +557,11 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             directMedia.video.url == failedMediaUrl
                         ) {
                             updatePhase("Refreshing YouTube stream...")
-                            directMedia = extractDirectMediaSession(activity, url)
+                            directMedia = extractDirectMediaSession(
+                                activity = activity,
+                                youtubeUrl = url,
+                                maxVideoHeight = quality.maxHeight,
+                            )
                             perf("media-session-refreshed")
                         }
                     }
@@ -771,6 +796,49 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         }
     }
 
+    private suspend fun downloadOriginalVideo(
+        activity: ComponentActivity,
+        url: String,
+        quality: VideoQuality,
+        perf: (String) -> Unit,
+    ) {
+        updatePhase("Reading video information...")
+        val mediaSession = extractDirectMediaSession(
+            activity = activity,
+            youtubeUrl = url,
+            maxVideoHeight = quality.maxHeight,
+        )
+        val metadata = mediaSession.metadata
+        _processing.update {
+            it.copy(
+                videoTitle = metadata.title,
+                totalDurationSeconds = metadata.durationSeconds,
+                totalChunks = 1,
+                currentPhaseLabel = "Downloading ${quality.label} video...",
+            )
+        }
+        perf("normal-media-session-ready")
+
+        updatePhase("Downloading ${quality.label} video...")
+        val finalVideoResult = downloadVideo(
+            activity = activity,
+            media = mediaSession.video,
+        )
+        val finalPath = finalVideoResult.path ?: error(finalVideoResult.message)
+        perf("normal-video-downloaded")
+
+        _processing.update {
+            it.copy(
+                completedChunks = 1,
+                currentPhaseLabel = "Download complete!",
+                isComplete = true,
+                playablePaths = listOf(finalPath),
+                firstChunkReady = true,
+            )
+        }
+        perf("normal-download-complete")
+    }
+
 
 
     fun navigateToResult() {
@@ -779,13 +847,10 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
     fun navigateBackFromResult() {
         val state = _processing.value
-        if (state.isComplete) {
-            discardCurrentTemporaryResult()
-        }
-        _screen.value = if (state.isComplete) {
-            AppScreen.INPUT
-        } else {
-            AppScreen.PROCESSING
+        _screen.value = when {
+            state.isLibraryPlayback -> AppScreen.LIBRARY
+            state.removeMusic -> AppScreen.PROCESSING
+            else -> AppScreen.DOWNLOAD
         }
     }
 
@@ -964,6 +1029,8 @@ private val temporaryWorkDirNames = listOf(
     "halalify-concat",
     "halalify-cut-test",
     "halalify-download-test",
+    "halalify-full-audio",
+    "halalify-full-video",
     "halalify-mux-test",
     "halalify-playable",
     "halalify-video-preview-download",
@@ -1001,6 +1068,11 @@ private fun Throwable.userFacingMessage(): String {
         cleaned.contains("quota", ignoreCase = true) ||
             cleaned.contains("not enough", ignoreCase = true) -> {
             cleaned.take(700)
+        }
+        (cleaned.contains("Direct media", ignoreCase = true) ||
+            cleaned.contains("YouTube", ignoreCase = true)) &&
+            cleaned.contains("403") -> {
+            "YouTube temporarily rejected the download link. Please try again."
         }
         cleaned.contains("HTTP 403", ignoreCase = true) || cleaned.contains("403") -> {
             "Your account cannot process this chunk. Check your quota or sign in again."

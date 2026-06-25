@@ -46,9 +46,16 @@ internal data class QuotaState(
 enum class AppScreen {
     INPUT,
     PROCESSING,
+    DOWNLOAD,
     RESULT,
     LIBRARY,
     PROFILE,
+}
+
+enum class VideoQuality(val label: String, val maxHeight: Int) {
+    P360("360p", 360),
+    P720("720p", 720),
+    P1080("1080p", 1080),
 }
 
 data class LibraryItem(
@@ -93,4 +100,6 @@ data class ProcessingState(
     val errorMessage: String? = null,
     val playablePaths: List<String> = emptyList(),
     val firstChunkReady: Boolean = false,
+    val removeMusic: Boolean = true,
+    val quality: VideoQuality = VideoQuality.P360,
 )

@@ -63,17 +63,10 @@ internal fun ResultScreen(
 ) {
     val context = LocalContext.current
     var showDiscardDialog by remember { mutableStateOf(false) }
-    val shouldWarnBeforeLeaving = state.isComplete &&
+    val shouldWarnBeforeDiscarding = state.isComplete &&
         !state.isSavedToGallery &&
         !state.isLibraryPlayback &&
         state.playablePaths.isNotEmpty()
-    fun requestLeave() {
-        if (shouldWarnBeforeLeaving) {
-            showDiscardDialog = true
-        } else {
-            onBack()
-        }
-    }
     val readyLabel = if (state.totalChunks > 0) {
         "Ready ${state.completedChunks} / ${state.totalChunks} chunks"
     } else {
@@ -81,7 +74,7 @@ internal fun ResultScreen(
     }
 
     BackHandler {
-        requestLeave()
+        onBack()
     }
 
     LaunchedEffect(exportStatus) {
@@ -104,7 +97,7 @@ internal fun ResultScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = ::requestLeave) {
+            IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
@@ -114,7 +107,11 @@ internal fun ResultScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (state.isComplete) "Halalified ✓" else "Preview",
+                    text = when {
+                        !state.isComplete -> "Preview"
+                        state.removeMusic -> "Halalified ✓"
+                        else -> "Downloaded ✓"
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     color = if (state.isComplete) HalalifySuccess else HalalifyAccent,
                 )
@@ -243,7 +240,7 @@ internal fun ResultScreen(
 
             Button(
                 onClick = {
-                    if (shouldWarnBeforeLeaving) {
+                    if (shouldWarnBeforeDiscarding) {
                         showDiscardDialog = true
                     } else {
                         onHalalifyAnother()
@@ -286,7 +283,7 @@ internal fun ResultScreen(
                 TextButton(
                     onClick = {
                         showDiscardDialog = false
-                        onBack()
+                        onHalalifyAnother()
                     },
                 ) {
                     Text(text = "Discard")

@@ -28,7 +28,7 @@ private const val YOUTUBE_USER_AGENT =
 private const val YOUTUBE_FFMPEG_HEADERS =
     "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36\r\nReferer: https://www.youtube.com/\r\n"
 private const val VIDEO_SEEK_PREROLL_SECONDS = 10
-private const val MAX_FINAL_VIDEO_BYTES = 80L * 1024L * 1024L
+private const val MAX_FINAL_VIDEO_BYTES = 1024L * 1024L * 1024L
 
 internal data class DirectMediaResource(
     val url: String,
@@ -63,10 +63,11 @@ internal suspend fun testYtDlpVersion(activity: ComponentActivity): String = wit
 internal suspend fun extractDirectMediaSession(
     activity: ComponentActivity,
     youtubeUrl: String,
+    maxVideoHeight: Int = 360,
 ): DirectMediaSession = withContext(Dispatchers.IO) {
     validateYoutubeUrl(youtubeUrl)
     runCatching {
-        extractFastAndroidMediaSession(youtubeUrl)
+        extractFastAndroidMediaSession(youtubeUrl, maxVideoHeight)
     }.onSuccess {
         return@withContext it
     }.onFailure { error ->
@@ -90,7 +91,11 @@ internal suspend fun extractDirectMediaSession(
         request.addOption("--fragment-retries", "1")
         request.addOption("--extractor-retries", "1")
         request.addOption("--extractor-args", extractorArgs)
-        request.addOption("-f", "18/best[height<=480][vcodec!=none][acodec!=none]/best[height<=480]")
+        request.addOption(
+            "-f",
+            "best[height<=$maxVideoHeight][vcodec!=none][acodec!=none]/" +
+                "18/best[height<=$maxVideoHeight]"
+        )
         request.addOption("--user-agent", YOUTUBE_USER_AGENT)
         request.addOption("--referer", "https://www.youtube.com/")
         request.addOption("-j")
@@ -129,7 +134,10 @@ internal suspend fun extractDirectMediaSession(
     error("Could not extract seekable YouTube media URLs. $lastError")
 }
 
-private fun extractFastAndroidMediaSession(youtubeUrl: String): DirectMediaSession {
+private fun extractFastAndroidMediaSession(
+    youtubeUrl: String,
+    maxVideoHeight: Int,
+): DirectMediaSession {
     val videoId = extractYoutubeVideoId(youtubeUrl)
         ?: error("Could not identify the YouTube video ID.")
     val clientVersion = "20.10.38"
@@ -180,7 +188,9 @@ private fun extractFastAndroidMediaSession(youtubeUrl: String): DirectMediaSessi
         val duration = details.optString("lengthSeconds").toDoubleOrNull()?.toInt()
             ?.takeIf { it > 0 }
             ?: error("YouTube response did not include a valid duration.")
-        val formats = json.optJSONObject("streamingData")?.optJSONArray("formats")
+        val streamingData = json.optJSONObject("streamingData")
+            ?: error("YouTube response did not include streaming data.")
+        val formats = streamingData.optJSONArray("formats")
             ?: error("YouTube response did not include progressive formats.")
         val candidates = buildList {
             for (index in 0 until formats.length()) {
@@ -195,24 +205,26 @@ private fun extractFastAndroidMediaSession(youtubeUrl: String): DirectMediaSessi
                 add(format)
             }
         }
-        val selected = candidates.firstOrNull { it.optInt("itag") == 18 }
+        val selectedProgressive = candidates.firstOrNull { it.optInt("itag") == 18 }
             ?: candidates
-                .filter { it.optInt("height", 0) in 1..480 }
+                .filter { it.optInt("height", 0) in 1..maxVideoHeight }
                 .maxByOrNull { it.optInt("height", 0) }
             ?: error("No progressive YouTube format up to 480p was available.")
-        val media = DirectMediaResource(
-            url = selected.getString("url"),
+
+        fun resource(format: JSONObject) = DirectMediaResource(
+            url = format.getString("url"),
             headers = mapOf(
                 "User-Agent" to androidUserAgent,
                 "Referer" to "https://www.youtube.com/",
             ),
             extension = "mp4",
-            formatId = selected.optInt("itag").toString(),
+            formatId = format.optInt("itag").toString(),
         )
+        val progressive = resource(selectedProgressive)
         DirectMediaSession(
             metadata = VideoMetadata(title = title, durationSeconds = duration),
-            audio = media,
-            video = media,
+            audio = progressive,
+            video = progressive,
         )
     }
 }
@@ -250,18 +262,35 @@ internal fun calculateChunkCount(durationSeconds: Int): Int =
 internal suspend fun downloadVideo(
     activity: ComponentActivity,
     media: DirectMediaResource,
+): DownloadResult = downloadMediaResource(
+    activity = activity,
+    media = media,
+    directoryName = "halalify-full-video",
+    filePrefix = "video",
+)
+
+private suspend fun downloadMediaResource(
+    activity: ComponentActivity,
+    media: DirectMediaResource,
+    directoryName: String,
+    filePrefix: String,
 ): DownloadResult = withContext(Dispatchers.IO) {
     try {
         val startedAt = System.currentTimeMillis()
-        val outputDir = File(activity.filesDir, "halalify-download-test")
+        val outputDir = File(activity.filesDir, directoryName)
         outputDir.mkdirs()
         outputDir.listFiles()?.forEach { it.delete() }
-        val extension = media.extension.takeIf { it in setOf("mp4", "webm", "mkv") } ?: "mp4"
-        val outputFile = File(outputDir, "video_${UUID.randomUUID().toString().take(8)}.$extension")
+        val extension = media.extension.takeIf {
+            it in setOf("mp4", "m4a", "webm", "mkv")
+        } ?: "mp4"
+        val outputFile = File(
+            outputDir,
+            "${filePrefix}_${UUID.randomUUID().toString().take(8)}.$extension"
+        )
         downloadDirectUrlToFile(media, outputFile)
 
         DownloadResult(
-            message = "SUCCESS: video file downloaded locally from the resolved media URL.\n" +
+            message = "SUCCESS: media file downloaded locally.\n" +
                 "size: ${outputFile.length()} bytes\n" +
                 "path: ${outputFile.absolutePath}\n" +
                 "elapsed: ${System.currentTimeMillis() - startedAt}ms",
@@ -442,7 +471,7 @@ private fun downloadDirectUrlToFile(media: DirectMediaResource, outputFile: File
         val body = response.body ?: error("Direct media download returned empty body.")
         val declaredLength = body.contentLength()
         if (declaredLength > MAX_FINAL_VIDEO_BYTES) {
-            error("Video is larger than the 80 MB device download limit.")
+            error("Video is larger than the 1 GB device download limit.")
         }
         try {
             body.byteStream().use { input ->
@@ -454,7 +483,7 @@ private fun downloadDirectUrlToFile(media: DirectMediaResource, outputFile: File
                         if (read < 0) break
                         totalBytes += read
                         if (totalBytes > MAX_FINAL_VIDEO_BYTES) {
-                            error("Video exceeded the 80 MB device download limit.")
+                            error("Video exceeded the 1 GB device download limit.")
                         }
                         output.write(buffer, 0, read)
                     }

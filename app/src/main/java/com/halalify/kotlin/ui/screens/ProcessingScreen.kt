@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,7 +61,9 @@ import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 @Composable
 internal fun ProcessingScreen(
     state: ProcessingState,
+    isExporting: Boolean,
     onWatchNow: () -> Unit,
+    onSaveToGallery: () -> Unit,
     onRetry: () -> Unit,
 ) {
     val overallProgress = if (state.totalChunks > 0) {
@@ -186,6 +189,41 @@ internal fun ProcessingScreen(
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
+            onClick = onSaveToGallery,
+            enabled = state.isComplete &&
+                state.playablePaths.isNotEmpty() &&
+                !state.isSavedToGallery &&
+                !isExporting,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = HalalifyAccent,
+                contentColor = HalalifyTextOnAccent,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                disabledContentColor = HalalifyTextTertiary,
+            ),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Save,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = when {
+                    isExporting -> "Saving..."
+                    state.isSavedToGallery -> "Saved to Gallery"
+                    state.isComplete -> "Save to Gallery"
+                    else -> "Available when processing finishes"
+                },
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
 
         // Error state

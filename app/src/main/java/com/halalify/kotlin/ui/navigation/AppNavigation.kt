@@ -3,8 +3,6 @@ package com.halalify.kotlin.ui.navigation
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -15,9 +13,14 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.ui.screens.InputScreen
@@ -27,6 +30,7 @@ import com.halalify.kotlin.ui.screens.ProcessingScreen
 import com.halalify.kotlin.ui.screens.ResultScreen
 import com.halalify.kotlin.ui.screens.LibraryScreen
 import com.halalify.kotlin.viewmodel.HalalifyViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun AppNavigation(
@@ -46,32 +50,7 @@ internal fun AppNavigation(
     val exportStatus by viewModel.exportStatus.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
-
-    val googleSignInLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-        runCatching {
-            task.getResult(ApiException::class.java)
-        }.onSuccess { account ->
-            val idToken = account.idToken
-            if (idToken.isNullOrBlank()) {
-                Toast.makeText(
-                    activity,
-                    "Google sign-in is not configured. Add GOOGLE_WEB_CLIENT_ID to the Android build.",
-                    Toast.LENGTH_LONG,
-                ).show()
-            } else {
-                viewModel.googleLogin(idToken)
-            }
-        }.onFailure { error ->
-            Toast.makeText(
-                activity,
-                "Google sign-in failed: ${error.message ?: "try again"}",
-                Toast.LENGTH_LONG,
-            ).show()
-        }
-    }
+    val coroutineScope = rememberCoroutineScope()
 
     fun launchGoogleSignIn() {
         val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
@@ -83,12 +62,53 @@ internal fun AppNavigation(
             ).show()
             return
         }
-        val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail()
-            .requestProfile()
-            .requestIdToken(webClientId)
-            .build()
-        googleSignInLauncher.launch(GoogleSignIn.getClient(activity, options).signInIntent)
+        viewModel.beginGoogleSignIn()
+        coroutineScope.launch {
+            try {
+                val credentialManager = CredentialManager.create(activity)
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(webClientId)
+                    .setFilterByAuthorizedAccounts(false) // show all accounts, not just previously used ones
+                    .setAutoSelectEnabled(false)
+                    .build()
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+                val result = credentialManager.getCredential(
+                    request = request,
+                    context = activity,
+                )
+                val credential = result.credential
+                if (credential !is CustomCredential ||
+                    credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                ) {
+                    error("Google returned an unsupported credential type.")
+                }
+                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                val idToken = googleIdTokenCredential.idToken
+                if (idToken.isBlank()) {
+                    Toast.makeText(activity, "Google sign-in returned an empty token.", Toast.LENGTH_LONG).show()
+                } else {
+                    viewModel.googleLogin(idToken)
+                }
+            } catch (e: GetCredentialCancellationException) {
+                viewModel.cancelGoogleSignIn()
+            } catch (e: NoCredentialException) {
+                viewModel.reportGoogleSignInFailure(
+                    "No Google account is available. Add an account to this device and try again.",
+                )
+            } catch (e: Exception) {
+                val details = e.message
+                    ?.takeIf { it.isNotBlank() }
+                    ?: e.javaClass.simpleName
+                viewModel.reportGoogleSignInFailure(details)
+                Toast.makeText(
+                    activity,
+                    "Google sign-in failed: $details",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     fun openExternalUrl(url: String) {

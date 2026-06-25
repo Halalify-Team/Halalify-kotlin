@@ -450,7 +450,8 @@ private fun JSONObject.optIntOrNull(name: String): Int? {
 private fun httpErrorMessage(prefix: String, code: Int, body: String): String {
     val serverMessage = body.extractServerMessage()
     return when (code) {
-        401 -> "$prefix: please sign in again."
+        401 -> serverMessage?.let { "$prefix: $it" }
+            ?: "$prefix: please sign in again."
         403 -> serverMessage?.let { "$prefix: $it" } ?: "$prefix: your account cannot perform this action."
         404 -> "$prefix: backend route was not found."
         413 -> "$prefix: this chunk is too large to upload."

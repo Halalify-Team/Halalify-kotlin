@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        viewModel.warmUpLocalTools(this)
         handleIntent(intent)
     }
 

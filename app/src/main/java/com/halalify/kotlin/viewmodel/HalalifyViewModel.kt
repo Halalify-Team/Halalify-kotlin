@@ -15,6 +15,7 @@ import com.halalify.kotlin.media.downloadAudioChunk
 import com.halalify.kotlin.media.downloadAudioFile
 import com.halalify.kotlin.media.downloadVideo
 import com.halalify.kotlin.media.downloadVideoSection
+import com.halalify.kotlin.media.discoverFastYoutubeFormats
 import com.halalify.kotlin.media.discoverYoutubeFormats
 import com.halalify.kotlin.media.YoutubeFormatCatalog
 import com.halalify.kotlin.media.validateYoutubeUrl
@@ -60,6 +61,17 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 
 internal class HalalifyViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val prefs =
+        getApplication<Application>().getSharedPreferences("halalify_session", 0)
+
+    private fun persistSession() {
+        prefs.edit()
+            .putString("session_token", _sessionToken.value)
+            .putString("backend_url", _backendUrl.value)
+            .putString("dev_email", _devEmail.value)
+            .apply()
+    }
 
     private val _libraryItems = MutableStateFlow<List<LibraryItem>>(emptyList())
     val libraryItems: StateFlow<List<LibraryItem>> = _libraryItems.asStateFlow()
@@ -296,9 +308,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun logout() {
-        _sessionToken.value = ""
-        _loginStatus.value = "Signed out."
-        _quotaState.value = QuotaState(statusMessage = "Signed out.")
+        clearPersistedSession(status = "Signed out.")
     }
 
     fun playLibraryItem(item: LibraryItem) {
@@ -333,16 +343,26 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private val _formatDiscovery = MutableStateFlow(FormatDiscoveryState())
     val formatDiscovery: StateFlow<FormatDiscoveryState> = _formatDiscovery.asStateFlow()
 
-    private val _backendUrl = MutableStateFlow(BuildConfig.DEFAULT_BACKEND_URL)
+    private val _backendUrl = MutableStateFlow(
+        prefs.getString("backend_url", BuildConfig.DEFAULT_BACKEND_URL)
+            .orEmpty()
+            .ifBlank { BuildConfig.DEFAULT_BACKEND_URL }
+    )
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
-    private val _devEmail = MutableStateFlow("")
+    private val _devEmail = MutableStateFlow(
+        prefs.getString("dev_email", "").orEmpty()
+    )
     val devEmail: StateFlow<String> = _devEmail.asStateFlow()
 
-    private val _sessionToken = MutableStateFlow("")
+    private val _sessionToken = MutableStateFlow(
+        prefs.getString("session_token", "").orEmpty()
+    )
     val sessionToken: StateFlow<String> = _sessionToken.asStateFlow()
 
-    private val _loginStatus = MutableStateFlow("")
+    private val _loginStatus = MutableStateFlow(
+        if (_sessionToken.value.isNotBlank()) "Checking saved session..." else ""
+    )
     val loginStatus: StateFlow<String> = _loginStatus.asStateFlow()
 
     private val _isLoggingIn = MutableStateFlow(false)
@@ -357,11 +377,68 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private var warmUpJob: Job? = null
     private var cachedFormatCatalog: CachedFormatCatalog? = null
 
-    fun updateBackendUrl(url: String) { _backendUrl.value = url }
-    fun updateDevEmail(email: String) {
-        _devEmail.value = email
+    init {
+        validatePersistedSession()
     }
-    fun updateSessionToken(token: String) { _sessionToken.value = token }
+
+    fun updateBackendUrl(url: String) { _backendUrl.value = url; persistSession() }
+    fun updateDevEmail(email: String) { _devEmail.value = email; persistSession() }
+    fun updateSessionToken(token: String) { _sessionToken.value = token; persistSession() }
+
+    fun beginGoogleSignIn() {
+        _isLoggingIn.value = true
+        _loginStatus.value = "Choose your Google account..."
+    }
+
+    fun cancelGoogleSignIn() {
+        _isLoggingIn.value = false
+        if (_sessionToken.value.isBlank()) {
+            _loginStatus.value = ""
+        }
+    }
+
+    fun reportGoogleSignInFailure(message: String) {
+        _isLoggingIn.value = false
+        _loginStatus.value = "FAILED: $message"
+    }
+
+    private fun validatePersistedSession() {
+        val token = _sessionToken.value.trim()
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                fetchQuotaState(
+                    backendUrl = _backendUrl.value,
+                    sessionToken = token,
+                )
+            }.onSuccess { quota ->
+                _quotaState.value = quota.copy(isLoading = false)
+                _devEmail.value = quota.email
+                _loginStatus.value = "Signed in as ${quota.email}."
+                persistSession()
+            }.onFailure { error ->
+                val message = error.message.orEmpty()
+                val invalidSession = message.contains("401") ||
+                    message.contains("invalid or expired", ignoreCase = true) ||
+                    message.contains("session is invalid", ignoreCase = true)
+                if (invalidSession) {
+                    clearPersistedSession(
+                        status = "Your saved session expired. Sign in again.",
+                    )
+                } else {
+                    _loginStatus.value =
+                        "Saved session is available. Account check will retry when online."
+                }
+            }
+        }
+    }
+
+    private fun clearPersistedSession(status: String) {
+        _sessionToken.value = ""
+        _loginStatus.value = status
+        _quotaState.value = QuotaState(statusMessage = status)
+        prefs.edit().remove("session_token").apply()
+    }
 
     fun discoverFormats(activity: ComponentActivity, youtubeUrl: String) {
         val url = youtubeUrl.trim()
@@ -384,6 +461,20 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 isLoading = true,
             )
             runCatching {
+                withContext(Dispatchers.IO) {
+                    discoverFastYoutubeFormats(url)
+                }
+            }.onSuccess { fastCatalog ->
+                if (_formatDiscovery.value.url == url) {
+                    _formatDiscovery.value = FormatDiscoveryState(
+                        url = url,
+                        videoTitle = fastCatalog.metadata.title,
+                        availableQualities = fastCatalog.availableQualities,
+                        isLoading = true,
+                    )
+                }
+            }
+            runCatching {
                 discoverYoutubeFormats(activity, url)
             }.onSuccess { catalog ->
                 cacheFormatCatalog(url, catalog)
@@ -394,10 +485,17 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 )
             }.onFailure { error ->
                 if (error is CancellationException) throw error
-                _formatDiscovery.value = FormatDiscoveryState(
-                    url = url,
-                    errorMessage = error.userFacingMessage(),
-                )
+                val current = _formatDiscovery.value
+                _formatDiscovery.value = if (
+                    current.url == url && current.availableQualities.isNotEmpty()
+                ) {
+                    current.copy(isLoading = false)
+                } else {
+                    FormatDiscoveryState(
+                        url = url,
+                        errorMessage = error.userFacingMessage(),
+                    )
+                }
             }
         }
     }
@@ -430,6 +528,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     statusMessage = result.message,
                     isLoading = false,
                 )
+            persistSession()
             _isLoggingIn.value = false
         }
     }
@@ -447,7 +546,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 idToken = idToken,
             )
             _loginStatus.value = result.message
-            _sessionToken.value = result.sessionToken.orEmpty()
+            result.sessionToken?.takeIf { it.isNotBlank() }?.let { token ->
+                _sessionToken.value = token
+            }
             result.quota?.let { quota ->
                 _devEmail.value = quota.email
             }
@@ -456,6 +557,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     statusMessage = result.message,
                     isLoading = false,
                 )
+            if (result.sessionToken?.isNotBlank() == true) {
+                persistSession()
+            }
             _isLoggingIn.value = false
         }
     }

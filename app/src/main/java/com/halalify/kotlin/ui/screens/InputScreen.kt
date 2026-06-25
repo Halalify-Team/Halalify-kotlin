@@ -99,14 +99,13 @@ internal fun InputScreen(
     val clipboardManager = LocalClipboardManager.current
     val normalizedUrl = youtubeUrl.trim()
     val formatsReadyForUrl = formatDiscovery.url == normalizedUrl &&
-        formatDiscovery.availableQualities.isNotEmpty() &&
-        !formatDiscovery.isLoading
+        formatDiscovery.availableQualities.isNotEmpty()
 
     LaunchedEffect(normalizedUrl) {
         if (normalizedUrl.isBlank()) {
             onDiscoverFormats("")
         } else {
-            delay(700)
+            delay(150)
             onDiscoverFormats(normalizedUrl)
         }
     }
@@ -350,6 +349,22 @@ internal fun InputScreen(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            if (loginStatus.isNotBlank()) {
+                Text(
+                    text = loginStatus.lineSequence().first(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (loginStatus.startsWith("FAILED:", ignoreCase = true) ||
+                        loginStatus.contains("expired", ignoreCase = true)
+                    ) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        HalalifyTextSecondary
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
                 Spacer(modifier = Modifier.height(12.dp))
             }
 

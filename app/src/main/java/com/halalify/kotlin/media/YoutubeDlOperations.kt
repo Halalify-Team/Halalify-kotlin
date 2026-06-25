@@ -56,7 +56,24 @@ internal data class YoutubeFormatCatalog(
             ?: sessionsByQuality.entries
                 .filter { it.key.maxHeight <= quality.maxHeight }
                 .maxByOrNull { it.key.maxHeight }
-                ?.value
+            ?.value
+}
+
+internal fun discoverFastYoutubeFormats(
+    youtubeUrl: String,
+): YoutubeFormatCatalog {
+    validateYoutubeUrl(youtubeUrl)
+    val session = extractFastAndroidMediaSession(
+        youtubeUrl = youtubeUrl,
+        maxVideoHeight = VideoQuality.P2160.maxHeight,
+    )
+    val quality = VideoQuality.entries
+        .firstOrNull { it.maxHeight == 360 }
+        ?: VideoQuality.P360
+    return YoutubeFormatCatalog(
+        metadata = session.metadata,
+        sessionsByQuality = mapOf(quality to session),
+    )
 }
 
 internal suspend fun discoverYoutubeFormats(
@@ -65,7 +82,6 @@ internal suspend fun discoverYoutubeFormats(
 ): YoutubeFormatCatalog = withContext(Dispatchers.IO) {
     validateYoutubeUrl(youtubeUrl)
     initYoutubeDl(activity)
-    updateYoutubeDlIfNeeded(activity)
 
     val request = YoutubeDLRequest(youtubeUrl).apply {
         addOption("--no-playlist")
@@ -167,6 +183,7 @@ internal suspend fun testYtDlpVersion(activity: ComponentActivity): String = wit
     try {
         val startedAt = System.currentTimeMillis()
         initYoutubeDl(activity)
+        updateYoutubeDlIfNeeded(activity)
         val response = YoutubeDL.getInstance().execute(
             YoutubeDLRequest(listOf("--version")),
             "halalify-version-test",
@@ -745,19 +762,25 @@ private fun updateYoutubeDlIfNeeded(activity: ComponentActivity) {
     val updateIntervalMs = TimeUnit.HOURS.toMillis(24)
     if (System.currentTimeMillis() - lastUpdateAt < updateIntervalMs) return
 
-    runCatching {
+    // Cap the update attempt at 30 seconds so it never hangs indefinitely.
+    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    val future = executor.submit<YoutubeDL.UpdateStatus> {
         YoutubeDL.getInstance().updateYoutubeDL(
             activity.applicationContext,
             YoutubeDL.UpdateChannel.STABLE,
         )
-    }.onSuccess {
+    }
+    runCatching {
+        val status = future.get(30, TimeUnit.SECONDS)
         preferences.edit()
             .putLong("yt_dlp_updated_at", System.currentTimeMillis())
             .apply()
-        Log.i("HalalifyDownload", "yt-dlp runtime update status: $it")
+        Log.i("HalalifyDownload", "yt-dlp runtime update status: $status")
     }.onFailure {
-        Log.w("HalalifyDownload", "Could not update yt-dlp runtime: ${it.message}")
+        future.cancel(true)
+        Log.w("HalalifyDownload", "Could not update yt-dlp runtime (ignored): ${it.message}")
     }
+    executor.shutdownNow()
 }
 
 internal fun validateYoutubeUrl(url: String) {

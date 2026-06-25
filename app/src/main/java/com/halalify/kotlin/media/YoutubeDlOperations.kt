@@ -10,6 +10,7 @@ import com.halalify.kotlin.model.VideoMetadata
 import com.yausername.aria2c.Aria2c
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import com.halalify.kotlin.model.VideoQuality
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -42,6 +43,125 @@ internal data class DirectMediaSession(
     val audio: DirectMediaResource,
     val video: DirectMediaResource,
 )
+
+internal data class YoutubeFormatCatalog(
+    val metadata: VideoMetadata,
+    val sessionsByQuality: Map<VideoQuality, DirectMediaSession>,
+) {
+    val availableQualities: List<VideoQuality>
+        get() = sessionsByQuality.keys.sortedBy { it.maxHeight }
+
+    fun sessionFor(quality: VideoQuality): DirectMediaSession? =
+        sessionsByQuality[quality]
+            ?: sessionsByQuality.entries
+                .filter { it.key.maxHeight <= quality.maxHeight }
+                .maxByOrNull { it.key.maxHeight }
+                ?.value
+}
+
+internal suspend fun discoverYoutubeFormats(
+    activity: ComponentActivity,
+    youtubeUrl: String,
+): YoutubeFormatCatalog = withContext(Dispatchers.IO) {
+    validateYoutubeUrl(youtubeUrl)
+    initYoutubeDl(activity)
+    updateYoutubeDlIfNeeded(activity)
+
+    val request = YoutubeDLRequest(youtubeUrl).apply {
+        addOption("--no-playlist")
+        addOption("--skip-download")
+        addOption("--socket-timeout", "20")
+        addOption("--retries", "2")
+        addOption("--extractor-retries", "2")
+        addOption("--remote-components", "ejs:github")
+        addOption("--no-update")
+        addOption("-J")
+    }
+    val response = YoutubeDL.getInstance().execute(
+        request,
+        "halalify-format-${UUID.randomUUID()}",
+        false,
+    )
+    if (response.err.isNotBlank()) {
+        Log.i("HalalifyDownload", "yt-dlp format discovery:\n${response.err.takeLast(5000)}")
+    }
+    val jsonLine = response.out.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("{") }
+        ?: error("yt-dlp returned no video information.")
+    val info = JSONObject(jsonLine)
+    val metadata = VideoMetadata(
+        title = info.optString("title").ifBlank { "Untitled video" },
+        durationSeconds = info.optDouble("duration", 0.0).toInt().takeIf { it > 0 }
+            ?: error("yt-dlp did not return a valid video duration."),
+    )
+    val formatArray = info.optJSONArray("formats")
+        ?: error("yt-dlp did not return any formats.")
+    val allFormats = buildList {
+        for (index in 0 until formatArray.length()) {
+            formatArray.optJSONObject(index)?.let(::add)
+        }
+    }
+    val formats = allFormats.filter { format ->
+        format.optString("url").startsWith("http") &&
+            format.optString("protocol").let { it == "http" || it == "https" } &&
+            format.optInt("height", 0) > 0 &&
+            format.optString("vcodec").isPresentCodec()
+    }
+    val audioFormats = allFormats.filter { format ->
+        format.optString("url").startsWith("http") &&
+            format.optString("protocol").let { it == "http" || it == "https" } &&
+            !format.optString("vcodec").isPresentCodec() &&
+            format.optString("acodec").isPresentCodec()
+    }
+    val bestAudio = audioFormats.maxWithOrNull(
+        compareBy<JSONObject>(
+            { if (it.optString("ext") == "m4a") 1 else 0 },
+            { if (it.optString("acodec").startsWith("mp4a")) 1 else 0 },
+            { it.optDouble("abr", 0.0) },
+            { it.optDouble("tbr", 0.0) },
+        )
+    )
+
+    val sessions = VideoQuality.entries.mapNotNull { quality ->
+        val exactHeightFormats = formats.filter {
+            it.optInt("height", 0) == quality.maxHeight
+        }
+        val progressive = exactHeightFormats
+            .filter { it.optString("acodec").isPresentCodec() }
+            .maxWithOrNull(videoFormatComparator)
+        val videoOnly = exactHeightFormats
+            .filter { !it.optString("acodec").isPresentCodec() }
+            .maxWithOrNull(videoFormatComparator)
+        val video = progressive ?: videoOnly ?: return@mapNotNull null
+        val audio = progressive ?: bestAudio ?: return@mapNotNull null
+        quality to DirectMediaSession(
+            metadata = metadata,
+            video = video.toDirectMediaResource(),
+            audio = audio.toDirectMediaResource(),
+        )
+    }.toMap()
+    if (sessions.isEmpty()) {
+        error("yt-dlp found no downloadable video qualities for this video.")
+    }
+    Log.i(
+        "HalalifyDownload",
+        "Available qualities for ${metadata.title}: " +
+            sessions.entries.joinToString { (quality, session) ->
+                "${quality.label}(v=${session.video.formatId},a=${session.audio.formatId})"
+            }
+    )
+    YoutubeFormatCatalog(metadata = metadata, sessionsByQuality = sessions)
+}
+
+private val videoFormatComparator = compareBy<JSONObject>(
+    { if (it.optString("ext") == "mp4") 1 else 0 },
+    { if (it.optString("vcodec").startsWith("avc")) 1 else 0 },
+    { it.optInt("fps", 0) },
+    { it.optDouble("tbr", 0.0) },
+)
+
+private fun String?.isPresentCodec(): Boolean = !isNullOrBlank() && this != "none"
 
 internal suspend fun testYtDlpVersion(activity: ComponentActivity): String = withContext(Dispatchers.IO) {
     try {
@@ -267,6 +387,16 @@ internal suspend fun downloadVideo(
     media = media,
     directoryName = "halalify-full-video",
     filePrefix = "video",
+)
+
+internal suspend fun downloadAudioFile(
+    activity: ComponentActivity,
+    media: DirectMediaResource,
+): DownloadResult = downloadMediaResource(
+    activity = activity,
+    media = media,
+    directoryName = "halalify-full-audio",
+    filePrefix = "audio",
 )
 
 private suspend fun downloadMediaResource(
@@ -607,6 +737,27 @@ private fun initYoutubeDl(activity: ComponentActivity) {
     val context = activity.applicationContext
     YoutubeDL.getInstance().init(context)
     Aria2c.getInstance().init(context)
+}
+
+private fun updateYoutubeDlIfNeeded(activity: ComponentActivity) {
+    val preferences = activity.getSharedPreferences("halalify_tools", 0)
+    val lastUpdateAt = preferences.getLong("yt_dlp_updated_at", 0L)
+    val updateIntervalMs = TimeUnit.HOURS.toMillis(24)
+    if (System.currentTimeMillis() - lastUpdateAt < updateIntervalMs) return
+
+    runCatching {
+        YoutubeDL.getInstance().updateYoutubeDL(
+            activity.applicationContext,
+            YoutubeDL.UpdateChannel.STABLE,
+        )
+    }.onSuccess {
+        preferences.edit()
+            .putLong("yt_dlp_updated_at", System.currentTimeMillis())
+            .apply()
+        Log.i("HalalifyDownload", "yt-dlp runtime update status: $it")
+    }.onFailure {
+        Log.w("HalalifyDownload", "Could not update yt-dlp runtime: ${it.message}")
+    }
 }
 
 internal fun validateYoutubeUrl(url: String) {

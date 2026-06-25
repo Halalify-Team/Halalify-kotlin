@@ -42,6 +42,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,8 @@ import com.halalify.kotlin.ui.theme.HalalifyTextPrimary
 import com.halalify.kotlin.ui.theme.HalalifyTextSecondary
 import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 import com.halalify.kotlin.model.VideoQuality
+import com.halalify.kotlin.model.FormatDiscoveryState
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun InputScreen(
@@ -73,12 +76,14 @@ internal fun InputScreen(
     sessionToken: String,
     loginStatus: String,
     isLoggingIn: Boolean,
+    formatDiscovery: FormatDiscoveryState,
     showDeveloperControls: Boolean,
     onBackendUrlChange: (String) -> Unit,
     onDevEmailChange: (String) -> Unit,
     onSessionTokenChange: (String) -> Unit,
     onDevLogin: () -> Unit,
     onGoogleLogin: () -> Unit,
+    onDiscoverFormats: (youtubeUrl: String) -> Unit,
     onStartProcessing: (
         youtubeUrl: String,
         removeMusic: Boolean,
@@ -92,6 +97,30 @@ internal fun InputScreen(
     var quality by remember { mutableStateOf(VideoQuality.P360) }
     var showDevSettings by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
+    val normalizedUrl = youtubeUrl.trim()
+    val formatsReadyForUrl = formatDiscovery.url == normalizedUrl &&
+        formatDiscovery.availableQualities.isNotEmpty() &&
+        !formatDiscovery.isLoading
+
+    LaunchedEffect(normalizedUrl) {
+        if (normalizedUrl.isBlank()) {
+            onDiscoverFormats("")
+        } else {
+            delay(700)
+            onDiscoverFormats(normalizedUrl)
+        }
+    }
+
+    LaunchedEffect(formatDiscovery.url, formatDiscovery.availableQualities) {
+        if (formatDiscovery.url == normalizedUrl &&
+            formatDiscovery.availableQualities.isNotEmpty() &&
+            quality !in formatDiscovery.availableQualities
+        ) {
+            quality = formatDiscovery.availableQualities
+                .firstOrNull { it == VideoQuality.P360 }
+                ?: formatDiscovery.availableQualities.last()
+        }
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
     val shimmerOffset by infiniteTransition.animateFloat(
@@ -181,10 +210,7 @@ internal fun InputScreen(
             ) {
                 Checkbox(
                     checked = removeMusic,
-                    onCheckedChange = {
-                        removeMusic = it
-                        if (it) quality = VideoQuality.P360
-                    },
+                    onCheckedChange = { removeMusic = it },
                     colors = CheckboxDefaults.colors(
                         checkedColor = HalalifyAccent,
                         checkmarkColor = HalalifyTextOnAccent,
@@ -222,27 +248,76 @@ internal fun InputScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                VideoQuality.entries.forEach { option ->
-                    FilterChip(
-                        selected = quality == option,
-                        onClick = { quality = option },
-                        enabled = option == VideoQuality.P360,
-                        label = { Text(option.label) },
-                        modifier = Modifier.weight(1f),
-                    )
+                formatDiscovery.availableQualities.chunked(4).forEach { rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        rowOptions.forEach { option ->
+                            FilterChip(
+                                selected = quality == option,
+                                onClick = { quality = option },
+                                label = { Text(option.label) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(4 - rowOptions.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "360p is available now. Higher qualities require YouTube PO-token support.",
-                style = MaterialTheme.typography.bodySmall,
-                color = HalalifyTextTertiary,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            when {
+                formatDiscovery.isLoading && formatDiscovery.url == normalizedUrl -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = HalalifyAccent,
+                        )
+                        Text(
+                            text = "Reading available qualities...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HalalifyTextSecondary,
+                        )
+                    }
+                }
+                formatDiscovery.errorMessage != null &&
+                    formatDiscovery.url == normalizedUrl -> {
+                    Text(
+                        text = formatDiscovery.errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                formatsReadyForUrl -> {
+                    Text(
+                        text = formatDiscovery.videoTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HalalifyTextTertiary,
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 1,
+                    )
+                }
+                else -> {
+                    Text(
+                        text = "Paste a valid YouTube URL to load its available qualities.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HalalifyTextTertiary,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -281,7 +356,10 @@ internal fun InputScreen(
             // Main CTA Button
             Button(
                 onClick = { onStartProcessing(youtubeUrl, removeMusic, quality) },
-                enabled = youtubeUrl.isNotBlank() && sessionToken.isNotBlank(),
+                enabled = normalizedUrl.isNotBlank() &&
+                    sessionToken.isNotBlank() &&
+                    formatsReadyForUrl &&
+                    quality in formatDiscovery.availableQualities,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),

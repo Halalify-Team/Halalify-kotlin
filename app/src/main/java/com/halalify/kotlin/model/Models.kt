@@ -53,10 +53,23 @@ enum class AppScreen {
 }
 
 enum class VideoQuality(val label: String, val maxHeight: Int) {
+    P144("144p", 144),
+    P240("240p", 240),
     P360("360p", 360),
+    P480("480p", 480),
     P720("720p", 720),
     P1080("1080p", 1080),
+    P1440("1440p", 1440),
+    P2160("2160p", 2160),
 }
+
+data class FormatDiscoveryState(
+    val url: String = "",
+    val videoTitle: String = "",
+    val availableQualities: List<VideoQuality> = emptyList(),
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+)
 
 data class LibraryItem(
     val id: String,

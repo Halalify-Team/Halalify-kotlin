@@ -35,6 +35,7 @@ internal fun AppNavigation(
 ) {
     val currentScreen by viewModel.screen.collectAsState()
     val processingState by viewModel.processing.collectAsState()
+    val formatDiscovery by viewModel.formatDiscovery.collectAsState()
     val backendUrl by viewModel.backendUrl.collectAsState()
     val devEmail by viewModel.devEmail.collectAsState()
     val sessionToken by viewModel.sessionToken.collectAsState()
@@ -124,12 +125,16 @@ internal fun AppNavigation(
                 sessionToken = sessionToken,
                 loginStatus = loginStatus,
                 isLoggingIn = isLoggingIn,
+                formatDiscovery = formatDiscovery,
                 showDeveloperControls = BuildConfig.DEBUG,
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onSessionTokenChange = viewModel::updateSessionToken,
                 onDevLogin = viewModel::devLogin,
                 onGoogleLogin = ::launchGoogleSignIn,
+                onDiscoverFormats = { url ->
+                    viewModel.discoverFormats(activity, url)
+                },
                 onStartProcessing = { url, removeMusic, quality ->
                     viewModel.startProcessing(activity, url, removeMusic, quality)
                 },

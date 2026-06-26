@@ -25,6 +25,12 @@ internal class YoutubeFormatResolver {
         )
     }
 
+    fun invalidate(url: String) {
+        if (cachedFormatCatalog?.url == url) {
+            cachedFormatCatalog = null
+        }
+    }
+
     suspend fun resolve(activity: ComponentActivity, url: String): YoutubeFormatCatalog {
         freshCatalog(url)?.let { return it }
         return runCatching {
@@ -34,6 +40,23 @@ internal class YoutubeFormatResolver {
         }.getOrElse { fastError ->
             Log.w("HalalifyDownload", "Fast media resolve failed; using yt-dlp: ${fastError.message}")
             discoverYoutubeFormats(activity, url)
+        }.also { catalog ->
+            cache(url, catalog)
+        }
+    }
+
+    suspend fun resolveFreshForDownload(activity: ComponentActivity, url: String): YoutubeFormatCatalog {
+        invalidate(url)
+        return runCatching {
+            discoverYoutubeFormats(activity, url)
+        }.getOrElse { ytDlpError ->
+            Log.w(
+                "HalalifyDownload",
+                "yt-dlp media refresh failed; falling back to fast player API: ${ytDlpError.message}"
+            )
+            withContext(Dispatchers.IO) {
+                discoverFastYoutubeFormats(url)
+            }
         }.also { catalog ->
             cache(url, catalog)
         }

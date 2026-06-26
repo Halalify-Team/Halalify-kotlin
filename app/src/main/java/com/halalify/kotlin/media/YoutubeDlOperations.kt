@@ -394,7 +394,7 @@ internal suspend fun downloadAudioChunk(
                     logs.takeLast(2500)
             )
             error(
-                "$reason Retrying with a fresh YouTube stream."
+                reason
             )
         }
         if (!outputFile.isFile || outputFile.length() <= 0L) {

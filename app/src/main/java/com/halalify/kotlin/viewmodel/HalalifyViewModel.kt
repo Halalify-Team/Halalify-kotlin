@@ -619,7 +619,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             directMedia.video.url == failedMediaUrl
                         ) {
                             updatePhase("Refreshing YouTube stream...")
-                            val refreshedCatalog = youtubeFormatResolver.resolve(activity, url)
+                            val refreshedCatalog = youtubeFormatResolver.resolveFreshForDownload(activity, url)
                             directMedia = refreshedCatalog.sessionFor(quality)
                                 ?: error("${quality.label} is no longer available for this video.")
                             perf("media-session-refreshed")

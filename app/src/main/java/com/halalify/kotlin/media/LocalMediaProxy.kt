@@ -83,6 +83,8 @@ internal class LocalMediaProxy(
         Log.i("HalalifyRange", "format=${media.formatId} method=$method range=${range ?: "none"}")
 
         val upstreamBuilder = Request.Builder().url(media.url)
+        Log.i("HalalifyRange", "Media URL: ${media.url}")
+        Log.i("HalalifyRange", "Original media.headers: ${media.headers}")
         media.headers.forEach { (name, value) ->
             if (!name.equals("Host", ignoreCase = true) &&
                 !name.equals("Range", ignoreCase = true)
@@ -108,6 +110,13 @@ internal class LocalMediaProxy(
                 val reason = response.message.ifBlank {
                     if (response.isSuccessful) "OK" else "Error"
                 }
+                
+                if (upstreamStatus == 403) {
+                    val bodyString = response.peekBody(1024).string()
+                    Log.e("HalalifyRange", "403 Forbidden! Response body snippet: $bodyString")
+                    Log.e("HalalifyRange", "403 Forbidden! Response headers: ${response.headers}")
+                }
+                
                 output.write("HTTP/1.1 ${response.code} $reason\r\n".toByteArray())
                 listOf(
                     "Content-Type",

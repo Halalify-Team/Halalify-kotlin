@@ -157,12 +157,23 @@ internal fun bucketHeight(height: Int): VideoQuality? = when {
 
 // Simple extension to convert library's VideoFormat to our DirectMediaResource
 private fun VideoFormat.toDirectMediaResource(): DirectMediaResource {
-    val headers = httpHeaders?.entries
-        ?.filterNot { (name, _) -> name.equals("Accept-Encoding", ignoreCase = true) }
-        ?.associate { it.key to it.value }
-        ?.toMutableMap() ?: mutableMapOf()
-    headers.putIfAbsent("User-Agent", YOUTUBE_USER_AGENT)
-    headers.putIfAbsent("Referer", "https://www.youtube.com/")
+    val headers = mutableMapOf<String, String>()
+    httpHeaders?.forEach { (name, value) ->
+        if (!name.equals("Accept-Encoding", ignoreCase = true)) {
+            headers[name] = value
+        }
+    }
+    
+    val hasUserAgent = headers.keys.any { it.equals("User-Agent", ignoreCase = true) }
+    val hasReferer = headers.keys.any { it.equals("Referer", ignoreCase = true) }
+    
+    if (!hasUserAgent) {
+        headers["User-Agent"] = YOUTUBE_USER_AGENT
+    }
+    if (!hasReferer) {
+        headers["Referer"] = "https://www.youtube.com/"
+    }
+    
     return DirectMediaResource(
         url = url ?: "",
         headers = headers,
@@ -257,35 +268,55 @@ private suspend fun downloadMediaResource(
     }
 }
 
-internal suspend fun downloadVideoSection(
+internal suspend fun downloadVideoSectionDirect(
     activity: ComponentActivity,
-    youtubeUrl: String,
-    quality: VideoQuality,
+    videoMedia: DirectMediaResource,
     startSeconds: Int,
     durationSeconds: Int,
     chunkIndex: Int,
 ): DownloadResult = withContext(Dispatchers.IO) {
+    val proxy = LocalMediaProxy(videoMedia)
     try {
-        validateYoutubeUrl(youtubeUrl)
         val safeDuration = durationSeconds.coerceAtLeast(1)
         val startedAt = System.currentTimeMillis()
         val outputDir = File(activity.filesDir, "halalify-video-preview-download")
         outputDir.mkdirs()
-        val outputFile = downloadYtDlpSection(
-            activity = activity,
-            youtubeUrl = youtubeUrl,
-            outputDir = outputDir,
-            filePrefix = "preview_${chunkIndex}",
-            startSeconds = startSeconds,
-            durationSeconds = safeDuration,
-            attempts = videoSectionAttempts(quality),
-            processLabel = "video-$chunkIndex",
-            timeoutSeconds = ytDlpChunkTimeoutSeconds(safeDuration),
-        )
 
+        val extension = videoMedia.extension.takeIf {
+            it in setOf("mp4", "webm", "mkv")
+        } ?: "mp4"
+        val outputFile = File(outputDir, "preview_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.$extension")
+
+        // FFmpegKit is used because the youtubedl-android ffmpeg binary is not 16KB page-aligned.
+        // We use stream copy (-c:v copy) to cut the segment extremely fast without re-encoding.
+        // We disable audio (-an) since we mux it with clean audio later.
+        val command = listOf(
+            "-y",
+            "-ss", startSeconds.toString(),
+            "-t", safeDuration.toString(),
+            "-i", proxy.url,
+            "-c:v", "copy",
+            "-an",
+            outputFile.absolutePath
+        ).joinToString(" ") { it.ffmpegQuote() }
+
+        val session = FFmpegKit.execute(command)
         val elapsedMs = System.currentTimeMillis() - startedAt
+        val returnCode = session.returnCode
+
+        if (!ReturnCode.isSuccess(returnCode)) {
+            error(
+                "ffmpeg video chunk download failed. code=${returnCode?.value}\n" +
+                    session.allLogsAsString.takeLast(2500)
+            )
+        }
+        if (!outputFile.isFile || outputFile.length() <= 0L) {
+            error("ffmpeg finished but produced no video file.")
+        }
+
         DownloadResult(
-            message = "SUCCESS: video preview section downloaded locally.\n" +
+            message = "SUCCESS: video preview section downloaded locally via FFmpeg direct stream.\n" +
+                "chunk: $chunkIndex\n" +
                 "start: ${startSeconds}s\n" +
                 "duration: ${safeDuration}s\n" +
                 "size: ${outputFile.length()} bytes\n" +
@@ -298,6 +329,8 @@ internal suspend fun downloadVideoSection(
             message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
             path = null,
         )
+    } finally {
+        proxy.close()
     }
 }
 
@@ -344,6 +377,71 @@ internal suspend fun downloadAudioChunk(
         )
     }
 }
+
+internal suspend fun downloadAudioChunkDirect(
+    activity: ComponentActivity,
+    audioMedia: DirectMediaResource,
+    startSeconds: Int,
+    durationSeconds: Int,
+    chunkIndex: Int,
+): DownloadResult = withContext(Dispatchers.IO) {
+    val proxy = LocalMediaProxy(audioMedia)
+    try {
+        val safeDuration = durationSeconds.coerceAtLeast(1)
+        val startedAt = System.currentTimeMillis()
+        val outputDir = File(activity.filesDir, "halalify-audio-chunk-download")
+        outputDir.mkdirs()
+
+        val outputFile = File(outputDir, "audio_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.m4a")
+
+        // FFmpegKit has no HTTPS support, so we use LocalMediaProxy which
+        // bridges the HTTPS YouTube URL to a local HTTP endpoint.
+        // -ss before -i enables fast seeking via HTTP Range requests.
+        val command = listOf(
+            "-y",
+            "-ss", startSeconds.toString(),
+            "-t", safeDuration.toString(),
+            "-i", proxy.url,
+            "-vn",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            outputFile.absolutePath
+        ).joinToString(" ") { it.ffmpegQuote() }
+
+        val session = FFmpegKit.execute(command)
+        val elapsedMs = System.currentTimeMillis() - startedAt
+        val returnCode = session.returnCode
+
+        if (!ReturnCode.isSuccess(returnCode)) {
+            error(
+                "ffmpeg audio chunk download failed. code=${returnCode?.value}\n" +
+                    session.allLogsAsString.takeLast(2500)
+            )
+        }
+        if (!outputFile.isFile || outputFile.length() <= 0L) {
+            error("ffmpeg finished but produced no audio file.")
+        }
+
+        DownloadResult(
+            message = "SUCCESS: audio chunk downloaded locally via FFmpeg direct stream.\n" +
+                "chunk: $chunkIndex\n" +
+                "start: ${startSeconds}s\n" +
+                "duration: ${safeDuration}s\n" +
+                "size: ${outputFile.length()} bytes\n" +
+                "path: ${outputFile.absolutePath}\n" +
+                "elapsed: ${elapsedMs}ms",
+            path = outputFile.absolutePath,
+        )
+    } catch (error: Throwable) {
+        DownloadResult(
+            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            path = null,
+        )
+    } finally {
+        proxy.close()
+    }
+}
+
 
 private data class YtDlpSectionAttempt(
     val format: String,

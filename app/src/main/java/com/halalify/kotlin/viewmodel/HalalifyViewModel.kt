@@ -11,9 +11,10 @@ import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.TemporaryFileCleaner
 import com.halalify.kotlin.media.blurWomenInVideoChunk
 import com.halalify.kotlin.media.downloadAudioChunk
+import com.halalify.kotlin.media.downloadAudioChunkDirect
 import com.halalify.kotlin.media.downloadAudioFile
 import com.halalify.kotlin.media.downloadVideo
-import com.halalify.kotlin.media.downloadVideoSection
+import com.halalify.kotlin.media.downloadVideoSectionDirect
 import com.halalify.kotlin.media.discoverFastYoutubeFormats
 import com.halalify.kotlin.media.discoverYoutubeFormats
 import com.halalify.kotlin.media.YoutubeFormatCatalog
@@ -557,7 +558,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                 // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
-                val initialCatalog = youtubeFormatResolver.resolve(activity, url)
+                val initialCatalog = youtubeFormatResolver.resolveFreshForDownload(activity, url)
                 var directMedia = initialCatalog.sessionFor(quality)
                     ?: error("${quality.label} is not available for this video.")
                 perf(
@@ -617,10 +618,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         async {
                             if (plan.index > 1) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
-                                val videoChunk = downloadVideoSection(
+                                val videoChunk = downloadVideoSectionDirect(
                                     activity = activity,
-                                    youtubeUrl = url,
-                                    quality = quality,
+                                    videoMedia = directMedia.video,
                                     startSeconds = plan.startSeconds,
                                     durationSeconds = plan.durationSeconds,
                                     chunkIndex = plan.index,
@@ -639,9 +639,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
                                 )
                                 val audioChunkPath = audioRangeSemaphore.withPermit {
-                                    val audioChunk = downloadAudioChunk(
+                                    val audioChunk = downloadAudioChunkDirect(
                                         activity = activity,
-                                        youtubeUrl = url,
+                                        audioMedia = directMedia.audio,
                                         startSeconds = plan.startSeconds,
                                         durationSeconds = plan.durationSeconds,
                                         chunkIndex = plan.index,

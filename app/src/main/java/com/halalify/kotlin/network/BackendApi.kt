@@ -1,6 +1,7 @@
 package com.halalify.kotlin.network
 
 import androidx.activity.ComponentActivity
+import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.FileResult
 import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.model.UploadStart
@@ -42,10 +43,7 @@ internal suspend fun loginWithBackendDevAccountDetailed(
     email: String,
 ): DevLoginResult = withContext(Dispatchers.IO) {
     try {
-        val baseUrl = backendUrl.trim().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            error("Backend URL is required.")
-        }
+        val baseUrl = backendUrl.toBackendBaseUrl()
         val cleanEmail = email.trim()
         if (cleanEmail.isBlank()) {
             error("Dev email is required.")
@@ -115,10 +113,7 @@ internal suspend fun loginWithGoogleIdTokenDetailed(
     idToken: String,
 ): DevLoginResult = withContext(Dispatchers.IO) {
     try {
-        val baseUrl = backendUrl.trim().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            error("Backend URL is required.")
-        }
+        val baseUrl = backendUrl.toBackendBaseUrl()
         val cleanIdToken = idToken.trim()
         if (cleanIdToken.isBlank()) {
             error("Google sign-in did not return an ID token.")
@@ -187,10 +182,7 @@ internal suspend fun fetchQuotaState(
     backendUrl: String,
     sessionToken: String,
 ): QuotaState = withContext(Dispatchers.IO) {
-    val baseUrl = backendUrl.trim().trimEnd('/')
-    if (baseUrl.isBlank()) {
-        error("Backend URL is required.")
-    }
+    val baseUrl = backendUrl.toBackendBaseUrl()
     val token = sessionToken.trim()
     if (token.isBlank()) {
         error("Session token is required.")
@@ -271,11 +263,11 @@ internal suspend fun cleanAudioWithBackend(
         if (!source.isFile || source.length() <= 0L) {
             error("Input audio file is missing or empty: ${source.absolutePath}")
         }
-
-        val baseUrl = backendUrl.trim().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            error("Backend URL is required.")
+        if (source.length() > MAX_AUDIO_CHUNK_UPLOAD_BYTES) {
+            error("Audio chunk is too large to upload safely.")
         }
+
+        val baseUrl = backendUrl.toBackendBaseUrl()
         val token = sessionToken.trim()
         if (token.isBlank()) {
             error("Session token is required because /upload_chunk is protected.")
@@ -429,8 +421,21 @@ private fun downloadFile(client: OkHttpClient, url: String, outputFile: File) {
             error(httpErrorMessage("Clean audio download failed", response.code, ""))
         }
         val body = response.body ?: error("Clean audio download returned an empty body.")
-        FileOutputStream(outputFile).use { output ->
-            body.byteStream().copyTo(output)
+        body.byteStream().use { input ->
+            FileOutputStream(outputFile).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var totalBytes = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    totalBytes += read
+                    if (totalBytes > MAX_CLEAN_AUDIO_DOWNLOAD_BYTES) {
+                        outputFile.delete()
+                        error("Clean audio download is larger than expected.")
+                    }
+                    output.write(buffer, 0, read)
+                }
+            }
         }
     }
 }
@@ -445,6 +450,17 @@ private fun JSONObject.optDoubleOrNull(name: String): Double? {
 private fun JSONObject.optIntOrNull(name: String): Int? {
     if (!has(name) || isNull(name)) return null
     return runCatching { optInt(name) }.getOrNull()
+}
+
+private fun String.toBackendBaseUrl(): String {
+    val baseUrl = trim().trimEnd('/')
+    if (baseUrl.isBlank()) {
+        error("Backend URL is required.")
+    }
+    if (!BuildConfig.DEBUG && !baseUrl.startsWith("https://", ignoreCase = true)) {
+        error("Backend URL must use HTTPS.")
+    }
+    return baseUrl
 }
 
 private fun httpErrorMessage(prefix: String, code: Int, body: String): String {
@@ -481,3 +497,6 @@ private fun Throwable.toBackendUserMessage(action: String): String {
         else -> rawMessage.ifBlank { javaClass.simpleName }.take(500)
     }
 }
+
+private const val MAX_AUDIO_CHUNK_UPLOAD_BYTES = 25L * 1024L * 1024L
+private const val MAX_CLEAN_AUDIO_DOWNLOAD_BYTES = 50L * 1024L * 1024L

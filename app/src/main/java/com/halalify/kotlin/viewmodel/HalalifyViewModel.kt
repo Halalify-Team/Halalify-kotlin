@@ -2,15 +2,13 @@ package com.halalify.kotlin.viewmodel
 
 import androidx.activity.ComponentActivity
 import android.app.Application
-import android.content.ContentValues
 import android.content.Context
-import android.os.Environment
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.BuildConfig
+import com.halalify.kotlin.media.TemporaryFileCleaner
 import com.halalify.kotlin.media.downloadAudioChunk
 import com.halalify.kotlin.media.downloadAudioFile
 import com.halalify.kotlin.media.downloadVideo
@@ -18,6 +16,7 @@ import com.halalify.kotlin.media.downloadVideoSection
 import com.halalify.kotlin.media.discoverFastYoutubeFormats
 import com.halalify.kotlin.media.discoverYoutubeFormats
 import com.halalify.kotlin.media.YoutubeFormatCatalog
+import com.halalify.kotlin.media.YoutubeFormatResolver
 import com.halalify.kotlin.media.validateYoutubeUrl
 import com.halalify.kotlin.media.concatVideoSegments
 import com.halalify.kotlin.media.muxFullVideoWithCleanAudio
@@ -36,13 +35,15 @@ import com.halalify.kotlin.network.cleanAudioWithBackend
 import com.halalify.kotlin.network.fetchQuotaState
 import com.halalify.kotlin.network.loginWithGoogleIdTokenDetailed
 import com.halalify.kotlin.network.loginWithBackendDevAccountDetailed
+import com.halalify.kotlin.processing.ChunkPlanner
+import com.halalify.kotlin.processing.ProcessingForegroundService
+import com.halalify.kotlin.security.SecureSessionStore
+import com.halalify.kotlin.storage.LibraryRepository
 import java.io.File
-import java.io.FileInputStream
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,15 +63,18 @@ import kotlinx.coroutines.sync.withLock
 
 internal class HalalifyViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val prefs =
-        getApplication<Application>().getSharedPreferences("halalify_session", 0)
+    private val appFilesDir: File = getApplication<Application>().filesDir
+    private val libraryRepository = LibraryRepository(appFilesDir)
+    private val temporaryFileCleaner = TemporaryFileCleaner(appFilesDir)
+    private val youtubeFormatResolver = YoutubeFormatResolver()
+    private val sessionStore = SecureSessionStore(getApplication<Application>())
 
     private fun persistSession() {
-        prefs.edit()
-            .putString("session_token", _sessionToken.value)
-            .putString("backend_url", _backendUrl.value)
-            .putString("dev_email", _devEmail.value)
-            .apply()
+        sessionStore.putSession(
+            sessionToken = _sessionToken.value,
+            backendUrl = _backendUrl.value,
+            devEmail = _devEmail.value,
+        )
     }
 
     private val _libraryItems = MutableStateFlow<List<LibraryItem>>(emptyList())
@@ -90,42 +94,13 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         loadLibrary()
     }
 
-    private fun getLibraryFile(): File {
-        return File(getApplication<Application>().filesDir, "library.json")
-    }
-
     fun loadLibrary() {
         viewModelScope.launch {
             try {
-                val file = getLibraryFile()
-                if (!file.exists()) {
-                    _libraryItems.value = emptyList()
-                    return@launch
+                val items = withContext(Dispatchers.IO) {
+                    libraryRepository.loadItems()
                 }
-                val jsonStr = file.readText()
-                val jsonArray = org.json.JSONArray(jsonStr)
-                val items = mutableListOf<LibraryItem>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val filePath = obj.getString("filePath")
-                    val file = File(filePath)
-                    if (!file.isFile || file.length() <= 0L) {
-                        continue
-                    }
-                    items.add(
-                        LibraryItem(
-                            id = obj.getString("id"),
-                            title = obj.getString("title"),
-                            filePath = filePath,
-                            originalUrl = obj.getString("originalUrl"),
-                            durationSeconds = obj.getInt("durationSeconds"),
-                            fileSizeBytes = obj.optLong("fileSizeBytes", file.length()),
-                            timestamp = obj.getLong("timestamp")
-                        )
-                    )
-                }
-                _libraryItems.value = items.sortedByDescending { it.timestamp }
-                persistLibrary(items)
+                _libraryItems.value = items
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -148,66 +123,23 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         originalUrl: String,
         durationSeconds: Int,
     ) = withContext(Dispatchers.IO) {
-        val libraryDir = File(getApplication<Application>().filesDir, "halalify-library")
-        libraryDir.mkdirs()
-
-        val sourceFile = File(filePath)
-        if (!sourceFile.exists()) return@withContext
-
-        val destFile = File(libraryDir, "lib_${UUID.randomUUID().toString().take(8)}.${sourceFile.extension}")
-        sourceFile.copyTo(destFile, overwrite = true)
-
-        val item = LibraryItem(
-            id = UUID.randomUUID().toString(),
+        val updatedItems = libraryRepository.saveItem(
             title = title,
-            filePath = destFile.absolutePath,
+            filePath = filePath,
             originalUrl = originalUrl,
             durationSeconds = durationSeconds,
-            fileSizeBytes = destFile.length(),
-            timestamp = System.currentTimeMillis()
+            currentItems = _libraryItems.value,
         )
-
-        val currentList = _libraryItems.value.toMutableList()
-        currentList.add(0, item)
-
-        persistLibrary(currentList)
-        _libraryItems.value = currentList
-    }
-
-    private fun persistLibrary(items: List<LibraryItem>) {
-        val jsonArray = org.json.JSONArray()
-        for (it in items) {
-            val obj = org.json.JSONObject()
-                .put("id", it.id)
-                .put("title", it.title)
-                .put("filePath", it.filePath)
-                .put("originalUrl", it.originalUrl)
-                .put("durationSeconds", it.durationSeconds)
-                .put("fileSizeBytes", it.fileSizeBytes)
-                .put("timestamp", it.timestamp)
-            jsonArray.put(obj)
-        }
-
-        getLibraryFile().writeText(jsonArray.toString())
+        _libraryItems.value = updatedItems
     }
 
     fun deleteFromLibrary(itemId: String) {
         viewModelScope.launch {
             try {
-                val currentList = _libraryItems.value.toMutableList()
-                val iterator = currentList.iterator()
-                while (iterator.hasNext()) {
-                    val it = iterator.next()
-                    if (it.id == itemId) {
-                        val file = File(it.filePath)
-                        if (file.exists()) {
-                            file.delete()
-                        }
-                        iterator.remove()
-                    }
+                val updatedItems = withContext(Dispatchers.IO) {
+                    libraryRepository.deleteItem(itemId, _libraryItems.value)
                 }
-                _libraryItems.value = currentList
-                persistLibrary(currentList)
+                _libraryItems.value = updatedItems
                 _libraryStatus.value = "Removed from Library."
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -230,7 +162,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             _exportStatus.value = "Saving to Gallery..."
             try {
                 val resultUri = withContext(Dispatchers.IO) {
-                    saveVideoToGallery(context, videoPath, title)
+                    libraryRepository.saveVideoToGallery(context, videoPath, title)
                 }
                 if (resultUri != null) {
                     val state = _processing.value
@@ -242,7 +174,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             durationSeconds = state.totalDurationSeconds,
                         )
                     }
-                    cleanupTemporaryWorkDirsExcept(keepPaths = listOf(videoPath))
+                    temporaryFileCleaner.cleanupExcept(keepPaths = listOf(videoPath))
                     _exportStatus.value = "SUCCESS: Saved to Gallery (Movies/Halalify)!"
                     _processing.update { it.copy(isSavedToGallery = true) }
                 } else {
@@ -251,51 +183,6 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             } finally {
                 _isExporting.value = false
             }
-        }
-    }
-
-    private fun saveVideoToGallery(context: Context, videoFilePath: String, title: String): String? {
-        val sourceFile = File(videoFilePath)
-        if (!sourceFile.exists()) return null
-        
-        val resolver = context.contentResolver
-        val cleanTitle = title.replace("[^a-zA-Z0-9]".toRegex(), "_")
-        val fileName = "Halalify_${cleanTitle}_${System.currentTimeMillis()}.mp4"
-        
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Video.Media.TITLE, title)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Halalify")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-        }
-        
-        val collectionUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val itemUri = resolver.insert(collectionUri, contentValues) ?: return null
-        
-        try {
-            resolver.openOutputStream(itemUri).use { outputStream ->
-                if (outputStream == null) return null
-                FileInputStream(sourceFile).use { inputStream ->
-                    inputStream.copyTo(outputStream)
-                }
-            }
-            
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                contentValues.clear()
-                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                resolver.update(itemUri, contentValues, null, null)
-            }
-            
-            return itemUri.toString()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            try {
-                resolver.delete(itemUri, null, null)
-            } catch (ignored: Exception) {}
-            return null
         }
     }
 
@@ -347,19 +234,20 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     val sharedYoutubeUrl: StateFlow<String> = _sharedYoutubeUrl.asStateFlow()
 
     private val _backendUrl = MutableStateFlow(
-        prefs.getString("backend_url", BuildConfig.DEFAULT_BACKEND_URL)
+        sessionStore.getString(SecureSessionStore.KEY_BACKEND_URL, BuildConfig.DEFAULT_BACKEND_URL)
             .orEmpty()
             .ifBlank { BuildConfig.DEFAULT_BACKEND_URL }
+            .sanitizeBackendUrl()
     )
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
 
     private val _devEmail = MutableStateFlow(
-        prefs.getString("dev_email", "").orEmpty()
+        sessionStore.getString(SecureSessionStore.KEY_DEV_EMAIL).orEmpty()
     )
     val devEmail: StateFlow<String> = _devEmail.asStateFlow()
 
     private val _sessionToken = MutableStateFlow(
-        prefs.getString("session_token", "").orEmpty()
+        sessionStore.getString(SecureSessionStore.KEY_SESSION_TOKEN).orEmpty()
     )
     val sessionToken: StateFlow<String> = _sessionToken.asStateFlow()
 
@@ -378,13 +266,12 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     private var processingJob: Job? = null
     private var formatDiscoveryJob: Job? = null
     private var warmUpJob: Job? = null
-    private var cachedFormatCatalog: CachedFormatCatalog? = null
 
     init {
         validatePersistedSession()
     }
 
-    fun updateBackendUrl(url: String) { _backendUrl.value = url; persistSession() }
+    fun updateBackendUrl(url: String) { _backendUrl.value = url.sanitizeBackendUrl(); persistSession() }
     fun updateDevEmail(email: String) { _devEmail.value = email; persistSession() }
     fun updateSessionToken(token: String) { _sessionToken.value = token; persistSession() }
 
@@ -440,7 +327,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         _sessionToken.value = ""
         _loginStatus.value = status
         _quotaState.value = QuotaState(statusMessage = status)
-        prefs.edit().remove("session_token").apply()
+        sessionStore.removeSessionToken()
     }
 
     fun discoverFormats(activity: ComponentActivity, youtubeUrl: String) {
@@ -450,7 +337,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             _formatDiscovery.value = FormatDiscoveryState()
             return
         }
-        freshFormatCatalog(url)?.let { catalog ->
+        youtubeFormatResolver.freshCatalog(url)?.let { catalog ->
             _formatDiscovery.value = FormatDiscoveryState(
                 url = url,
                 videoTitle = catalog.metadata.title,
@@ -463,26 +350,13 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 url = url,
                 isLoading = true,
             )
+
             runCatching {
                 withContext(Dispatchers.IO) {
                     discoverFastYoutubeFormats(url)
                 }
-            }.onSuccess { fastCatalog ->
-                if (_formatDiscovery.value.url == url) {
-                    cacheFormatCatalog(url, fastCatalog)
-                    _formatDiscovery.value = FormatDiscoveryState(
-                        url = url,
-                        videoTitle = fastCatalog.metadata.title,
-                        availableQualities = fastCatalog.availableQualities,
-                        isLoading = false,
-                    )
-                }
-                return@launch
-            }
-            runCatching {
-                discoverYoutubeFormats(activity, url)
             }.onSuccess { catalog ->
-                cacheFormatCatalog(url, catalog)
+                youtubeFormatResolver.cache(url, catalog)
                 _formatDiscovery.value = FormatDiscoveryState(
                     url = url,
                     videoTitle = catalog.metadata.title,
@@ -490,16 +364,29 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 )
             }.onFailure { error ->
                 if (error is CancellationException) throw error
-                val current = _formatDiscovery.value
-                _formatDiscovery.value = if (
-                    current.url == url && current.availableQualities.isNotEmpty()
-                ) {
-                    current.copy(isLoading = false)
-                } else {
-                    FormatDiscoveryState(
+                Log.w("HalalifyDownload", "Fast format discovery failed; using yt-dlp: ${error.message}")
+                runCatching {
+                    discoverYoutubeFormats(activity, url)
+                }.onSuccess { catalog ->
+                    youtubeFormatResolver.cache(url, catalog)
+                    _formatDiscovery.value = FormatDiscoveryState(
                         url = url,
-                        errorMessage = error.userFacingMessage(),
+                        videoTitle = catalog.metadata.title,
+                        availableQualities = catalog.availableQualities,
                     )
+                }.onFailure { fallbackError ->
+                    if (fallbackError is CancellationException) throw fallbackError
+                    val current = _formatDiscovery.value
+                    _formatDiscovery.value = if (
+                        current.url == url && current.availableQualities.isNotEmpty()
+                    ) {
+                        current.copy(isLoading = false)
+                    } else {
+                        FormatDiscoveryState(
+                            url = url,
+                            errorMessage = fallbackError.userFacingMessage(),
+                        )
+                    }
                 }
             }
         }
@@ -635,6 +522,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 removeMusic = removeMusic,
                 quality = quality,
             )
+            publishProcessingNotification()
             clearPlaybackScratch(activity)
 
             try {
@@ -648,7 +536,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         activity = activity,
                         url = url,
                         quality = quality,
-                        catalog = freshFormatCatalog(url),
+                        catalog = youtubeFormatResolver.freshCatalog(url),
                         perf = ::perf,
                     )
                     return@launch
@@ -666,10 +554,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                 // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
-                val initialCatalog = freshFormatCatalog(url)
-                    ?: discoverYoutubeFormats(activity, url).also {
-                        cacheFormatCatalog(url, it)
-                    }
+                val initialCatalog = youtubeFormatResolver.resolve(activity, url)
                 var directMedia = initialCatalog.sessionFor(quality)
                     ?: error("${quality.label} is not available for this video.")
                 perf(
@@ -698,7 +583,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     }
                 }
 
-                val chunkPlans = buildChunkPlans(metadata.durationSeconds)
+                val chunkPlans = ChunkPlanner.buildPlans(metadata.durationSeconds)
                 val totalChunks = chunkPlans.size
 
                 val initialChunks = (0 until totalChunks).map { i ->
@@ -717,8 +602,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
                 // Each audio range is read directly from YouTube. No full source audio
                 // is downloaded or cut before the first chunk reaches the backend.
-                val audioRangeSemaphore = Semaphore(1)
-                val videoRangeSemaphore = Semaphore(1)
+                val audioRangeSemaphore = Semaphore(2)
+                val videoRangeSemaphore = Semaphore(2)
                 val backendSemaphore = Semaphore(1)
                 val muxSemaphore = Semaphore(1)
                 val mediaRefreshMutex = Mutex()
@@ -731,8 +616,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             directMedia.video.url == failedMediaUrl
                         ) {
                             updatePhase("Refreshing YouTube stream...")
-                            val refreshedCatalog = discoverYoutubeFormats(activity, url)
-                            cacheFormatCatalog(url, refreshedCatalog)
+                            val refreshedCatalog = youtubeFormatResolver.resolve(activity, url)
                             directMedia = refreshedCatalog.sessionFor(quality)
                                 ?: error("${quality.label} is no longer available for this video.")
                             perf("media-session-refreshed")
@@ -743,7 +627,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 supervisorScope {
                     val videoChunkJobs = chunkPlans.map { plan ->
                         async {
-                            if (plan.index > 0) firstChunkPlayable.await()
+                            if (plan.index > 1) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
                                 var media = directMedia.video
                                 var videoChunk = downloadVideoSection(
@@ -772,7 +656,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     val chunkJobs = chunkPlans.map { plan ->
                         async {
                             try {
-                                if (plan.index > 0) firstChunkPlayable.await()
+                                if (plan.index > 1) firstChunkPlayable.await()
                                 updateChunk(plan.index, ChunkPhase.EXTRACTING_AUDIO)
                                 updatePhase(
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
@@ -945,7 +829,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         playablePaths = finalPlayable,
                     )
                 }
+                ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
             } catch (cancelled: CancellationException) {
+                ProcessingForegroundService.stop(getApplication<Application>())
                 throw cancelled
             } catch (partial: PartialProcessingException) {
                 _processing.update {
@@ -958,6 +844,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         },
                     )
                 }
+                ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
             } catch (error: Throwable) {
                 _processing.update {
                     it.copy(
@@ -965,6 +852,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         currentPhaseLabel = "Failed",
                     )
                 }
+                ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
             }
         }
     }
@@ -1039,6 +927,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 firstChunkReady = true,
             )
         }
+        ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
         perf("normal-download-complete")
     }
 
@@ -1063,6 +952,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         if (discardTemporaryResult) {
             discardCurrentTemporaryResult()
         }
+        ProcessingForegroundService.stop(getApplication<Application>())
         _screen.value = AppScreen.INPUT
         _processing.value = ProcessingState()
     }
@@ -1073,31 +963,15 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             state.playablePaths.forEach { path ->
                 runCatching { File(path).delete() }
             }
-            cleanupTemporaryWorkDirs()
+            temporaryFileCleaner.cleanupAll()
             return
         }
-        cleanupTemporaryWorkDirsExcept(keepPaths = state.playablePaths)
+        temporaryFileCleaner.cleanupExcept(keepPaths = state.playablePaths)
     }
 
     private fun updatePhase(label: String) {
         _processing.update { it.copy(currentPhaseLabel = label) }
-    }
-
-    private fun freshFormatCatalog(url: String): YoutubeFormatCatalog? {
-        val cached = cachedFormatCatalog ?: return null
-        if (cached.url != url) return null
-        if (SystemClock.elapsedRealtime() - cached.createdAtMs > FORMAT_CATALOG_TTL_MS) {
-            return null
-        }
-        return cached.catalog
-    }
-
-    private fun cacheFormatCatalog(url: String, catalog: YoutubeFormatCatalog) {
-        cachedFormatCatalog = CachedFormatCatalog(
-            url = url,
-            catalog = catalog,
-            createdAtMs = SystemClock.elapsedRealtime(),
-        )
+        publishProcessingNotification()
     }
 
     private fun updateChunk(index: Int, phase: ChunkPhase, errorMsg: String? = null) {
@@ -1111,76 +985,21 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             }
             state.copy(chunks = updatedChunks)
         }
+        publishProcessingNotification()
+    }
+
+    private fun publishProcessingNotification() {
+        val state = _processing.value
+        if (state.originalUrl.isBlank()) return
+        ProcessingForegroundService.update(getApplication<Application>(), state)
     }
 
     private fun clearPlaybackScratch(activity: ComponentActivity) {
-        cleanupTemporaryWorkDirs(activity.filesDir)
+        TemporaryFileCleaner(activity.filesDir).cleanupAll()
     }
 
     private fun cleanupAbandonedTemporaryFiles() {
-        cleanupTemporaryWorkDirs(getApplication<Application>().filesDir)
-    }
-
-    private fun cleanupTemporaryWorkDirs(root: File = getApplication<Application>().filesDir) {
-        temporaryWorkDirNames.forEach { dirName ->
-            File(root, dirName).deleteRecursively()
-        }
-    }
-
-    private fun cleanupTemporaryWorkDirsExcept(
-        root: File = getApplication<Application>().filesDir,
-        keepPaths: List<String>,
-    ) {
-        val keepFiles = keepPaths
-            .mapNotNull { path -> runCatching { File(path).canonicalFile }.getOrNull() }
-            .toSet()
-        temporaryWorkDirNames.forEach { dirName ->
-            val dir = File(root, dirName)
-            if (!dir.exists()) return@forEach
-            val dirCanonical = runCatching { dir.canonicalFile }.getOrNull() ?: dir
-            val keepInsideDir = keepFiles.any { keepFile ->
-                keepFile.path == dirCanonical.path || keepFile.path.startsWith("${dirCanonical.path}/")
-            }
-            if (!keepInsideDir) {
-                dir.deleteRecursively()
-                return@forEach
-            }
-            dir.listFiles()?.forEach { child ->
-                val childCanonical = runCatching { child.canonicalFile }.getOrNull() ?: child
-                val shouldKeep = keepFiles.any { keepFile ->
-                    keepFile.path == childCanonical.path || keepFile.path.startsWith("${childCanonical.path}/")
-                }
-                if (!shouldKeep) {
-                    if (child.isDirectory) child.deleteRecursively() else child.delete()
-                }
-            }
-        }
-    }
-
-    private fun buildChunkPlans(durationSeconds: Int): List<ChunkPlan> {
-        val totalDuration = durationSeconds.coerceAtLeast(1)
-        val plans = mutableListOf<ChunkPlan>()
-        var start = 0
-        var index = 0
-
-        while (start < totalDuration) {
-            val targetDuration = when (index) {
-                0 -> 10
-                1, 2 -> 15
-                3 -> 30
-                else -> 60
-            }
-            val duration = (totalDuration - start).coerceAtMost(targetDuration).coerceAtLeast(1)
-            plans += ChunkPlan(
-                index = index,
-                startSeconds = start,
-                durationSeconds = duration,
-            )
-            start += duration
-            index += 1
-        }
-
-        return plans
+        temporaryFileCleaner.cleanupAll()
     }
 
     private fun validateEnoughQuotaForVideo(quota: QuotaState, durationSeconds: Int) {
@@ -1225,44 +1044,23 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
 
 private fun formatQuotaMinutes(value: Double): String = "%.1f".format(value)
 
-private data class ChunkPlan(
-    val index: Int,
-    val startSeconds: Int,
-    val durationSeconds: Int,
-)
+private fun String.sanitizeBackendUrl(): String {
+    val trimmed = trim().trimEnd('/')
+    if (trimmed.isBlank()) return BuildConfig.DEFAULT_BACKEND_URL
+    if (BuildConfig.DEBUG) return trimmed
+    return if (trimmed.startsWith("https://", ignoreCase = true)) {
+        trimmed
+    } else {
+        BuildConfig.DEFAULT_BACKEND_URL
+    }
+}
 
 private data class CleanChunkResult(
     val index: Int,
     val cleanAudioPath: String,
 )
 
-private data class CachedFormatCatalog(
-    val url: String,
-    val catalog: YoutubeFormatCatalog,
-    val createdAtMs: Long,
-)
-
 private class PartialProcessingException(message: String) : RuntimeException(message)
-
-private const val FORMAT_CATALOG_TTL_MS = 60_000L
-
-private val temporaryWorkDirNames = listOf(
-    "halalify-audio-chunk-download",
-    "halalify-audio-concat",
-    "halalify-audio-download-test",
-    "halalify-audio-extract-test",
-    "halalify-audio-normalized",
-    "halalify-clean-audio-backend",
-    "halalify-clean-audio-mock",
-    "halalify-concat",
-    "halalify-cut-test",
-    "halalify-download-test",
-    "halalify-full-audio",
-    "halalify-full-video",
-    "halalify-mux-test",
-    "halalify-playable",
-    "halalify-video-preview-download",
-)
 
 private fun Throwable.userFacingMessage(): String {
     val ytDlpError = message

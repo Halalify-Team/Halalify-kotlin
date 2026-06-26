@@ -89,6 +89,7 @@ internal fun InputScreen(
     onStartProcessing: (
         youtubeUrl: String,
         removeMusic: Boolean,
+        blurWomen: Boolean,
         quality: VideoQuality,
     ) -> Unit,
     onNavigateToLibrary: () -> Unit,
@@ -96,6 +97,7 @@ internal fun InputScreen(
 ) {
     var youtubeUrl by remember { mutableStateOf(sharedYoutubeUrl) }
     var removeMusic by remember { mutableStateOf(true) }
+    var blurWomen by remember { mutableStateOf(false) }
     var quality by remember { mutableStateOf(VideoQuality.P360) }
     var qualityUrl by remember { mutableStateOf("") }
     var showDevSettings by remember { mutableStateOf(false) }
@@ -253,6 +255,40 @@ internal fun InputScreen(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = blurWomen,
+                    onCheckedChange = { blurWomen = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = HalalifyAccent,
+                        checkmarkColor = HalalifyTextOnAccent,
+                    ),
+                )
+                Column {
+                    Text(
+                        text = "Blur women",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = HalalifyTextPrimary,
+                    )
+                    Text(
+                        text = "Conservative mode: blurs detected people/faces locally",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = HalalifyTextSecondary,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = if (removeMusic) {
                     "Video quality (clean streaming)"
@@ -387,7 +423,7 @@ internal fun InputScreen(
 
             // Main CTA Button
             Button(
-                onClick = { onStartProcessing(youtubeUrl, removeMusic, quality) },
+                onClick = { onStartProcessing(youtubeUrl, removeMusic, blurWomen, quality) },
                 enabled = normalizedUrl.isNotBlank() &&
                     sessionToken.isNotBlank() &&
                     formatsReadyForUrl &&

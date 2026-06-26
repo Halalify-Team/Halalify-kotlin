@@ -425,6 +425,7 @@ private fun ChunkRow(chunk: ChunkState) {
 private fun ChunkPhase.displayLabel(): String = when (this) {
     ChunkPhase.WAITING -> "Waiting..."
     ChunkPhase.CUTTING_VIDEO -> "Cutting video"
+    ChunkPhase.BLURRING_VIDEO -> "Blurring women"
     ChunkPhase.EXTRACTING_AUDIO -> "Downloading audio"
     ChunkPhase.CLEANING_BACKEND -> "Removing music"
     ChunkPhase.MUXING -> "Merging"

@@ -85,6 +85,7 @@ data class LibraryItem(
 enum class ChunkPhase {
     WAITING,
     CUTTING_VIDEO,
+    BLURRING_VIDEO,
     EXTRACTING_AUDIO,
     CLEANING_BACKEND,
     MUXING,
@@ -114,5 +115,6 @@ data class ProcessingState(
     val playablePaths: List<String> = emptyList(),
     val firstChunkReady: Boolean = false,
     val removeMusic: Boolean = true,
+    val blurWomen: Boolean = false,
     val quality: VideoQuality = VideoQuality.P360,
 )

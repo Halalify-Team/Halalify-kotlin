@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.TemporaryFileCleaner
+import com.halalify.kotlin.media.blurWomenInVideoChunk
 import com.halalify.kotlin.media.downloadAudioChunk
 import com.halalify.kotlin.media.downloadAudioFile
 import com.halalify.kotlin.media.downloadVideo
@@ -497,6 +498,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         activity: ComponentActivity,
         youtubeUrl: String,
         removeMusic: Boolean = true,
+        blurWomen: Boolean = false,
         quality: VideoQuality = VideoQuality.P360,
     ) {
         val url = youtubeUrl.trim()
@@ -520,6 +522,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 originalUrl = url,
                 currentPhaseLabel = "Initializing...",
                 removeMusic = removeMusic,
+                blurWomen = blurWomen,
                 quality = quality,
             )
             publishProcessingNotification()
@@ -758,11 +761,25 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         updatePhase("Chunk ${index + 1}/$totalChunks: preparing video preview...")
                         val playablePath = try {
                             val videoSegmentPath = videoChunkJobs[index].await()
+                            var preparedVideoPath = videoSegmentPath
                             try {
+                                if (blurWomen) {
+                                    updateChunk(index, ChunkPhase.BLURRING_VIDEO)
+                                    updatePhase("Chunk ${index + 1}/$totalChunks: blurring women...")
+                                    val blurResult = blurWomenInVideoChunk(
+                                        activity = activity,
+                                        videoPath = videoSegmentPath,
+                                        chunkIndex = index,
+                                        durationSeconds = plan.durationSeconds,
+                                    )
+                                    preparedVideoPath = blurResult.path ?: error(blurResult.message)
+                                    perf("chunk-$index-video-blurred")
+                                    updateChunk(index, ChunkPhase.MUXING)
+                                }
                                 muxSemaphore.withPermit {
                                     val muxResult = muxVideoWithCleanAudio(
                                         activity = activity,
-                                        videoPath = videoSegmentPath,
+                                        videoPath = preparedVideoPath,
                                         cleanAudioPath = result.cleanAudioPath,
                                         durationSeconds = plan.durationSeconds,
                                     )
@@ -770,6 +787,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                 }
                             } finally {
                                 File(videoSegmentPath).delete()
+                                if (preparedVideoPath != videoSegmentPath) {
+                                    File(preparedVideoPath).delete()
+                                }
                                 File(result.cleanAudioPath).delete()
                             }
                         } catch (cancelled: CancellationException) {

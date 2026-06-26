@@ -609,48 +609,22 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 val videoRangeSemaphore = Semaphore(2)
                 val backendSemaphore = Semaphore(1)
                 val muxSemaphore = Semaphore(1)
-                val mediaRefreshMutex = Mutex()
                 val firstChunkPlayable = CompletableDeferred<Unit>()
                 val playableSegments = mutableListOf<String>()
-
-                suspend fun refreshMediaIfUnchanged(failedMediaUrl: String) {
-                    mediaRefreshMutex.withLock {
-                        if (directMedia.audio.url == failedMediaUrl ||
-                            directMedia.video.url == failedMediaUrl
-                        ) {
-                            updatePhase("Refreshing YouTube stream...")
-                            val refreshedCatalog = youtubeFormatResolver.resolveFreshForDownload(activity, url)
-                            directMedia = refreshedCatalog.sessionFor(quality)
-                                ?: error("${quality.label} is no longer available for this video.")
-                            perf("media-session-refreshed")
-                        }
-                    }
-                }
 
                 supervisorScope {
                     val videoChunkJobs = chunkPlans.map { plan ->
                         async {
                             if (plan.index > 1) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
-                                var media = directMedia.video
-                                var videoChunk = downloadVideoSection(
+                                val videoChunk = downloadVideoSection(
                                     activity = activity,
-                                    media = media,
+                                    youtubeUrl = url,
+                                    quality = quality,
                                     startSeconds = plan.startSeconds,
                                     durationSeconds = plan.durationSeconds,
                                     chunkIndex = plan.index,
                                 )
-                                if (videoChunk.path == null) {
-                                    refreshMediaIfUnchanged(media.url)
-                                    media = directMedia.video
-                                    videoChunk = downloadVideoSection(
-                                        activity = activity,
-                                        media = media,
-                                        startSeconds = plan.startSeconds,
-                                        durationSeconds = plan.durationSeconds,
-                                        chunkIndex = plan.index,
-                                    )
-                                }
                                 (videoChunk.path ?: error(videoChunk.message))
                                     .also { perf("chunk-${plan.index}-video-ready") }
                             }
@@ -665,25 +639,13 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
                                 )
                                 val audioChunkPath = audioRangeSemaphore.withPermit {
-                                    var media = directMedia.audio
-                                    var audioChunk = downloadAudioChunk(
+                                    val audioChunk = downloadAudioChunk(
                                         activity = activity,
-                                        media = media,
+                                        youtubeUrl = url,
                                         startSeconds = plan.startSeconds,
                                         durationSeconds = plan.durationSeconds,
                                         chunkIndex = plan.index,
                                     )
-                                    if (audioChunk.path == null) {
-                                        refreshMediaIfUnchanged(media.url)
-                                        media = directMedia.audio
-                                        audioChunk = downloadAudioChunk(
-                                            activity = activity,
-                                            media = media,
-                                            startSeconds = plan.startSeconds,
-                                            durationSeconds = plan.durationSeconds,
-                                            chunkIndex = plan.index,
-                                        )
-                                    }
                                     (audioChunk.path ?: error(audioChunk.message))
                                         .also { perf("chunk-${plan.index}-audio-ready") }
                                 }

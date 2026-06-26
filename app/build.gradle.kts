@@ -84,6 +84,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.7.1")
     implementation("io.github.maxrave-dev:ffmpeg-kit-audio:6.0.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:face-detection:16.1.7")

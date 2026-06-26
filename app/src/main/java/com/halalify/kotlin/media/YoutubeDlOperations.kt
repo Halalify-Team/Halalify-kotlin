@@ -7,8 +7,10 @@ import com.arthenica.ffmpegkit.ReturnCode
 import com.halalify.kotlin.model.DownloadResult
 import com.halalify.kotlin.model.VideoMetadata
 import com.yausername.aria2c.Aria2c
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import com.yausername.youtubedl_android.YoutubeDLResponse
 import com.yausername.youtubedl_android.mapper.VideoFormat
 import com.halalify.kotlin.model.VideoQuality
 import java.io.File
@@ -16,6 +18,7 @@ import java.io.FileOutputStream
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -256,80 +259,29 @@ private suspend fun downloadMediaResource(
 
 internal suspend fun downloadVideoSection(
     activity: ComponentActivity,
-    media: DirectMediaResource,
+    youtubeUrl: String,
+    quality: VideoQuality,
     startSeconds: Int,
     durationSeconds: Int,
     chunkIndex: Int,
 ): DownloadResult = withContext(Dispatchers.IO) {
     try {
+        validateYoutubeUrl(youtubeUrl)
         val safeDuration = durationSeconds.coerceAtLeast(1)
         val startedAt = System.currentTimeMillis()
-
         val outputDir = File(activity.filesDir, "halalify-video-preview-download")
         outputDir.mkdirs()
-        val outputFile = File(
-            outputDir,
-            "preview_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.mp4",
+        val outputFile = downloadYtDlpSection(
+            activity = activity,
+            youtubeUrl = youtubeUrl,
+            outputDir = outputDir,
+            filePrefix = "preview_${chunkIndex}",
+            startSeconds = startSeconds,
+            durationSeconds = safeDuration,
+            attempts = videoSectionAttempts(quality),
+            processLabel = "video-$chunkIndex",
+            timeoutSeconds = ytDlpChunkTimeoutSeconds(safeDuration),
         )
-        val inputSeekSeconds = (startSeconds - VIDEO_SEEK_PREROLL_SECONDS).coerceAtLeast(0)
-        val preciseTrimSeconds = startSeconds - inputSeekSeconds
-
-        fun execute(encoder: String) = LocalMediaProxy(media).use { proxy ->
-            val commandParts = mutableListOf(
-                "-y",
-                "-rw_timeout", "20000000",
-                "-ss", inputSeekSeconds.toCliNumber(),
-                "-i", proxy.url,
-            )
-            if (preciseTrimSeconds > 0) {
-                commandParts += listOf("-ss", preciseTrimSeconds.toCliNumber())
-            }
-            commandParts += listOf(
-                "-t", safeDuration.toCliNumber(),
-                "-map", "0:v:0",
-                "-an",
-            )
-            if (encoder == "h264_mediacodec") {
-                commandParts += listOf(
-                    "-c:v", "h264_mediacodec",
-                    "-b:v", "2500k",
-                    "-pix_fmt", "yuv420p",
-                )
-            } else {
-                commandParts += listOf(
-                    "-c:v", "mpeg4",
-                    "-b:v", "2000k",
-                    "-maxrate", "3000k",
-                    "-bufsize", "4000k",
-                    "-pix_fmt", "yuv420p",
-                )
-            }
-            commandParts += listOf(
-                "-reset_timestamps", "1",
-                "-movflags", "+faststart",
-                outputFile.absolutePath,
-            )
-            FFmpegKit.execute(commandParts.joinToString(" ") { it.ffmpegQuote() })
-        }
-        var session = execute(encoder = "h264_mediacodec")
-        if (!ReturnCode.isSuccess(session.returnCode)) {
-            Log.w(
-                "HalalifyMedia",
-                "h264_mediacodec transcoding failed; retrying with mpeg4 transcoding.\n" +
-                    session.allLogsAsString.takeLast(1200)
-            )
-            outputFile.delete()
-            session = execute(encoder = "mpeg4")
-        }
-        if (!ReturnCode.isSuccess(session.returnCode)) {
-            error(
-                "ffmpeg remote video section failed. code=${session.returnCode?.value}\n" +
-                    session.allLogsAsString.takeLast(2500)
-            )
-        }
-        if (!outputFile.isFile || outputFile.length() <= 0L) {
-            error("ffmpeg remote video section produced no file.")
-        }
 
         val elapsedMs = System.currentTimeMillis() - startedAt
         DownloadResult(
@@ -351,55 +303,28 @@ internal suspend fun downloadVideoSection(
 
 internal suspend fun downloadAudioChunk(
     activity: ComponentActivity,
-    media: DirectMediaResource,
+    youtubeUrl: String,
     startSeconds: Int,
     durationSeconds: Int,
     chunkIndex: Int,
 ): DownloadResult = withContext(Dispatchers.IO) {
     try {
+        validateYoutubeUrl(youtubeUrl)
         val safeDuration = durationSeconds.coerceAtLeast(1)
         val startedAt = System.currentTimeMillis()
-
         val outputDir = File(activity.filesDir, "halalify-audio-chunk-download")
         outputDir.mkdirs()
-
-        val outputFile = File(outputDir, "audio_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.m4a")
-        val session = LocalMediaProxy(media).use { proxy ->
-            val command = listOf(
-                "-y",
-                "-rw_timeout", "20000000",
-                "-ss", startSeconds.toCliNumber(),
-                "-i", proxy.url,
-                "-t", safeDuration.toCliNumber(),
-                "-vn",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                outputFile.absolutePath,
-            ).joinToString(" ") { it.ffmpegQuote() }
-            FFmpegKit.execute(command)
-        }
-        if (!ReturnCode.isSuccess(session.returnCode)) {
-            val logs = session.allLogsAsString
-            val reason = when {
-                logs.contains("403 Forbidden", ignoreCase = true) ||
-                    logs.contains("Server returned 403", ignoreCase = true) ->
-                    "YouTube stream URL expired."
-                logs.contains("Connection refused", ignoreCase = true) ->
-                    "The local media stream could not be opened."
-                else -> "The requested audio range could not be read."
-            }
-            Log.w(
-                "HalalifyMedia",
-                "Audio chunk $chunkIndex failed with code=${session.returnCode?.value}\n" +
-                    logs.takeLast(2500)
-            )
-            error(
-                reason
-            )
-        }
-        if (!outputFile.isFile || outputFile.length() <= 0L) {
-            error("ffmpeg remote audio section produced no file.")
-        }
+        val outputFile = downloadYtDlpSection(
+            activity = activity,
+            youtubeUrl = youtubeUrl,
+            outputDir = outputDir,
+            filePrefix = "audio_${chunkIndex}",
+            startSeconds = startSeconds,
+            durationSeconds = safeDuration,
+            attempts = AUDIO_SECTION_ATTEMPTS,
+            processLabel = "audio-$chunkIndex",
+            timeoutSeconds = ytDlpChunkTimeoutSeconds(safeDuration),
+        )
 
         val elapsedMs = System.currentTimeMillis() - startedAt
         DownloadResult(
@@ -418,6 +343,162 @@ internal suspend fun downloadAudioChunk(
             path = null,
         )
     }
+}
+
+private data class YtDlpSectionAttempt(
+    val format: String,
+    val extractorArgs: String,
+)
+
+private val AUDIO_SECTION_ATTEMPTS = listOf(
+    YtDlpSectionAttempt(
+        format = "bestaudio[ext=m4a]/bestaudio/best",
+        extractorArgs = "youtube:player_client=android",
+    ),
+    YtDlpSectionAttempt(
+        format = "bestaudio[ext=m4a]/bestaudio/best",
+        extractorArgs = "youtube:player_client=mweb",
+    ),
+    YtDlpSectionAttempt(
+        format = "bestaudio/best",
+        extractorArgs = "youtube:player_client=default,android,mweb",
+    ),
+)
+
+private fun videoSectionAttempts(quality: VideoQuality): List<YtDlpSectionAttempt> {
+    val maxHeight = quality.maxHeight.toCliNumber()
+    return listOf(
+        YtDlpSectionAttempt(
+            format = "bestvideo[height<=$maxHeight][ext=mp4]/18/bestvideo[height<=$maxHeight]/best[height<=$maxHeight]",
+            extractorArgs = "youtube:player_client=android",
+        ),
+        YtDlpSectionAttempt(
+            format = "bestvideo[height<=$maxHeight][ext=mp4]/18/bestvideo[height<=$maxHeight]/best[height<=$maxHeight]",
+            extractorArgs = "youtube:player_client=mweb",
+        ),
+        YtDlpSectionAttempt(
+            format = "best[height<=$maxHeight][ext=mp4]/18/best[height<=$maxHeight]/best",
+            extractorArgs = "youtube:player_client=default,android,mweb",
+        ),
+    )
+}
+
+private fun downloadYtDlpSection(
+    activity: ComponentActivity,
+    youtubeUrl: String,
+    outputDir: File,
+    filePrefix: String,
+    startSeconds: Int,
+    durationSeconds: Int,
+    attempts: List<YtDlpSectionAttempt>,
+    processLabel: String,
+    timeoutSeconds: Long,
+): File {
+    initYoutubeDl(activity)
+    val section = ytDlpSectionRange(startSeconds, durationSeconds)
+    var lastError = ""
+
+    attempts.forEachIndexed { attemptIndex, attempt ->
+        val jobId = "${filePrefix}_${attemptIndex}_${UUID.randomUUID().toString().take(8)}"
+        val outputTemplate = File(outputDir, "$jobId.%(ext)s").absolutePath
+        val progressLog = StringBuilder()
+        val request = YoutubeDLRequest(youtubeUrl).apply {
+            addOption("--no-playlist")
+            addOption("--verbose")
+            addOption("--socket-timeout", "15")
+            addOption("--retries", "2")
+            addOption("--fragment-retries", "2")
+            addOption("--extractor-retries", "2")
+            addOption("--remote-components", "ejs:github")
+            addOption("--extractor-args", attempt.extractorArgs)
+            addOption("-f", attempt.format)
+            addOption("--download-sections", section)
+            addOption("--force-keyframes-at-cuts")
+            addOption("--user-agent", YOUTUBE_USER_AGENT)
+            addOption("--referer", "https://www.youtube.com/")
+            addOption("--no-mtime")
+            addOption("--force-overwrites")
+            addOption("-o", outputTemplate)
+        }
+        val processId = "halalify-section-$processLabel-$attemptIndex-${UUID.randomUUID().toString().take(8)}"
+        val response = runCatching {
+            executeYtDlpWithTimeout(
+                request = request,
+                processId = processId,
+                timeoutSeconds = timeoutSeconds,
+                progressLog = progressLog,
+            )
+        }.getOrElse { error ->
+            lastError = "attempt ${attemptIndex + 1} failed: ${error.javaClass.simpleName}: ${error.message}\n" +
+                progressLog.takeLast(3000)
+            Log.w("HalalifyDownload", "yt-dlp section $processLabel attempt ${attemptIndex + 1} failed\n$lastError")
+            null
+        }
+
+        val outputFile = outputDir.listFiles()
+            ?.filter { file ->
+                file.isFile &&
+                    file.length() > 0L &&
+                    file.name.startsWith(jobId) &&
+                    !file.name.endsWith(".part", ignoreCase = true)
+            }
+            ?.maxByOrNull { it.lastModified() }
+
+        if (response?.exitCode == 0 && outputFile != null) {
+            return outputFile
+        }
+        if (response != null) {
+            lastError = "attempt ${attemptIndex + 1} produced no section file.\n" +
+                "exit=${response.exitCode}\n" +
+                "stderr=${response.err.takeLast(1600)}\n" +
+                "stdout=${response.out.takeLast(800)}\n" +
+                "log=${progressLog.takeLast(1600)}"
+            Log.w("HalalifyDownload", "yt-dlp section $processLabel produced no file\n$lastError")
+        }
+    }
+
+    error("yt-dlp section download failed after ${attempts.size} attempts for $section.\n$lastError")
+}
+
+private fun executeYtDlpWithTimeout(
+    request: YoutubeDLRequest,
+    processId: String,
+    timeoutSeconds: Long,
+    progressLog: StringBuilder,
+): YoutubeDLResponse {
+    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    val future = executor.submit<YoutubeDLResponse> {
+        YoutubeDL.getInstance().execute(
+            request,
+            processId,
+            true,
+        ) { _, _, line ->
+            if (!line.isNullOrBlank()) {
+                progressLog.append(line.take(500)).append('\n')
+                if (progressLog.length > 5000) {
+                    progressLog.delete(0, progressLog.length - 5000)
+                }
+            }
+        }
+    }
+    return try {
+        future.get(timeoutSeconds, TimeUnit.SECONDS)
+    } catch (error: TimeoutException) {
+        YoutubeDL.getInstance().destroyProcessById(processId)
+        future.cancel(true)
+        error("yt-dlp timed out after ${timeoutSeconds}s.")
+    } finally {
+        executor.shutdownNow()
+    }
+}
+
+private fun ytDlpChunkTimeoutSeconds(durationSeconds: Int): Long =
+    (durationSeconds * 4L + 45L).coerceAtLeast(75L).coerceAtMost(240L)
+
+private fun ytDlpSectionRange(startSeconds: Int, durationSeconds: Int): String {
+    val safeStart = startSeconds.coerceAtLeast(0)
+    val safeEnd = (safeStart + durationSeconds.coerceAtLeast(1)).coerceAtLeast(safeStart + 1)
+    return "*${safeStart.toYtDlpTimestamp()}-${safeEnd.toYtDlpTimestamp()}"
 }
 
 private fun downloadDirectUrlToFile(media: DirectMediaResource, outputFile: File) {
@@ -480,6 +561,7 @@ private fun DirectMediaResource.toFfmpegHeaders(): String {
 private fun initYoutubeDl(activity: ComponentActivity) {
     val context = activity.applicationContext
     YoutubeDL.getInstance().init(context)
+    FFmpeg.getInstance().init(context)
     Aria2c.getInstance().init(context)
 }
 
@@ -521,3 +603,10 @@ internal fun validateYoutubeUrl(url: String) {
 }
 
 private fun Int.toCliNumber(): String = String.format(Locale.US, "%d", this)
+
+private fun Int.toYtDlpTimestamp(): String {
+    val hours = this / 3600
+    val minutes = (this % 3600) / 60
+    val seconds = this % 60
+    return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+}

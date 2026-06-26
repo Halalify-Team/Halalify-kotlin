@@ -49,6 +49,10 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += "tflite"
+    }
+
     splits {
         abi {
             isEnable = true
@@ -83,6 +87,8 @@ dependencies {
     implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("org.tensorflow:tensorflow-lite:2.11.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.2")
     // Google Sign-In via Credential Manager (replaces deprecated play-services-auth)
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")

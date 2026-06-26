@@ -281,7 +281,7 @@ internal fun InputScreen(
                         color = HalalifyTextPrimary,
                     )
                     Text(
-                        text = "Conservative mode: blurs detected people/faces locally",
+                        text = "Detects faces and blurs women locally on this device",
                         style = MaterialTheme.typography.bodySmall,
                         color = HalalifyTextSecondary,
                     )

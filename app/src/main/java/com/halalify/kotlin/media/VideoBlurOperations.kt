@@ -19,6 +19,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 internal suspend fun blurWomenInVideoChunk(
     activity: ComponentActivity,
@@ -33,13 +34,17 @@ internal suspend fun blurWomenInVideoChunk(
         }
 
         val startedAt = System.currentTimeMillis()
-        val detections = detectConservativeFaceBlurRegions(
+        val detectionResult = detectWomenBlurRegions(
+            activity = activity,
             videoFile = source,
             durationSeconds = durationSeconds,
         )
+        val detections = detectionResult.regions
         if (detections.isEmpty()) {
             return@withContext FileResult(
-                message = "SUCCESS: no faces detected, blur skipped.\npath: ${source.absolutePath}",
+                message = "SUCCESS: no women detected, blur skipped.\n" +
+                    "faces: ${detectionResult.facesDetected}\n" +
+                    "path: ${source.absolutePath}",
                 path = source.absolutePath,
             )
         }
@@ -66,17 +71,20 @@ internal suspend fun blurWomenInVideoChunk(
         val session = FFmpegKit.execute(command)
         if (!ReturnCode.isSuccess(session.returnCode)) {
             error(
-                "ffmpeg conservative blur failed. code=${session.returnCode?.value}\n" +
+                "ffmpeg women blur failed. code=${session.returnCode?.value}\n" +
                     session.allLogsAsString.takeLast(2500)
             )
         }
         if (!outputFile.isFile || outputFile.length() <= 0L) {
-            error("ffmpeg conservative blur finished but produced no output file.")
+            error("ffmpeg women blur finished but produced no output file.")
         }
 
         FileResult(
-            message = "SUCCESS: conservative face/person blur applied.\n" +
-                "detections: ${detections.size}\n" +
+            message = "SUCCESS: women blur applied.\n" +
+                "faces: ${detectionResult.facesDetected}\n" +
+                "blurred: ${detectionResult.facesBlurred}\n" +
+                "skipped: ${detectionResult.facesSkipped}\n" +
+                "regions: ${detections.size}\n" +
                 "path: ${outputFile.absolutePath}\n" +
                 "elapsed: ${System.currentTimeMillis() - startedAt}ms",
             path = outputFile.absolutePath,
@@ -89,10 +97,11 @@ internal suspend fun blurWomenInVideoChunk(
     }
 }
 
-private suspend fun detectConservativeFaceBlurRegions(
+private suspend fun detectWomenBlurRegions(
+    activity: ComponentActivity,
     videoFile: File,
     durationSeconds: Int,
-): List<TimedBlurRegion> {
+): WomenBlurDetectionResult {
     val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -105,6 +114,10 @@ private suspend fun detectConservativeFaceBlurRegions(
     )
     val retriever = MediaMetadataRetriever()
     val regions = mutableListOf<TimedBlurRegion>()
+    var facesDetected = 0
+    var facesBlurred = 0
+    var facesSkipped = 0
+    val classifier = GenderFaceClassifier(activity.applicationContext)
     try {
         retriever.setDataSource(videoFile.absolutePath)
         val videoWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
@@ -125,8 +138,20 @@ private suspend fun detectConservativeFaceBlurRegions(
             )
             if (bitmap != null) {
                 val faces = detector.process(InputImage.fromBitmap(bitmap, 0)).awaitTask()
-                regions += faces.mapNotNull { face ->
-                    face.toTimedBlurRegion(
+                facesDetected += faces.size
+                for (face in faces) {
+                    val faceBitmap = bitmap.cropFace(face.boundingBox)
+                    if (faceBitmap == null) {
+                        facesSkipped += 1
+                        continue
+                    }
+                    val prediction = classifier.classify(faceBitmap)
+                    faceBitmap.recycle()
+                    if (!prediction.shouldBlurAsWoman) {
+                        facesSkipped += 1
+                        continue
+                    }
+                    val region = face.toTimedBlurRegion(
                         sampleMs = sampleMs,
                         sampleStepMs = sampleStepMs,
                         frameWidth = bitmap.width,
@@ -134,16 +159,28 @@ private suspend fun detectConservativeFaceBlurRegions(
                         videoWidth = videoWidth.takeIf { it > 0 } ?: bitmap.width,
                         videoHeight = videoHeight.takeIf { it > 0 } ?: bitmap.height,
                     )
+                    if (region != null) {
+                        facesBlurred += 1
+                        regions += region
+                    } else {
+                        facesSkipped += 1
+                    }
                 }
                 bitmap.recycle()
             }
             sampleMs += sampleStepMs
         }
     } finally {
+        classifier.close()
         detector.close()
         retriever.release()
     }
-    return regions.take(MAX_BLUR_REGIONS_PER_CHUNK)
+    return WomenBlurDetectionResult(
+        regions = regions.take(MAX_BLUR_REGIONS_PER_CHUNK),
+        facesDetected = facesDetected,
+        facesBlurred = facesBlurred,
+        facesSkipped = facesSkipped,
+    )
 }
 
 private fun Face.toTimedBlurRegion(
@@ -176,6 +213,23 @@ private fun Face.toTimedBlurRegion(
         y = y.roundDownEven(),
         width = width,
         height = height,
+    )
+}
+
+private fun Bitmap.cropFace(faceBounds: Rect): Bitmap? {
+    val padded = faceBounds.expandForGenderClassification(width, height)
+    if (padded.width() < 8 || padded.height() < 8) return null
+    return Bitmap.createBitmap(this, padded.left, padded.top, padded.width(), padded.height())
+}
+
+private fun Rect.expandForGenderClassification(frameWidth: Int, frameHeight: Int): Rect {
+    val padX = (width() * 0.20f).roundToInt()
+    val padY = (height() * 0.20f).roundToInt()
+    return Rect(
+        (left - padX).coerceAtLeast(0),
+        (top - padY).coerceAtLeast(0),
+        (right + padX).coerceAtMost(frameWidth),
+        (bottom + padY).coerceAtMost(frameHeight),
     )
 }
 
@@ -229,6 +283,13 @@ private data class TimedBlurRegion(
     val y: Int,
     val width: Int,
     val height: Int,
+)
+
+private data class WomenBlurDetectionResult(
+    val regions: List<TimedBlurRegion>,
+    val facesDetected: Int,
+    val facesBlurred: Int,
+    val facesSkipped: Int,
 )
 
 private const val MAX_BLUR_REGIONS_PER_CHUNK = 80

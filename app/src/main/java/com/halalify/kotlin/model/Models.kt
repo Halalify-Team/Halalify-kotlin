@@ -5,6 +5,12 @@ package com.halalify.kotlin.model
 internal data class DownloadResult(
     val message: String,
     val path: String?,
+    /**
+     * True when an upstream YouTube request returned 403, indicating the
+     * signed direct media URL has expired. Callers can trigger a one-shot
+     * refresh of the format catalog and retry the chunk.
+     */
+    val forbidden: Boolean = false,
 )
 
 internal data class FileResult(

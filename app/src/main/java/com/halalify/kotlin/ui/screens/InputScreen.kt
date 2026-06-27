@@ -246,10 +246,10 @@ internal fun InputScreen(
                         color = HalalifyTextPrimary,
                     )
                     Text(
-                        text = if (removeMusic) {
-                            "Stream clean chunks while processing"
-                        } else {
-                            "Download the original video normally"
+                        text = when {
+                            removeMusic -> "Stream clean chunks while processing"
+                            blurWomen -> "Stream blurred chunks while processing"
+                            else -> "Download the original video normally"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = HalalifyTextSecondary,

@@ -30,17 +30,19 @@ internal class GenderFaceClassifier(context: Context) : Closeable {
 
         val male: Float
         val female: Float
+        // Check if the outputs are already normalized probabilities (sum to ~1.0)
         if (rawMale in 0.0f..1.0f && rawFemale in 0.0f..1.0f && Math.abs((rawMale + rawFemale) - 1.0f) < 0.05f) {
             male = rawMale
             female = rawFemale
         } else {
+            // Apply softmax for raw logits or unnormalized values
             val maxVal = maxOf(rawMale, rawFemale)
             val expMale = Math.exp((rawMale - maxVal).toDouble())
             val expFemale = Math.exp((rawFemale - maxVal).toDouble())
             val sum = expMale + expFemale
             male = (expMale / sum).toFloat()
             female = (expFemale / sum).toFloat()
-            Log.d("HalalifyClassifier", "Raw: male=$rawMale female=$rawFemale -> softmax: male=$male female=$female")
+            Log.d("HalalifyClassifier", "Raw output: male=$rawMale, female=$rawFemale -> Softmax: male=$male, female=$female")
         }
 
         GenderPrediction(maleProbability = male, femaleProbability = female)

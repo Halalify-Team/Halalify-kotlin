@@ -6,8 +6,6 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.halalify.kotlin.model.DownloadResult
 import com.halalify.kotlin.model.VideoMetadata
-import com.yausername.aria2c.Aria2c
-import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.YoutubeDLResponse
@@ -328,6 +326,7 @@ internal suspend fun downloadVideoSectionDirect(
         DownloadResult(
             message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
             path = null,
+            forbidden = proxy.forbidden,
         )
     } finally {
         proxy.close()
@@ -436,6 +435,7 @@ internal suspend fun downloadAudioChunkDirect(
         DownloadResult(
             message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
             path = null,
+            forbidden = proxy.forbidden,
         )
     } finally {
         proxy.close()
@@ -659,8 +659,6 @@ private fun DirectMediaResource.toFfmpegHeaders(): String {
 private fun initYoutubeDl(activity: ComponentActivity) {
     val context = activity.applicationContext
     YoutubeDL.getInstance().init(context)
-    FFmpeg.getInstance().init(context)
-    Aria2c.getInstance().init(context)
 }
 
 private fun updateYoutubeDlIfNeeded(activity: ComponentActivity) {

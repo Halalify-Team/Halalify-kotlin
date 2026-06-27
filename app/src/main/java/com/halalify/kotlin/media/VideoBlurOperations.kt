@@ -2,6 +2,7 @@ package com.halalify.kotlin.media
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -9,6 +10,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.halalify.kotlin.model.BlurStrictness
@@ -20,25 +22,14 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
- * HaramBlur-style whole-frame blur pipeline.
+ * Localized face and modesty box-blur pipeline.
  *
- * Instead of detecting face *boxes* and building a complex multi-overlay
- * filter graph, we ask a single binary question per sample: "is a woman
- * present in this frame, yes/no?" Then we emit a list of `(start, end)`
- * time windows and apply ONE full-frame `boxblur` filter with an `enable`
- * expression. FFmpeg copies frames untouched outside the windows and blurs
- * the whole frame inside them — one filter, constant cost regardless of
- * how many women are on screen.
- *
- * Key HaramBlur tricks ported:
- *  - Binary detection (no boxes, no tracking, no interpolation)
- *  - POSITIVE_THRESHOLD=1 / NEGATIVE_THRESHOLD=3 debounce (blur on fast,
- *    off slow → no flicker on, slight stickiness off)
- *  - Stale-sample drop (don't emit a sample whose inference lagged)
- *  - Age gate via face-size heuristic (ignore very small faces = kids)
- *  - Gender cache per trackingId (run TFLite once per tracked face)
+ * Detects women using ML Kit + TFLite Gender Face Classifier, expands the
+ * bounding boxes to cover hair/neck/shoulders, merges overlapping regions
+ * in space and time to keep FFmpeg overlays low, and applies localized boxblur.
  */
 internal suspend fun blurWomenInVideoChunk(
     activity: ComponentActivity,
@@ -54,31 +45,35 @@ internal suspend fun blurWomenInVideoChunk(
         }
 
         val startedAt = System.currentTimeMillis()
-        val windows = detectWomenWindows(activity, source, durationSeconds, strictness)
-        Log.i("HalalifyBlur", "Detection: windows=${windows.size} elapsed=${System.currentTimeMillis() - startedAt}ms")
-
-        if (windows.isEmpty()) {
+        val detectionResult = detectWomenBlurRegions(
+            activity = activity,
+            videoFile = source,
+            durationSeconds = durationSeconds,
+            strictness = strictness,
+        )
+        val detections = detectionResult.regions
+        if (detections.isEmpty()) {
             return@withContext FileResult(
-                message = "SUCCESS: no women detected, blur skipped. path: ${source.absolutePath}",
+                message = "SUCCESS: no women detected, blur skipped.\n" +
+                    "faces: ${detectionResult.facesDetected}\n" +
+                    "path: ${source.absolutePath}",
                 path = source.absolutePath,
             )
         }
 
         val outputDir = File(activity.filesDir, "halalify-video-blur").apply { mkdirs() }
         val outputFile = File(outputDir, "blur_${chunkIndex}_${UUID.randomUUID().toString().take(8)}.mp4")
-        val filter = buildFullFrameBlurFilter(windows)
-        val encodeStartedAt = System.currentTimeMillis()
-        // Single boxblur filter on the whole frame, enabled only during windows.
-        // -threads 0 for multi-core encode. -c:a copy keeps audio untouched.
+        val filterGraph = buildBlurFilterGraph(detections)
         val command = listOf(
             "-y",
-            "-threads", "0",
             "-i", source.absolutePath,
-            "-vf", filter,
+            "-filter_complex", filterGraph,
+            "-map", "[blurred]",
+            "-map", "0:a?",
             "-c:v", "mpeg4",
             "-b:v", "2200k",
             "-maxrate", "3200k",
-            "-bufsize", "2200k",
+            "-bufsize", "4200k",
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
@@ -87,227 +82,354 @@ internal suspend fun blurWomenInVideoChunk(
 
         val session = FFmpegKit.execute(command)
         if (!ReturnCode.isSuccess(session.returnCode)) {
-            error("ffmpeg women blur failed. code=${session.returnCode?.value}\n${session.allLogsAsString.takeLast(2500)}")
+            error(
+                "ffmpeg women blur failed. code=${session.returnCode?.value}\n" +
+                    session.allLogsAsString.takeLast(2500)
+            )
         }
         if (!outputFile.isFile || outputFile.length() <= 0L) {
             error("ffmpeg women blur finished but produced no output file.")
         }
-        Log.i("HalalifyBlur", "Encode done in ${System.currentTimeMillis() - encodeStartedAt}ms total=${System.currentTimeMillis() - startedAt}ms")
 
         FileResult(
-            message = "SUCCESS: women blur applied. windows=${windows.size} path: ${outputFile.absolutePath} elapsed: ${System.currentTimeMillis() - startedAt}ms",
+            message = "SUCCESS: women blur applied.\n" +
+                "faces: ${detectionResult.facesDetected}\n" +
+                "blurred: ${detectionResult.facesBlurred}\n" +
+                "skipped: ${detectionResult.facesSkipped}\n" +
+                "regions: ${detections.size}\n" +
+                "path: ${outputFile.absolutePath}\n" +
+                "elapsed: ${System.currentTimeMillis() - startedAt}ms",
             path = outputFile.absolutePath,
         )
     } catch (error: Throwable) {
-        FileResult(message = "FAILED: ${error.javaClass.simpleName}: ${error.message}", path = null)
+        FileResult(
+            message = "FAILED: ${error.javaClass.simpleName}: ${error.message}",
+            path = null,
+        )
     }
 }
 
-// =====================================================================
-// Binary detection: "is a woman present at sample t?" → time windows
-// =====================================================================
-
-/** A time range (in seconds) during which a woman is present and the frame should be blurred. */
-private data class BlurWindow(val startSec: Double, val endSec: Double)
-
-private data class SampleResult(val sampleMs: Long, val womanPresent: Boolean, val inferStartMs: Long)
-
-private suspend fun detectWomenWindows(
+private suspend fun detectWomenBlurRegions(
     activity: ComponentActivity,
     videoFile: File,
     durationSeconds: Int,
     strictness: BlurStrictness,
-): List<BlurWindow> {
+): WomenBlurDetectionResult {
     val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.04f)
+            .setMinFaceSize(0.02f) // Detect even smaller/further faces
             .enableTracking()
             .build()
     )
     val classifier = GenderFaceClassifier(activity.applicationContext)
     val genderCache = mutableMapOf<Int, GenderPrediction>()
+    val rawRegions = mutableListOf<TimedBlurRegion>()
+    var facesDetected = 0
+    var facesBlurred = 0
+    var facesSkipped = 0
 
-    val sampleStepMs = 200L  // 5 FPS
-    val staleThresholdMs = sampleStepMs * 3  // drop samples whose inference took >600ms
-    val positiveThreshold = 1  // 1 positive → blur ON
-    val negativeThreshold = 3  // 3 consecutive negatives → blur OFF
-
-    // Get video dimensions for the small-face (age) heuristic
-    val (videoW, videoH) = getVideoDimensions(videoFile)
-    // Faces smaller than this fraction of frame height are likely children → ignore
-    val minAdultFaceFraction = 0.08f
-
+    // Create a unique temporary directory for frame extraction
     val framesDir = File(activity.cacheDir, "halalify_frames_${UUID.randomUUID().toString().take(8)}").apply { mkdirs() }
-    val samples = mutableListOf<SampleResult>()
+
+    var videoWidth = 0
+    var videoHeight = 0
+
+    // Configure child age gate size heuristic based on strictness
+    val minAdultFaceFraction = when (strictness) {
+        BlurStrictness.CONSERVATIVE -> 0.05f  // Ignore small faces (kids/distant)
+        BlurStrictness.BALANCED -> 0.025f    // Ignore very small faces
+        BlurStrictness.STRICT -> 0.0f         // Blur all faces regardless of size
+    }
 
     try {
-        val extractStart = System.currentTimeMillis()
-        // Extract at 5 FPS, 360p, fast_bilinear, skip audio/subs/data
-        val scaleFilter = if (videoW > 0 && videoH > 0) "fps=5,scale=-2:360:flags=fast_bilinear" else "fps=5"
+        val startedAt = System.currentTimeMillis()
+
+        // Extract frames at 10 FPS to temp directory as JPEG images sequentially
         val ffmpegCommand = listOf(
-            "-y", "-an", "-sn", "-dn",
+            "-y",
             "-i", videoFile.absolutePath,
-            "-vf", scaleFilter,
-            "-q:v", "8",
-            "${framesDir.absolutePath}/frame_%04d.jpg",
+            "-vf", "fps=10",
+            "-q:v", "4", // Good quality JPEG (1-31, lower is better)
+            "${framesDir.absolutePath}/frame_%04d.jpg"
         ).joinToString(" ") { it.ffmpegQuote() }
+
         val session = FFmpegKit.execute(ffmpegCommand)
         if (!ReturnCode.isSuccess(session.returnCode)) {
-            error("Failed to extract frames. code=${session.returnCode?.value}")
+            error("Failed to extract frames using FFmpeg. code=${session.returnCode?.value}")
         }
-        Log.i("HalalifyBlur", "Extracted 5fps 360p frames in ${System.currentTimeMillis() - extractStart}ms")
+        Log.i("HalalifyBlur", "Extracted frames using FFmpeg in ${System.currentTimeMillis() - startedAt}ms")
 
         val files = framesDir.listFiles()?.sortedBy { it.name } ?: emptyList()
+        val sampleStepMs = 100L // Each frame is exactly 100ms apart (fps=10)
         var bitmapH = 0
 
         files.forEach { file ->
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: run { file.delete(); return@forEach }
-            if (bitmapH == 0) bitmapH = bitmap.height
-
-            val frameNum = file.name.substringBeforeLast(".").substringAfter("frame_").toIntOrNull() ?: 1
-            val sampleMs = (frameNum - 1) * sampleStepMs
-            val inferStart = System.currentTimeMillis()
-
-            val faces = detector.process(InputImage.fromBitmap(bitmap, 0)).awaitTask()
-            var womanPresent = false
-
-            for (face in faces) {
-                // Age gate via face-size heuristic: ignore very small faces (kids)
-                val faceFraction = face.boundingBox.height().toFloat() / bitmapH.coerceAtLeast(1)
-                if (faceFraction < minAdultFaceFraction) continue
-
-                val tid = face.trackingId
-                val pred = if (tid != null && genderCache.containsKey(tid)) {
-                    genderCache[tid]!!
-                } else {
-                    val faceBitmap = bitmap.cropFace(face.boundingBox) ?: continue
-                    val p = classifier.classify(faceBitmap)
-                    faceBitmap.recycle()
-                    if (tid != null) genderCache[tid] = p
-                    p
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            if (bitmap != null) {
+                if (videoWidth == 0) {
+                    videoWidth = bitmap.width
+                    videoHeight = bitmap.height
+                    bitmapH = bitmap.height
                 }
-                if (pred.shouldBlur(strictness)) {
-                    womanPresent = true
-                    break  // one woman is enough — binary decision
-                }
-            }
 
-            val inferMs = System.currentTimeMillis() - inferStart
-            // Stale-sample drop: if inference lagged beyond threshold, don't emit
-            if (inferMs <= staleThresholdMs) {
-                samples += SampleResult(sampleMs, womanPresent, inferStart)
-            } else {
-                Log.w("HalalifyBlur", "Dropped stale sample at ${sampleMs}ms (infer=${inferMs}ms)")
+                // Parse frame index to calculate timestamp
+                val frameName = file.name.substringBeforeLast(".")
+                val frameNum = frameName.substringAfter("frame_").toIntOrNull() ?: 1
+                val sampleMs = (frameNum - 1) * sampleStepMs
+
+                val faces = detector.process(InputImage.fromBitmap(bitmap, 0)).awaitTask()
+                facesDetected += faces.size
+                for (face in faces) {
+                    // Size heuristic to filter out children (skip if under threshold)
+                    val faceFraction = face.boundingBox.height().toFloat() / bitmapH.coerceAtLeast(1)
+                    if (faceFraction < minAdultFaceFraction) continue
+
+                    val tid = face.trackingId
+                    val pred = if (tid != null && genderCache.containsKey(tid)) {
+                        genderCache[tid]!!
+                    } else {
+                        val faceBitmap = bitmap.cropFace(face.boundingBox) ?: continue
+                        val p = classifier.classify(faceBitmap)
+                        faceBitmap.recycle()
+                        if (tid != null) genderCache[tid] = p
+                        p
+                    }
+
+                    if (pred.shouldBlur(strictness)) {
+                        val region = face.toTimedBlurRegion(
+                            sampleMs = sampleMs,
+                            sampleStepMs = sampleStepMs,
+                            frameWidth = bitmap.width,
+                            frameHeight = bitmap.height,
+                            videoWidth = videoWidth,
+                            videoHeight = videoHeight,
+                        )
+                        if (region != null) {
+                            facesBlurred += 1
+                            rawRegions += region
+                        } else {
+                            facesSkipped += 1
+                        }
+                    } else {
+                        facesSkipped += 1
+                    }
+                }
+                bitmap.recycle()
             }
-            bitmap.recycle()
-            file.delete()
+            file.delete() // Clean up image file immediately
         }
     } finally {
         classifier.close()
         detector.close()
-        framesDir.deleteRecursively()
+        framesDir.deleteRecursively() // Delete directory and any leftover frames
     }
 
-    // Build contiguous blur windows from binary samples with debounce.
-    // - 1 positive flips ON instantly
-    // - 3 consecutive negatives flips OFF
-    val windows = mutableListOf<BlurWindow>()
-    var windowStartMs: Long? = null
-    var consecutiveNegatives = 0
-    val chunkEndMs = durationSeconds * 1000L
-
-    for (s in samples) {
-        if (s.womanPresent) {
-            if (windowStartMs == null) windowStartMs = (s.sampleMs - sampleStepMs).coerceAtLeast(0L)
-            consecutiveNegatives = 0
-        } else {
-            if (windowStartMs != null) {
-                consecutiveNegatives++
-                if (consecutiveNegatives >= negativeThreshold) {
-                    // Close the window just before the first negative
-                    val endMs = s.sampleMs - (consecutiveNegatives * sampleStepMs)
-                    windows += BlurWindow(
-                        windowStartMs!! / 1000.0,
-                        endMs.coerceAtLeast(windowStartMs!! + sampleStepMs) / 1000.0,
-                    )
-                    windowStartMs = null
-                    consecutiveNegatives = 0
-                }
+    // Consolidate raw regions using our tracking/merging algorithm
+    val consolidated = mutableListOf<TimedBlurRegion>()
+    rawRegions.sortedBy { it.startSeconds }.forEach { raw ->
+        val rawSampleMs = (raw.startSeconds * 1000.0).toLong()
+        var merged = false
+        for (i in consolidated.indices) {
+            val existing = consolidated[i]
+            if (existing.canMerge(raw.x, raw.y, raw.width, raw.height, rawSampleMs, videoWidth, videoHeight)) {
+                consolidated[i] = existing.merge(raw.x, raw.y, raw.width, raw.height, rawSampleMs, videoWidth, videoHeight)
+                merged = true
+                break
             }
         }
+        if (!merged) {
+            // Adjust start and end times for the new tracker region (add 600ms hold time to prevent flickering)
+            consolidated += TimedBlurRegion(
+                startSeconds = raw.startSeconds,
+                endSeconds = raw.endSeconds + 0.6,
+                x = raw.x,
+                y = raw.y,
+                width = raw.width,
+                height = raw.height,
+            )
+        }
     }
-    // Close any open window at chunk end (sticky: woman never un-blurs mid-chunk)
-    if (windowStartMs != null) {
-        windows += BlurWindow(windowStartMs!! / 1000.0, chunkEndMs / 1000.0)
-    }
 
-    Log.i("HalalifyBlur", "Built ${windows.size} blur windows from ${samples.size} samples")
-    return windows
-}
-
-// =====================================================================
-// Single full-frame boxblur filter with enable expression
-// =====================================================================
-
-/**
- * Build a single FFmpeg filter that applies full-frame boxblur only during
- * the given time windows. Outside the windows, frames are copied untouched.
- *
- * Example output:
- *   boxblur=20:1:enable='between(t,2.00,8.00)+between(t,12.00,18.00)'
- *
- * FFmpeg's `enable` accepts an expression that's truthy (non-zero) when blur
- * should apply. We OR all windows together with `+` (addition), which is
- * truthy when any window is active.
- */
-private fun buildFullFrameBlurFilter(windows: List<BlurWindow>): String {
-    if (windows.isEmpty()) return "null"
-
-    val enableExpr = windows.joinToString("+") { w ->
-        "between(t\\,${w.startSec.formatFfmpeg()}\\,${w.endSec.formatFfmpeg()})"
-    }
-    return "boxblur=20:1:enable='${enableExpr}'"
-}
-
-// =====================================================================
-// Helpers
-// =====================================================================
-
-private fun Bitmap.cropFace(faceBounds: android.graphics.Rect): Bitmap? {
-    val padX = (faceBounds.width() * 0.20f).toInt()
-    val padY = (faceBounds.height() * 0.20f).toInt()
-    val padded = android.graphics.Rect(
-        (faceBounds.left - padX).coerceAtLeast(0),
-        (faceBounds.top - padY).coerceAtLeast(0),
-        (faceBounds.right + padX).coerceAtMost(width),
-        (faceBounds.bottom + padY).coerceAtMost(height),
+    return WomenBlurDetectionResult(
+        regions = consolidated.take(MAX_BLUR_REGIONS_PER_CHUNK),
+        facesDetected = facesDetected,
+        facesBlurred = facesBlurred,
+        facesSkipped = facesSkipped,
     )
+}
+
+private fun TimedBlurRegion.canMerge(
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    sampleMs: Long,
+    videoWidth: Int,
+    videoHeight: Int,
+): Boolean {
+    val currentEndMs = (endSeconds * 1000.0).toLong()
+    val timeGap = sampleMs - currentEndMs
+    if (timeGap > 800) return false
+
+    val r1CenterX = this.x + this.width / 2
+    val r1CenterY = this.y + this.height / 2
+    val r2CenterX = x + width / 2
+    val r2CenterY = y + height / 2
+
+    val distLimit = maxOf(this.width, this.height, width, height) * 1.5
+    val dist = Math.hypot((r1CenterX - r2CenterX).toDouble(), (r1CenterY - r2CenterY).toDouble())
+    if (dist > distLimit) return false
+
+    // Prevent box from growing too large (no more than 2x the original dimensions)
+    val minX = minOf(this.x, x).coerceIn(0, videoWidth)
+    val minY = minOf(this.y, y).coerceIn(0, videoHeight)
+    val maxX = maxOf(this.x + this.width, x + width).coerceIn(0, videoWidth)
+    val maxY = maxOf(this.y + this.height, y + height).coerceIn(0, videoHeight)
+
+    val mergedWidth = maxX - minX
+    val mergedHeight = maxY - minY
+    if (mergedWidth > width * 2.0 || mergedHeight > height * 2.0) {
+        return false
+    }
+
+    return true
+}
+
+private fun TimedBlurRegion.merge(
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    sampleMs: Long,
+    videoWidth: Int,
+    videoHeight: Int,
+): TimedBlurRegion {
+    val minX = minOf(this.x, x).coerceIn(0, videoWidth)
+    val minY = minOf(this.y, y).coerceIn(0, videoHeight)
+    val maxX = maxOf(this.x + this.width, x + width).coerceIn(0, videoWidth)
+    val maxY = maxOf(this.y + this.height, y + height).coerceIn(0, videoHeight)
+
+    return TimedBlurRegion(
+        startSeconds = this.startSeconds,
+        endSeconds = ((sampleMs + 800) / 1000.0), // Extend hold time
+        x = minX.roundDownEven(),
+        y = minY.roundDownEven(),
+        width = (maxX - minX).coerceAtLeast(8).coerceAtMost(videoWidth - minX).roundDownEven(),
+        height = (maxY - minY).coerceAtLeast(8).coerceAtMost(videoHeight - minY).roundDownEven(),
+    )
+}
+
+private fun Face.toTimedBlurRegion(
+    sampleMs: Long,
+    sampleStepMs: Long,
+    frameWidth: Int,
+    frameHeight: Int,
+    videoWidth: Int,
+    videoHeight: Int,
+): TimedBlurRegion? {
+    val expanded = boundingBox.expandForConservativeModesty(frameWidth, frameHeight)
+    if (expanded.width() <= 2 || expanded.height() <= 2) return null
+    val scaleX = videoWidth.toDouble() / frameWidth.coerceAtLeast(1)
+    val scaleY = videoHeight.toDouble() / frameHeight.coerceAtLeast(1)
+    val x = (expanded.left * scaleX).toInt().coerceIn(0, videoWidth - 2)
+    val y = (expanded.top * scaleY).toInt().coerceIn(0, videoHeight - 2)
+    val width = (expanded.width() * scaleX).toInt()
+        .coerceAtLeast(8)
+        .coerceAtMost(videoWidth - x)
+        .roundDownEven()
+    val height = (expanded.height() * scaleY).toInt()
+        .coerceAtLeast(8)
+        .coerceAtMost(videoHeight - y)
+        .roundDownEven()
+    if (width <= 2 || height <= 2) return null
+    return TimedBlurRegion(
+        startSeconds = ((sampleMs - sampleStepMs).coerceAtLeast(0L)) / 1000.0,
+        endSeconds = (sampleMs + sampleStepMs * 2) / 1000.0,
+        x = x.roundDownEven(),
+        y = y.roundDownEven(),
+        width = width,
+        height = height,
+    )
+}
+
+private fun Bitmap.cropFace(faceBounds: Rect): Bitmap? {
+    val padded = faceBounds.expandForGenderClassification(width, height)
     if (padded.width() < 8 || padded.height() < 8) return null
     return Bitmap.createBitmap(this, padded.left, padded.top, padded.width(), padded.height())
 }
 
-private fun getVideoDimensions(videoFile: File): Pair<Int, Int> {
-    return try {
-        MediaMetadataRetriever().use { r ->
-            r.setDataSource(videoFile.absolutePath)
-            val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
-            val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
-            Pair(w, h)
-        }
-    } catch (e: Exception) {
-        Log.w("HalalifyBlur", "Could not get video dimensions: ${e.message}")
-        Pair(0, 0)
-    }
+private fun Rect.expandForGenderClassification(frameWidth: Int, frameHeight: Int): Rect {
+    val padX = (width() * 0.20f).roundToInt()
+    val padY = (height() * 0.20f).roundToInt()
+    return Rect(
+        (left - padX).coerceAtLeast(0),
+        (top - padY).coerceAtLeast(0),
+        (right + padX).coerceAtMost(frameWidth),
+        (bottom + padY).coerceAtMost(frameHeight),
+    )
 }
 
-private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { cont ->
-    addOnSuccessListener { cont.resume(it) }
-    addOnFailureListener { cont.resumeWithException(it) }
-    addOnCanceledListener { cont.cancel() }
+private fun Rect.expandForConservativeModesty(frameWidth: Int, frameHeight: Int): Rect {
+    val faceWidth = width().coerceAtLeast(1)
+    val faceHeight = height().coerceAtLeast(1)
+    val leftPad = (faceWidth * 0.90f).toInt()
+    val rightPad = (faceWidth * 0.90f).toInt()
+    val topPad = (faceHeight * 0.70f).toInt()
+    val bottomPad = (faceHeight * 2.40f).toInt()
+    return Rect(
+        (left - leftPad).coerceAtLeast(0),
+        (top - topPad).coerceAtLeast(0),
+        (right + rightPad).coerceAtMost(frameWidth),
+        (bottom + bottomPad).coerceAtMost(frameHeight),
+    )
 }
+
+private fun buildBlurFilterGraph(regions: List<TimedBlurRegion>): String {
+    val parts = mutableListOf<String>()
+    var current = "[0:v]"
+    regions.forEachIndexed { index, region ->
+        val base = "base$index"
+        val crop = "crop$index"
+        val blurred = "boxblur$index"
+        val output = if (index == regions.lastIndex) "blurred" else "stage$index"
+        parts += "$current split=2[$base][$crop]"
+        parts += "[$crop]crop=${region.width}:${region.height}:${region.x}:${region.y}," +
+            "boxblur=30:3[$blurred]"
+        parts += "[$base][$blurred]overlay=${region.x}:${region.y}:" +
+            "enable=between(t\\,${region.startSeconds.formatFfmpeg()}\\,${region.endSeconds.formatFfmpeg()})[$output]"
+        current = "[$output]"
+    }
+    return parts.joinToString(";")
+}
+
+private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { continuation ->
+    addOnSuccessListener { result -> continuation.resume(result) }
+    addOnFailureListener { error -> continuation.resumeWithException(error) }
+    addOnCanceledListener { continuation.cancel() }
+}
+
+private fun Int.roundDownEven(): Int = if (this % 2 == 0) this else this - 1
 
 private fun Double.formatFfmpeg(): String = String.format(java.util.Locale.US, "%.2f", this)
+
+private data class TimedBlurRegion(
+    val startSeconds: Double,
+    val endSeconds: Double,
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
+)
+
+private data class WomenBlurDetectionResult(
+    val regions: List<TimedBlurRegion>,
+    val facesDetected: Int,
+    val facesBlurred: Int,
+    val facesSkipped: Int,
+)
+
+private const val MAX_BLUR_REGIONS_PER_CHUNK = 80

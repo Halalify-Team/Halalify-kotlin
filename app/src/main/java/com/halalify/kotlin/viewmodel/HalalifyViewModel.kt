@@ -28,6 +28,7 @@ import com.halalify.kotlin.media.testYtDlpVersion
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
+import com.halalify.kotlin.model.DownloadResult
 import com.halalify.kotlin.model.FormatDiscoveryState
 import com.halalify.kotlin.model.ProcessingState
 import com.halalify.kotlin.model.BlurStrictness
@@ -548,16 +549,18 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                     )
                     return@launch
                 }
-                if (baseUrl.isBlank()) error("Backend URL is required.")
 
-                val quotaDeferred = async {
-                    runCatching {
-                        fetchQuotaState(
-                            backendUrl = baseUrl,
-                            sessionToken = token,
-                        )
+                val quotaDeferred = if (removeMusic) {
+                    if (baseUrl.isBlank()) error("Backend URL is required.")
+                    async {
+                        runCatching {
+                            fetchQuotaState(
+                                backendUrl = baseUrl,
+                                sessionToken = token,
+                            )
+                        }
                     }
-                }
+                } else null
 
                 // Resolve metadata and reusable direct media URLs while quota is checked in parallel.
                 updatePhase("Preparing direct media stream...")
@@ -569,23 +572,26 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         "video=${directMedia.video.formatId}"
                 )
                 val metadata = directMedia.metadata
-                updatePhase("Checking account quota...")
-                val cachedQuota = _quotaState.value.takeIf {
-                    it.hasLiveData && !it.isLoading
-                }
-                val quota = cachedQuota ?: quotaDeferred.await().getOrElse { quotaError ->
-                    throw IllegalStateException(
-                        "Could not verify your quota before processing. " +
-                            quotaError.userFacingMessage()
-                    )
-                }
-                _quotaState.value = quota.copy(isLoading = false)
-                validateEnoughQuotaForVideo(quota, metadata.durationSeconds)
-                perf("quota-verified cached=${cachedQuota != null}")
-                if (cachedQuota != null) {
-                    launch {
-                        quotaDeferred.await().onSuccess { refreshedQuota ->
-                            _quotaState.value = refreshedQuota.copy(isLoading = false)
+
+                if (removeMusic && quotaDeferred != null) {
+                    updatePhase("Checking account quota...")
+                    val cachedQuota = _quotaState.value.takeIf {
+                        it.hasLiveData && !it.isLoading
+                    }
+                    val quota = cachedQuota ?: quotaDeferred.await().getOrElse { quotaError ->
+                        throw IllegalStateException(
+                            "Could not verify your quota before processing. " +
+                                quotaError.userFacingMessage()
+                        )
+                    }
+                    _quotaState.value = quota.copy(isLoading = false)
+                    validateEnoughQuotaForVideo(quota, metadata.durationSeconds)
+                    perf("quota-verified cached=${cachedQuota != null}")
+                    if (cachedQuota != null) {
+                        launch {
+                            quotaDeferred.await().onSuccess { refreshedQuota ->
+                                _quotaState.value = refreshedQuota.copy(isLoading = false)
+                            }
                         }
                     }
                 }
@@ -617,18 +623,42 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 val playableSegments = mutableListOf<String>()
 
                 supervisorScope {
+                    // Coordinated lazy refresh: when a chunk download hits 403 (YouTube
+                    // signed URL expired) only one coroutine refetches the catalog;
+                    // others reuse the refreshed session by snapshot identity.
+                    val mediaRefreshMutex = Mutex()
                     val videoChunkJobs = chunkPlans.map { plan ->
                         async {
                             if (plan.index > 1) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
-                                val videoChunk = downloadVideoSectionDirect(
-                                    activity = activity,
-                                    videoMedia = directMedia.video,
-                                    startSeconds = plan.startSeconds,
-                                    durationSeconds = plan.durationSeconds,
-                                    chunkIndex = plan.index,
-                                )
-                                (videoChunk.path ?: error(videoChunk.message))
+                                var attempt = 0
+                                var lastFailure: DownloadResult? = null
+                                var path: String? = null
+                                while (attempt < 2) {
+                                    val snapshotVideo = directMedia.video
+                                    val result = downloadVideoSectionDirect(
+                                        activity = activity,
+                                        videoMedia = snapshotVideo,
+                                        startSeconds = plan.startSeconds,
+                                        durationSeconds = plan.durationSeconds,
+                                        chunkIndex = plan.index,
+                                    )
+                                    if (result.path != null) { path = result.path; break }
+                                    lastFailure = result
+                                    if (!result.forbidden || attempt > 0) break
+                                    mediaRefreshMutex.withLock {
+                                        if (directMedia.video === snapshotVideo) {
+                                            val refreshed = youtubeFormatResolver.forceYtDlpRefresh(activity, url)
+                                            val session = refreshed.sessionFor(quality)
+                                                ?: error("${quality.label} is no longer available after 403 refresh.")
+                                            directMedia = session
+                                            perf("chunk-${plan.index}-media-refreshed")
+                                        }
+                                    }
+                                    attempt++
+                                }
+                                val failed = lastFailure
+                                (path ?: error(failed?.message ?: "video chunk download failed"))
                                     .also { perf("chunk-${plan.index}-video-ready") }
                             }
                         }
@@ -642,14 +672,34 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     "Chunk ${plan.index + 1}/$totalChunks: streaming ${plan.durationSeconds}s audio..."
                                 )
                                 val audioChunkPath = audioRangeSemaphore.withPermit {
-                                    val audioChunk = downloadAudioChunkDirect(
-                                        activity = activity,
-                                        audioMedia = directMedia.audio,
-                                        startSeconds = plan.startSeconds,
-                                        durationSeconds = plan.durationSeconds,
-                                        chunkIndex = plan.index,
-                                    )
-                                    (audioChunk.path ?: error(audioChunk.message))
+                                    var attempt = 0
+                                    var lastFailure: DownloadResult? = null
+                                    var path: String? = null
+                                    while (attempt < 2) {
+                                        val snapshotAudio = directMedia.audio
+                                        val audioChunk = downloadAudioChunkDirect(
+                                            activity = activity,
+                                            audioMedia = snapshotAudio,
+                                            startSeconds = plan.startSeconds,
+                                            durationSeconds = plan.durationSeconds,
+                                            chunkIndex = plan.index,
+                                        )
+                                        if (audioChunk.path != null) { path = audioChunk.path; break }
+                                        lastFailure = audioChunk
+                                        if (!audioChunk.forbidden || attempt > 0) break
+                                        mediaRefreshMutex.withLock {
+                                            if (directMedia.audio === snapshotAudio) {
+                                                val refreshed = youtubeFormatResolver.forceYtDlpRefresh(activity, url)
+                                                val session = refreshed.sessionFor(quality)
+                                                    ?: error("${quality.label} is no longer available after 403 refresh.")
+                                                directMedia = session
+                                                perf("chunk-${plan.index}-media-refreshed")
+                                            }
+                                        }
+                                        attempt++
+                                    }
+                                    val failed = lastFailure
+                                    (path ?: error(failed?.message ?: "audio chunk download failed"))
                                         .also { perf("chunk-${plan.index}-audio-ready") }
                                 }
 
@@ -687,12 +737,12 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     audioChunkPath
                                 }
 
-                                Result.success(
-                                    CleanChunkResult(
-                                        index = plan.index,
-                                        cleanAudioPath = cleanPath,
-                                    )
-                                )
+                                 Result.success(
+                                     CleanChunkResult(
+                                         index = plan.index,
+                                         cleanAudioPath = cleanPath,
+                                     )
+                                 )
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (error: Throwable) {
@@ -789,6 +839,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         if (index == 0) {
                             firstChunkPlayable.complete(Unit)
                             updatePhase("Ready to watch. More clean chunks are being added...")
+                            _screen.value = AppScreen.RESULT
                         }
                     }
                 }

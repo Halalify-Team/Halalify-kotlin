@@ -29,6 +29,15 @@ internal class LocalMediaProxy(
     @Volatile
     private var closed = false
 
+    /**
+     * Set true if any proxied upstream request returned 403. The downloader
+     * inspects this after FFmpeg finishes so it can trigger one lazy refresh
+     * of the signed YouTube URL instead of failing the whole pipeline.
+     */
+    @Volatile
+    var forbidden: Boolean = false
+        private set
+
     private val acceptThread = Thread({
         while (!closed) {
             val socket = runCatching { serverSocket.accept() }.getOrNull() ?: break
@@ -112,6 +121,7 @@ internal class LocalMediaProxy(
                 }
                 
                 if (upstreamStatus == 403) {
+                    forbidden = true
                     val bodyString = response.peekBody(1024).string()
                     Log.e("HalalifyRange", "403 Forbidden! Response body snippet: $bodyString")
                     Log.e("HalalifyRange", "403 Forbidden! Response headers: ${response.headers}")

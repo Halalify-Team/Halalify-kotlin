@@ -2,6 +2,7 @@ package com.halalify.kotlin.media
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import java.io.Closeable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,8 +24,27 @@ internal class GenderFaceClassifier(context: Context) : Closeable {
         val input = imageProcessor.process(TensorImage.fromBitmap(bitmap)).buffer
         val output = Array(1) { FloatArray(2) }
         interpreter.run(input, output)
-        val male = output[0][0].coerceIn(0f, 1f)
-        val female = output[0][1].coerceIn(0f, 1f)
+        val rawMale = output[0][0]
+        val rawFemale = output[0][1]
+
+        val male: Float
+        val female: Float
+        // Check if the outputs are already normalized probabilities (sum to ~1.0)
+        if (rawMale in 0.0f..1.0f && rawFemale in 0.0f..1.0f && Math.abs((rawMale + rawFemale) - 1.0f) < 0.05f) {
+            male = rawMale
+            female = rawFemale
+            Log.d("HalalifyClassifier", "Using raw output probabilities: male=$male, female=$female")
+        } else {
+            // Apply softmax for raw logits or unnormalized values
+            val maxVal = maxOf(rawMale, rawFemale)
+            val expMale = Math.exp((rawMale - maxVal).toDouble())
+            val expFemale = Math.exp((rawFemale - maxVal).toDouble())
+            val sum = expMale + expFemale
+            male = (expMale / sum).toFloat()
+            female = (expFemale / sum).toFloat()
+            Log.d("HalalifyClassifier", "Raw output: male=$rawMale, female=$rawFemale -> Softmax: male=$male, female=$female")
+        }
+
         GenderPrediction(maleProbability = male, femaleProbability = female)
     }
 
@@ -47,7 +67,7 @@ internal data class GenderPrediction(
             (femaleProbability >= AMBIGUOUS_FEMALE_THRESHOLD && femaleProbability >= maleProbability)
 
     companion object {
-        private const val FEMALE_BLUR_THRESHOLD = 0.45f
-        private const val AMBIGUOUS_FEMALE_THRESHOLD = 0.35f
+        private const val FEMALE_BLUR_THRESHOLD = 0.35f
+        private const val AMBIGUOUS_FEMALE_THRESHOLD = 0.20f
     }
 }

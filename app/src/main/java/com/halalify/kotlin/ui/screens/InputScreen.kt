@@ -67,6 +67,7 @@ import com.halalify.kotlin.ui.theme.HalalifyTextSecondary
 import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 import com.halalify.kotlin.model.VideoQuality
 import com.halalify.kotlin.model.FormatDiscoveryState
+import com.halalify.kotlin.model.BlurStrictness
 import kotlinx.coroutines.delay
 
 @Composable
@@ -91,6 +92,7 @@ internal fun InputScreen(
         removeMusic: Boolean,
         blurWomen: Boolean,
         quality: VideoQuality,
+        blurStrictness: BlurStrictness,
     ) -> Unit,
     onNavigateToLibrary: () -> Unit,
     onNavigateToProfile: () -> Unit,
@@ -98,6 +100,7 @@ internal fun InputScreen(
     var youtubeUrl by remember { mutableStateOf(sharedYoutubeUrl) }
     var removeMusic by remember { mutableStateOf(true) }
     var blurWomen by remember { mutableStateOf(false) }
+    var blurStrictness by remember { mutableStateOf(BlurStrictness.BALANCED) }
     var quality by remember { mutableStateOf(VideoQuality.P360) }
     var qualityUrl by remember { mutableStateOf("") }
     var showDevSettings by remember { mutableStateOf(false) }
@@ -288,6 +291,42 @@ internal fun InputScreen(
                 }
             }
 
+            if (blurWomen) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, end = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Blur strictness",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = HalalifyTextSecondary,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BlurStrictness.values().forEach { option ->
+                            FilterChip(
+                                selected = blurStrictness == option,
+                                onClick = { blurStrictness = option },
+                                label = {
+                                    Text(
+                                        text = option.label,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textAlign = TextAlign.Center,
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = if (removeMusic) {
@@ -423,7 +462,7 @@ internal fun InputScreen(
 
             // Main CTA Button
             Button(
-                onClick = { onStartProcessing(youtubeUrl, removeMusic, blurWomen, quality) },
+                onClick = { onStartProcessing(youtubeUrl, removeMusic, blurWomen, quality, blurStrictness) },
                 enabled = normalizedUrl.isNotBlank() &&
                     sessionToken.isNotBlank() &&
                     formatsReadyForUrl &&
@@ -441,7 +480,7 @@ internal fun InputScreen(
                 Text(
                     text = when {
                         sessionToken.isBlank() -> "Sign in first"
-                        removeMusic -> "✨ Halalify It"
+                        removeMusic || blurWomen -> "✨ Halalify It"
                         else -> "Download Video"
                     },
                     style = MaterialTheme.typography.titleMedium.copy(

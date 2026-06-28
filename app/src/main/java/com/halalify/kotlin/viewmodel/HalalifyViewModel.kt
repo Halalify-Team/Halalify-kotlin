@@ -30,6 +30,7 @@ import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
 import com.halalify.kotlin.model.FormatDiscoveryState
 import com.halalify.kotlin.model.ProcessingState
+import com.halalify.kotlin.model.BlurStrictness
 import com.halalify.kotlin.model.LibraryItem
 import com.halalify.kotlin.model.QuotaState
 import com.halalify.kotlin.model.VideoQuality
@@ -501,6 +502,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         removeMusic: Boolean = true,
         blurWomen: Boolean = false,
         quality: VideoQuality = VideoQuality.P360,
+        blurStrictness: BlurStrictness = BlurStrictness.BALANCED,
     ) {
         val url = youtubeUrl.trim()
         val baseUrl = _backendUrl.value.trim()
@@ -518,13 +520,14 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         formatDiscoveryJob = null
         processingJob = viewModelScope.launch {
             perf("processing-start")
-            _screen.value = if (removeMusic) AppScreen.PROCESSING else AppScreen.DOWNLOAD
+            _screen.value = if (removeMusic || blurWomen) AppScreen.PROCESSING else AppScreen.DOWNLOAD
             _processing.value = ProcessingState(
                 originalUrl = url,
                 currentPhaseLabel = "Initializing...",
                 removeMusic = removeMusic,
                 blurWomen = blurWomen,
                 quality = quality,
+                blurStrictness = blurStrictness,
             )
             publishProcessingNotification()
             clearPlaybackScratch(activity)
@@ -535,7 +538,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 if (token.isBlank()) {
                     error("Please sign in with Google before downloading a video.")
                 }
-                if (!removeMusic) {
+                if (!removeMusic && !blurWomen) {
                     downloadOriginalVideo(
                         activity = activity,
                         url = url,
@@ -650,33 +653,39 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                         .also { perf("chunk-${plan.index}-audio-ready") }
                                 }
 
-                                val rawCleanPath = backendSemaphore.withPermit {
-                                    updateChunk(plan.index, ChunkPhase.CLEANING_BACKEND)
-                                    updatePhase(
-                                        "Chunk ${plan.index + 1}/$totalChunks: removing music..."
-                                    )
-                                    perf("chunk-${plan.index}-backend-start")
-                                    val cleanResult = cleanAudioWithBackend(
-                                        activity = activity,
-                                        inputPath = audioChunkPath,
-                                        backendUrl = baseUrl,
-                                        sessionToken = token,
-                                        chunkIndex = plan.index,
-                                        durationSeconds = plan.durationSeconds,
-                                    )
-                                    cleanResult.minutesRemaining?.let { remaining ->
-                                        updateQuotaAfterChunk(remaining)
+                                val cleanPath = if (removeMusic) {
+                                    val rawCleanPath = backendSemaphore.withPermit {
+                                        updateChunk(plan.index, ChunkPhase.CLEANING_BACKEND)
+                                        updatePhase(
+                                            "Chunk ${plan.index + 1}/$totalChunks: removing music..."
+                                        )
+                                        perf("chunk-${plan.index}-backend-start")
+                                        val cleanResult = cleanAudioWithBackend(
+                                            activity = activity,
+                                            inputPath = audioChunkPath,
+                                            backendUrl = baseUrl,
+                                            sessionToken = token,
+                                            chunkIndex = plan.index,
+                                            durationSeconds = plan.durationSeconds,
+                                        )
+                                        cleanResult.minutesRemaining?.let { remaining ->
+                                            updateQuotaAfterChunk(remaining)
+                                        }
+                                        (cleanResult.path ?: error(cleanResult.message))
+                                            .also { perf("chunk-${plan.index}-backend-ready") }
                                     }
-                                    (cleanResult.path ?: error(cleanResult.message))
-                                        .also { perf("chunk-${plan.index}-backend-ready") }
-                                }
-                                File(audioChunkPath).delete()
+                                    File(audioChunkPath).delete()
 
-                                updatePhase("Chunk ${plan.index + 1}/$totalChunks: normalizing audio...")
-                                val normResult = normalizeAudio(activity, rawCleanPath, plan.index)
-                                val cleanPath = normResult.path
-                                    ?: error("Normalization failed for chunk ${plan.index + 1}: ${normResult.message}")
-                                File(rawCleanPath).delete()
+                                    updatePhase("Chunk ${plan.index + 1}/$totalChunks: normalizing audio...")
+                                    val normResult = normalizeAudio(activity, rawCleanPath, plan.index)
+                                    val finalPath = normResult.path
+                                        ?: error("Normalization failed for chunk ${plan.index + 1}: ${normResult.message}")
+                                    File(rawCleanPath).delete()
+                                    finalPath
+                                } else {
+                                    // Bypass music removal: use the downloaded audio chunk directly
+                                    audioChunkPath
+                                }
 
                                 Result.success(
                                     CleanChunkResult(
@@ -733,6 +742,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                         videoPath = videoSegmentPath,
                                         chunkIndex = index,
                                         durationSeconds = plan.durationSeconds,
+                                        strictness = blurStrictness,
                                     )
                                     preparedVideoPath = blurResult.path ?: error(blurResult.message)
                                     perf("chunk-$index-video-blurred")

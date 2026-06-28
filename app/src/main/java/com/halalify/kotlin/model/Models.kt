@@ -63,6 +63,18 @@ enum class VideoQuality(val label: String, val maxHeight: Int) {
     P2160("2160p", 2160),
 }
 
+/**
+ * Blur strictness levels.
+ * - CONSERVATIVE: only blur high-confidence women (fewer false positives, may miss some women)
+ * - BALANCED: default trade-off
+ * - STRICT: blur aggressively (catches more women, may blur some men / ambiguous faces)
+ */
+enum class BlurStrictness(val label: String, val femaleBlurThreshold: Float, val ambiguousFemaleThreshold: Float) {
+    CONSERVATIVE("Conservative", 0.50f, 0.35f),
+    BALANCED("Balanced", 0.35f, 0.20f),
+    STRICT("Strict", 0.20f, 0.10f),
+}
+
 data class FormatDiscoveryState(
     val url: String = "",
     val videoTitle: String = "",
@@ -117,4 +129,5 @@ data class ProcessingState(
     val removeMusic: Boolean = true,
     val blurWomen: Boolean = false,
     val quality: VideoQuality = VideoQuality.P360,
+    val blurStrictness: BlurStrictness = BlurStrictness.BALANCED,
 )

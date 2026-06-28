@@ -158,8 +158,8 @@ internal fun AppNavigation(
                 onDiscoverFormats = { url ->
                     viewModel.discoverFormats(activity, url)
                 },
-                onStartProcessing = { url, removeMusic, blurWomen, quality ->
-                    viewModel.startProcessing(activity, url, removeMusic, blurWomen, quality)
+                onStartProcessing = { url, removeMusic, blurWomen, quality, blurStrictness ->
+                    viewModel.startProcessing(activity, url, removeMusic, blurWomen, quality, blurStrictness)
                 },
                 onNavigateToLibrary = { viewModel.navigateToLibrary() },
                 onNavigateToProfile = { viewModel.navigateToProfile() },

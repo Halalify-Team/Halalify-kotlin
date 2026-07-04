@@ -24,6 +24,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
+private data class GenderCacheEntry(
+    val isConfirmed: Boolean,
+    val classificationCount: Int
+)
+
 /**
  * Localized face and modesty box-blur pipeline.
  *
@@ -121,12 +126,12 @@ private suspend fun detectWomenBlurRegions(
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.02f) // Detect even smaller/further faces
+            .setMinFaceSize(0.015f) // Extremely sensitive face detection
             .enableTracking()
             .build()
     )
     val classifier = GenderFaceClassifier(activity.applicationContext)
-    val genderCache = mutableMapOf<Int, GenderPrediction>()
+    val genderCache = mutableMapOf<Int, GenderCacheEntry>()
     val rawRegions = mutableListOf<TimedBlurRegion>()
     var facesDetected = 0
     var facesBlurred = 0
@@ -148,11 +153,11 @@ private suspend fun detectWomenBlurRegions(
     try {
         val startedAt = System.currentTimeMillis()
 
-        // Extract frames at 10 FPS to temp directory as JPEG images sequentially
+        // Extract frames at 5 FPS (instead of 10) to make extraction and inference 2x faster!
         val ffmpegCommand = listOf(
             "-y",
             "-i", videoFile.absolutePath,
-            "-vf", "fps=10",
+            "-vf", "fps=5",
             "-q:v", "4", // Good quality JPEG (1-31, lower is better)
             "${framesDir.absolutePath}/frame_%04d.jpg"
         ).joinToString(" ") { it.ffmpegQuote() }
@@ -164,7 +169,7 @@ private suspend fun detectWomenBlurRegions(
         Log.i("HalalifyBlur", "Extracted frames using FFmpeg in ${System.currentTimeMillis() - startedAt}ms")
 
         val files = framesDir.listFiles()?.sortedBy { it.name } ?: emptyList()
-        val sampleStepMs = 100L // Each frame is exactly 100ms apart (fps=10)
+        val sampleStepMs = 200L // Each frame is exactly 200ms apart (fps=5)
         var bitmapH = 0
 
         files.forEach { file ->
@@ -189,17 +194,31 @@ private suspend fun detectWomenBlurRegions(
                     if (faceFraction < minAdultFaceFraction) continue
 
                     val tid = face.trackingId
-                    val pred = if (tid != null && genderCache.containsKey(tid)) {
-                        genderCache[tid]!!
+                    val cacheEntry = if (tid != null) genderCache[tid] else null
+                    
+                    val shouldBlurFace = if (cacheEntry != null && cacheEntry.isConfirmed) {
+                        true
+                    } else if (cacheEntry != null && cacheEntry.classificationCount >= 5) {
+                        cacheEntry.isConfirmed
                     } else {
                         val faceBitmap = bitmap.cropFace(face.boundingBox) ?: continue
                         val p = classifier.classify(faceBitmap)
                         faceBitmap.recycle()
-                        if (tid != null) genderCache[tid] = p
-                        p
+                        
+                        val isFemale = p.shouldBlur(strictness)
+                        val newCount = (cacheEntry?.classificationCount ?: 0) + 1
+                        val newConfirmed = isFemale || (cacheEntry?.isConfirmed == true)
+                        
+                        if (tid != null) {
+                            genderCache[tid] = GenderCacheEntry(
+                                isConfirmed = newConfirmed,
+                                classificationCount = newCount
+                            )
+                        }
+                        newConfirmed
                     }
 
-                    if (pred.shouldBlur(strictness)) {
+                    if (shouldBlurFace) {
                         val region = face.toTimedBlurRegion(
                             sampleMs = sampleMs,
                             sampleStepMs = sampleStepMs,
@@ -313,13 +332,22 @@ private fun TimedBlurRegion.merge(
     val maxX = maxOf(this.x + this.width, x + width).coerceIn(0, videoWidth)
     val maxY = maxOf(this.y + this.height, y + height).coerceIn(0, videoHeight)
 
+    val rawW = maxX - minX
+    val rawH = maxY - minY
+
+    val mergedW = rawW.coerceIn(8, videoWidth).roundDownEven()
+    val mergedH = rawH.coerceIn(8, videoHeight).roundDownEven()
+
+    val mergedX = minX.coerceIn(0, videoWidth - mergedW).roundDownEven()
+    val mergedY = minY.coerceIn(0, videoHeight - mergedH).roundDownEven()
+
     return TimedBlurRegion(
         startSeconds = this.startSeconds,
         endSeconds = ((sampleMs + 800) / 1000.0), // Extend hold time
-        x = minX.roundDownEven(),
-        y = minY.roundDownEven(),
-        width = (maxX - minX).coerceAtLeast(8).coerceAtMost(videoWidth - minX).roundDownEven(),
-        height = (maxY - minY).coerceAtLeast(8).coerceAtMost(videoHeight - minY).roundDownEven(),
+        x = mergedX,
+        y = mergedY,
+        width = mergedW,
+        height = mergedH,
     )
 }
 
@@ -335,22 +363,23 @@ private fun Face.toTimedBlurRegion(
     if (expanded.width() <= 2 || expanded.height() <= 2) return null
     val scaleX = videoWidth.toDouble() / frameWidth.coerceAtLeast(1)
     val scaleY = videoHeight.toDouble() / frameHeight.coerceAtLeast(1)
-    val x = (expanded.left * scaleX).toInt().coerceIn(0, videoWidth - 2)
-    val y = (expanded.top * scaleY).toInt().coerceIn(0, videoHeight - 2)
-    val width = (expanded.width() * scaleX).toInt()
-        .coerceAtLeast(8)
-        .coerceAtMost(videoWidth - x)
-        .roundDownEven()
-    val height = (expanded.height() * scaleY).toInt()
-        .coerceAtLeast(8)
-        .coerceAtMost(videoHeight - y)
-        .roundDownEven()
-    if (width <= 2 || height <= 2) return null
+    
+    val rawX = (expanded.left * scaleX).toInt()
+    val rawY = (expanded.top * scaleY).toInt()
+    val rawW = (expanded.width() * scaleX).toInt()
+    val rawH = (expanded.height() * scaleY).toInt()
+
+    val width = rawW.coerceIn(8, videoWidth).roundDownEven()
+    val height = rawH.coerceIn(8, videoHeight).roundDownEven()
+    
+    val x = rawX.coerceIn(0, videoWidth - width).roundDownEven()
+    val y = rawY.coerceIn(0, videoHeight - height).roundDownEven()
+
     return TimedBlurRegion(
         startSeconds = ((sampleMs - sampleStepMs).coerceAtLeast(0L)) / 1000.0,
         endSeconds = (sampleMs + sampleStepMs * 2) / 1000.0,
-        x = x.roundDownEven(),
-        y = y.roundDownEven(),
+        x = x,
+        y = y,
         width = width,
         height = height,
     )
@@ -396,9 +425,13 @@ private fun buildBlurFilterGraph(regions: List<TimedBlurRegion>): String {
         val crop = "crop$index"
         val blurred = "boxblur$index"
         val output = if (index == regions.lastIndex) "blurred" else "stage$index"
+        
+        // Calculate max safe boxblur radius to avoid chroma_param radius failures in FFmpeg
+        val safeRadius = minOf(30, minOf(region.width, region.height) / 2 - 1).coerceAtLeast(1)
+        
         parts += "$current split=2[$base][$crop]"
         parts += "[$crop]crop=${region.width}:${region.height}:${region.x}:${region.y}," +
-            "boxblur=30:3[$blurred]"
+            "boxblur=$safeRadius:3[$blurred]"
         parts += "[$base][$blurred]overlay=${region.x}:${region.y}:" +
             "enable=between(t\\,${region.startSeconds.formatFfmpeg()}\\,${region.endSeconds.formatFfmpeg()})[$output]"
         current = "[$output]"

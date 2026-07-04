@@ -200,6 +200,17 @@ internal suspend fun testYtDlpVersion(activity: ComponentActivity): String = wit
     }
 }
 
+internal suspend fun warmUpFfmpegKit(): String = withContext(Dispatchers.IO) {
+    try {
+        val startedAt = System.currentTimeMillis()
+        val session = FFmpegKit.execute("-version")
+        val elapsedMs = System.currentTimeMillis() - startedAt
+        "SUCCESS: FFmpegKit warmed up.\nreturnCode: ${session.returnCode}\nelapsed: ${elapsedMs}ms"
+    } catch (error: Throwable) {
+        "FAILED: ${error.javaClass.simpleName}: ${error.message}"
+    }
+}
+
 
 
 

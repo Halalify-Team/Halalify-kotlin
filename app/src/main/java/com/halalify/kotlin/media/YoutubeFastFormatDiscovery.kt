@@ -15,9 +15,15 @@ internal fun discoverFastYoutubeFormats(youtubeUrl: String): YoutubeFormatCatalo
     validateYoutubeUrl(youtubeUrl)
     val videoId = extractYoutubeVideoId(youtubeUrl)
         ?: error("Could not identify the YouTube video ID.")
-    val clientVersion = "20.10.38"
-    val androidUserAgent =
-        "com.google.android.youtube/$clientVersion (Linux; U; Android 11) gzip"
+    // WEB_EMBEDDED_PLAYER produces CDN URLs that googlevideo honors when fetched
+    // with browser UA + https://www.youtube.com Referer. The ANDROID client URL
+    // signature is rejected with 403 unless the request originates from the
+    // YouTube app (with a proof-of-origin token we can't mint), so the previous
+    // ANDROID catalog poisoned the cache and forced a ~30s yt-dlp refresh on
+    // the first chunk — see HalalifyRange 403 logs.
+    val clientVersion = "1.20240701"
+    val browserUserAgent =
+        "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36"
     val requestJson = JSONObject()
         .put("videoId", videoId)
         .put(
@@ -25,20 +31,18 @@ internal fun discoverFastYoutubeFormats(youtubeUrl: String): YoutubeFormatCatalo
             JSONObject().put(
                 "client",
                 JSONObject()
-                    .put("clientName", "ANDROID")
+                    .put("clientName", "WEB_EMBEDDED_PLAYER")
                     .put("clientVersion", clientVersion)
-                    .put("androidSdkVersion", 30)
-                    .put("osName", "Android")
-                    .put("osVersion", "11")
             )
         )
         .toString()
         .toRequestBody("application/json".toMediaType())
     val request = Request.Builder()
         .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-        .header("User-Agent", androidUserAgent)
-        .header("X-YouTube-Client-Name", "3")
+        .header("User-Agent", browserUserAgent)
+        .header("X-YouTube-Client-Name", "56")
         .header("X-YouTube-Client-Version", clientVersion)
+        .header("Referer", "https://www.youtube.com/")
         .post(requestJson)
         .build()
     val client = OkHttpClient.Builder()
@@ -92,7 +96,10 @@ internal fun discoverFastYoutubeFormats(youtubeUrl: String): YoutubeFormatCatalo
         fun resource(format: JSONObject) = DirectMediaResource(
             url = format.getString("url"),
             headers = mapOf(
-                "User-Agent" to androidUserAgent,
+                "User-Agent" to browserUserAgent,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "en-us,en;q=0.5",
+                "Sec-Fetch-Mode" to "navigate",
                 "Referer" to "https://www.youtube.com/",
             ),
             extension = if (format.optString("mimeType").contains("webm")) "webm" else "mp4",

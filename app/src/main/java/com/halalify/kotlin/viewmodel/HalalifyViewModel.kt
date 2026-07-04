@@ -25,6 +25,7 @@ import com.halalify.kotlin.media.muxFullVideoWithCleanAudio
 import com.halalify.kotlin.media.muxVideoWithCleanAudio
 import com.halalify.kotlin.media.normalizeAudio
 import com.halalify.kotlin.media.testYtDlpVersion
+import com.halalify.kotlin.media.warmUpFfmpegKit
 import com.halalify.kotlin.model.AppScreen
 import com.halalify.kotlin.model.ChunkPhase
 import com.halalify.kotlin.model.ChunkState
@@ -409,9 +410,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
     fun warmUpLocalTools(activity: ComponentActivity) {
         if (warmUpJob?.isActive == true) return
         warmUpJob = viewModelScope.launch {
-            runCatching {
-                testYtDlpVersion(activity)
-            }
+            runCatching { testYtDlpVersion(activity) }
+            runCatching { warmUpFfmpegKit() }
         }
     }
 

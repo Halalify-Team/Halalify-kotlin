@@ -11,6 +11,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -19,10 +20,7 @@ internal class LocalMediaProxy(
 ) : Closeable {
     private val serverSocket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     private val clientSockets = CopyOnWriteArrayList<Socket>()
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
+    private val client = SHARED_CLIENT
 
     val url: String = "http://127.0.0.1:${serverSocket.localPort}/media"
 
@@ -173,5 +171,13 @@ internal class LocalMediaProxy(
         runCatching { serverSocket.close() }
         clientSockets.forEach { socket -> runCatching { socket.close() } }
         runCatching { acceptThread.join(1_000) }
+    }
+
+    private companion object {
+        val SHARED_CLIENT: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+            .build()
     }
 }

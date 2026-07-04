@@ -430,11 +430,15 @@ private fun buildLocalizedBlurFilter(
     // Split input into N+1 streams: 1 base + N crops
     parts += "[0:v]split=${n + 1}" + (0 until n).joinToString("") { "[s$it]" } + "[base]"
 
-    // Each branch: crop → boxblur (with chroma radius clamping)
+    // Each branch: crop → boxblur (with chroma radius clamping).
+    // boxblur=luma_r:luma_p:chroma_r — chroma plane is half the luma size for
+    // yuv420p, so the chroma radius must be <= minDim/4 - 1 or FFmpeg aborts
+    // with "Invalid chroma_param radius". We clamp both independently.
     regions.forEachIndexed { i, region ->
         val minDim = minOf(region.width, region.height)
-        val safeRadius = minOf(blurRadius, minDim / 2 - 1).coerceAtLeast(1)
-        parts += "[s$i]crop=${region.width}:${region.height}:${region.x}:${region.y},boxblur=$safeRadius:3[b$i]"
+        val lumaRadius = minOf(blurRadius, minDim / 2 - 1).coerceAtLeast(1)
+        val chromaRadius = minOf(blurRadius, minDim / 4 - 1).coerceAtLeast(1)
+        parts += "[s$i]crop=${region.width}:${region.height}:${region.x}:${region.y},boxblur=$lumaRadius:3:$chromaRadius[b$i]"
     }
 
     // Sequential overlay chain: base → overlay each blurred region with time enable

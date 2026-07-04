@@ -182,9 +182,9 @@ private const val INFERENCE_WIDTH = 480
 private const val MAX_FACES_PER_FRAME = 4
 private const val MAX_CONFIRMED_TRACKS = 6
 private const val TRACK_CONFIRMATION_POSITIVES = 2
-private const val TRACK_IOU_THRESHOLD = 0.30
-private const val TRACK_MAX_FRAME_GAP = 3
-private const val TIME_MARGIN_SECONDS = 0.5
+private const val TRACK_IOU_THRESHOLD = 0.20
+private const val TRACK_MAX_FRAME_GAP = 5
+private const val TIME_MARGIN_SECONDS = 1.5
 
 private suspend fun detectAndClusterWomen(
     activity: ComponentActivity,
@@ -315,13 +315,17 @@ private suspend fun detectAndClusterWomen(
 
     val regions = capped.map { track -> trackToBlurRegion(track, videoWidth, videoHeight) }
 
+    // Bridge gaps: if region A ends and region B starts within 2s of each other,
+    // extend A's end to B's start so there's no unblurred gap while a woman is on screen.
+    val bridged = bridgeRegionGaps(regions)
+
     Log.i(
         "HalalifyBlur",
         "decision: tracks=$totalTracks confirmed=$confirmedCount regions=${regions.size} frames=$framesAnalyzed faces=$facesDetected"
     )
 
     return BlurDecision(
-        regions = regions,
+        regions = bridged,
         framesAnalyzed = framesAnalyzed,
         facesDetected = facesDetected,
         totalTracks = totalTracks,
@@ -412,6 +416,27 @@ private fun trackToBlurRegion(track: PersonTrack, videoW: Int, videoH: Int): Blu
         startSeconds = startTime,
         endSeconds = endTime,
     )
+}
+
+/**
+ * Bridge temporal gaps between blur regions so a woman stays covered while
+ * briefly occluded or between track switches. If region A ends and region B
+ * starts within 2 seconds of each other, extend A's end time to B's start time.
+ * This eliminates the "miss some milliseconds" flicker.
+ */
+private fun bridgeRegionGaps(regions: List<BlurRegion>): List<BlurRegion> {
+    if (regions.size < 2) return regions
+    val sorted = regions.sortedBy { it.startSeconds }
+    val result = sorted.toMutableList()
+    for (i in 0 until result.size - 1) {
+        val current = result[i]
+        val next = result[i + 1]
+        val gap = next.startSeconds - current.endSeconds
+        if (gap in 0.0..2.0) {
+            result[i] = current.copy(endSeconds = next.startSeconds + 0.05)
+        }
+    }
+    return result
 }
 
 // ─── FFmpeg filter graph ───

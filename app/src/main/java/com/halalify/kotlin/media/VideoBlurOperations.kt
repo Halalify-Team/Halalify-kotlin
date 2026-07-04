@@ -425,13 +425,17 @@ private fun buildBlurFilterGraph(regions: List<TimedBlurRegion>): String {
         val crop = "crop$index"
         val blurred = "boxblur$index"
         val output = if (index == regions.lastIndex) "blurred" else "stage$index"
-        
-        // Calculate max safe boxblur radius to avoid chroma_param radius failures in FFmpeg
-        val safeRadius = minOf(30, minOf(region.width, region.height) / 2 - 1).coerceAtLeast(1)
-        
+
+        // For yuv420p, chroma planes are half the luma size. boxblur's chroma
+        // radius defaults to the luma radius, which overflows on small crops
+        // and causes FFmpeg to abort with code=1 ("Invalid cr=N, max=M").
+        val minDim = minOf(region.width, region.height)
+        val lumaRadius = minOf(30, minDim / 2 - 1).coerceAtLeast(1)
+        val chromaRadius = minOf(lumaRadius, minDim / 4 - 1).coerceAtLeast(1)
+
         parts += "$current split=2[$base][$crop]"
         parts += "[$crop]crop=${region.width}:${region.height}:${region.x}:${region.y}," +
-            "boxblur=$safeRadius:3[$blurred]"
+            "boxblur=$lumaRadius:3:$chromaRadius[$blurred]"
         parts += "[$base][$blurred]overlay=${region.x}:${region.y}:" +
             "enable=between(t\\,${region.startSeconds.formatFfmpeg()}\\,${region.endSeconds.formatFfmpeg()})[$output]"
         current = "[$output]"
@@ -465,4 +469,4 @@ private data class WomenBlurDetectionResult(
     val facesSkipped: Int,
 )
 
-private const val MAX_BLUR_REGIONS_PER_CHUNK = 80
+private const val MAX_BLUR_REGIONS_PER_CHUNK = 20

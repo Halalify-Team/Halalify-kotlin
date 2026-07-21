@@ -1,16 +1,12 @@
 package com.halalify.kotlin
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.halalify.kotlin.ui.navigation.AppNavigation
 import com.halalify.kotlin.ui.theme.HalalifyTheme
 import com.halalify.kotlin.viewmodel.HalalifyViewModel
@@ -18,11 +14,9 @@ import com.halalify.kotlin.viewmodel.HalalifyViewModel
 class MainActivity : ComponentActivity() {
 
     private val viewModel: HalalifyViewModel by viewModels()
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
@@ -34,7 +28,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         viewModel.warmUpLocalTools(this)
-        requestNotificationPermissionIfNeeded()
         handleIntent(intent)
 
 
@@ -62,12 +55,4 @@ class MainActivity : ComponentActivity() {
         return regex.find(text)?.value
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val permission = Manifest.permission.POST_NOTIFICATIONS
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-        notificationPermissionLauncher.launch(permission)
-    }
 }

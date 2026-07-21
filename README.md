@@ -1,227 +1,84 @@
-# Halalify Kotlin Android
+# Halalify Android
 
-This repository contains the first confirmed working native Android build of Halalify.
+Native Android app that removes music from YouTube videos locally on-device. Paste a YouTube URL, and Halalify downloads the video, sends only audio chunks to the backend for AI-powered music removal, then rebuilds a playable clean video.
 
-The working baseline is the branch:
+## What It Does
 
-```text
-stable/android-working-base
+1. User pastes/shares a YouTube URL
+2. App downloads video + audio locally using `yt-dlp` + `aria2c`
+3. Audio chunks are sent to the backend for music/lyrics removal (via Replicate Spleeter)
+4. Clean audio is received back and muxed with the original video
+5. User watches the result and saves to gallery
+
+**Key rule:** YouTube media download happens locally on the device. Only extracted audio chunks are sent to the backend.
+
+## Features
+
+- YouTube URL paste / share from any app
+- Multiple quality tiers (360p, 720p, 1080p)
+- Music removal via AI (Spleeter on Replicate)
+- Optional face blur for women (TFLite gender classification + ML Kit face detection)
+- Chunked processing with real-time progress, ETA, and resumable pipeline
+- Watch while processing (play chunks as they complete)
+- Fullscreen video playback
+- Library of saved halalified videos
+- Swipe-to-delete library cards
+- Google Sign-In with session persistence
+- Subscription management via LemonSqueezy
+- Confetti celebration on completion
+- Splash screen with animated logo
+
+## Getting the APK
+
+### Pre-built APKs
+
+Release APKs are generated as ABI splits:
+
+```
+app/build/outputs/apk/release/app-arm64-v8a-release.apk     # Most modern phones
+app/build/outputs/apk/release/app-armeabi-v7a-release.apk   # Older devices
+app/build/outputs/apk/release/app-x86_64-release.apk        # Emulators
 ```
 
-This branch successfully processed and played a YouTube video on a real Android phone and on the Android emulator. Treat it as the stable base for future work. New experiments should be built from a new branch, not directly on top of this branch.
-
-## Goal
-
-Halalify is a native Android app that takes a YouTube URL, downloads the required media locally on the user's device, sends only audio chunks to the backend for music removal, then rebuilds a playable video with clean audio.
-
-The important product rule is:
-
-```text
-YouTube media download happens locally on the Android device.
-Only extracted audio chunks are sent to the backend.
-```
-
-The app is not a YouTube web wrapper. It uses `yt-dlp` locally through `youtubedl-android`.
-
-## High-Level Flow
-
-1. The user shares or pastes a YouTube URL into the app.
-2. The app reads metadata locally with `yt-dlp`.
-3. The app calculates chunk plans from the video duration.
-4. The app downloads source audio locally.
-5. The app downloads source video locally.
-6. FFmpeg cuts audio segments from the source audio.
-7. Each audio segment is sent to the backend music-removal endpoint.
-8. The backend returns a clean audio segment.
-9. FFmpeg normalizes the clean audio.
-10. FFmpeg cuts matching video segments.
-11. FFmpeg muxes each video segment with the matching clean audio.
-12. The app concatenates the clean audio and prepares the final playable result.
-13. The user can watch the halalified result and save it to gallery.
-
-## The Issue That Blocked Android
-
-The app originally failed on Android with `yt-dlp` download errors. The most important errors were:
-
-```text
-yt-dlp audio chunk download failed
-invalid --download-sections time range
-status=403
-aria2c exited with code 22
-```
-
-There were multiple root causes:
-
-### 1. Locale-Dependent Timestamps
-
-Android phones using Arabic locale produced Arabic-Indic digits inside `--download-sections`.
-
-`yt-dlp` requires ASCII timestamps like:
-
-```text
-*00:00:00-00:00:10
-```
-
-but the app could produce localized digits. That caused:
-
-```text
-invalid --download-sections time range
-```
-
-The fix was to force `Locale.US` whenever formatting CLI timestamps or numbers.
-
-### 2. Missing Native Downloader
-
-The app initially relied on the default `yt-dlp` Python/urllib downloader. On Android this was slow and fragile with YouTube media URLs.
-
-The fix was to bundle and initialize `aria2c` from the same `youtubedl-android` family:
-
-```kotlin
-implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
-implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
-```
-
-and initialize both:
-
-```kotlin
-YoutubeDL.getInstance().init(context)
-Aria2c.getInstance().init(context)
-```
-
-Downloads then use:
-
-```text
---downloader libaria2c.so
-```
-
-### 3. YouTube 403 From `formats=missing_pot`
-
-The biggest breakthrough was removing this extractor argument:
-
-```text
-formats=missing_pot
-```
-
-With `formats=missing_pot`, `yt-dlp` may expose formats that appear selectable but fail at download time with HTTP 403 because YouTube expects a PO token for those formats.
-
-The working build uses normal Android/mweb clients without `formats=missing_pot`, for example:
-
-```text
-youtube:player_client=android
-youtube:player_client=mweb
-youtube:player_client=default,android,mweb
-```
-
-That change fixed the repeated Android 403 failures.
-
-## Current Working yt-dlp Strategy
-
-The app uses local `yt-dlp` through `YoutubeDLRequest`.
-
-For metadata:
-
-```text
---no-playlist
---skip-download
---socket-timeout 15
---retries 1
---fragment-retries 1
---extractor-retries 1
---extractor-args youtube:player_client=android,mweb
---print %(title)s
---print %(duration)s
-```
-
-For audio download attempts:
-
-```text
--f bestaudio[ext=m4a]/bestaudio/best
---extractor-args youtube:player_client=android
---downloader libaria2c.so
-```
-
-Fallback attempts use `mweb` and `default,android,mweb`.
-
-For video download attempts:
-
-```text
--f 18/best[height<=480]/best
---extractor-args youtube:player_client=android
---downloader libaria2c.so
-```
-
-Fallback attempts use `mweb`, `android,mweb`, and `default,android,mweb`.
-
-Do not reintroduce `formats=missing_pot` unless there is a very specific token strategy in place.
-
-## APK Strategy
-
-The universal APK became too large and also made testing painful. The working baseline uses ABI split APKs:
-
-```kotlin
-splits {
-    abi {
-        isEnable = true
-        reset()
-        include("arm64-v8a", "armeabi-v7a", "x86_64")
-        isUniversalApk = false
-    }
-}
-```
-
-Generated debug APKs:
-
-```text
-app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
-app/build/outputs/apk/debug/app-x86_64-debug.apk
-```
-
-For most modern Android phones, use:
-
-```text
-app-arm64-v8a-debug.apk
-```
-
-## Build
-
-From the repository root:
-
-```bash
-./gradlew :app:assembleDebug
-```
-
-Install on a connected ARM64 Android device:
-
-```bash
-adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-```
-
-For a clean test after changing native downloader behavior:
-
-```bash
-adb shell pm clear com.halalify.kotlin
-```
-
-## Emulator Verification
-
-The first confirmed emulator test used:
-
-```text
-https://www.youtube.com/watch?v=JVu7-XSI_OM
-```
-
-The app completed:
-
-```text
-3 / 3 chunks
-100%
-Watch Result
-```
-
-The resulting video opened in the native player and ExoPlayer decoded H264/AAC successfully.
-
-The emulator test command used a share intent:
+For most users, install the **arm64-v8a** APK.
+
+### Building from Source
+
+**Prerequisites:**
+- Android Studio Ladybug or newer
+- JDK 17
+- Android SDK 35
+
+**Setup:**
+
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/Azex01/Halalify-kotlin.git
+   cd Halalify-kotlin
+   ```
+
+2. Set up Google Sign-In (required for login):
+   - Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+   - Enable Credential Manager API
+   - Create an OAuth 2.0 client ID (Android type) with your app's package name and SHA-1
+   - Add your `GOOGLE_WEB_CLIENT_ID` to `gradle.properties`:
+     ```
+     GOOGLE_WEB_CLIENT_ID=your-client-id.apps.googleusercontent.com
+     ```
+
+3. Build:
+   ```bash
+   ./gradlew :app:assembleRelease
+   ```
+
+4. Install on a connected device:
+   ```bash
+   adb install -r app/build/outputs/apk/release/app-arm64-v8a-release.apk
+   ```
+
+### Testing on Emulator
+
+Start a Pixel emulator (API 33+) and share a YouTube URL:
 
 ```bash
 adb shell am start \
@@ -231,66 +88,107 @@ adb shell am start \
   -n com.halalify.kotlin/.MainActivity
 ```
 
-## Backend Role
+### Clean Install (after backend changes)
 
-The backend should only receive audio chunks. It should not download YouTube media.
-
-The Android app is responsible for:
-
-```text
-YouTube metadata
-YouTube media download
-Audio extraction
-Video cutting
-Audio/video muxing
-Final local playable output
-Saving to gallery
+```bash
+adb shell pm clear com.halalify.kotlin
 ```
 
-The backend is responsible for:
+## How to Use
 
-```text
-Music removal from uploaded audio chunks
-Returning clean audio chunks
+1. **Open the app** -- You'll see the Halalify home screen with a URL input field
+2. **Sign in** -- Tap "Sign in with Google" to authenticate (required for music removal)
+3. **Paste a YouTube URL** -- Type/paste a URL or share from another app (YouTube, Chrome, etc.)
+4. **Choose options** -- Toggle music removal and/or face blur, select quality tier
+5. **Tap "Halalify It"** -- A pre-flight summary shows before processing starts
+6. **Watch or wait** -- Processing screen shows circular progress with ETA. You can start watching as soon as the first chunk is ready
+7. **Save** -- Tap "Save to Gallery" to export the video to your device
+
+## Project Structure
+
+```
+app/src/main/java/com/halalify/kotlin/
+├── MainActivity.kt                    # Entry point, splash, share intent
+├── viewmodel/
+│   └── HalalifyViewModel.kt           # Single source of truth for all state
+├── network/
+│   └── BackendApi.kt                  # OkHttp client for backend communication
+├── media/
+│   ├── YoutubeDlOperations.kt         # yt-dlp integration via youtubedl-android
+│   ├── YoutubeFormatResolver.kt       # Quality tier resolution
+│   ├── YoutubeFastFormatDiscovery.kt  # Fast InnerTube API format discovery
+│   ├── FfmpegOperations.kt           # FFmpeg mux, cut, concat, normalize
+│   ├── VideoBlurOperations.kt         # Face detection + gender-based blur
+│   ├── GenderFaceClassifier.kt        # TFLite gender classification
+│   ├── LocalMediaProxy.kt            # Local HTTP proxy for FFmpeg HTTPS bridging
+│   └── TemporaryFileCleaner.kt        # Temp file cleanup
+├── processing/
+│   ├── ChunkPlanner.kt               # Chunk time-range planning
+│   └── ProcessingForegroundService.kt # Background processing notification
+├── security/
+│   └── SecureSessionStore.kt          # AES-256 encrypted session persistence
+├── storage/
+│   └── LibraryRepository.kt           # Saved videos persistence
+└── ui/
+    ├── VideoPlayers.kt                # ExoPlayer composables (single + playlist)
+    ├── navigation/
+    │   ├── AppNavigation.kt           # Nav graph, Google Sign-In flow
+    │   └── HalalifyBottomBar.kt       # Home / Library / Profile tabs
+    ├── screens/
+    │   ├── InputScreen.kt             # URL input, options, quality selection
+    │   ├── ProcessingScreen.kt        # Circular progress, ETA, chunk details
+    │   ├── ResultScreen.kt            # Video playback, fullscreen, save
+    │   ├── DownloadScreen.kt          # Simple download (no music removal)
+    │   ├── LibraryScreen.kt           # Saved videos list
+    │   └── ProfileScreen.kt          # Account, quota, subscription
+    ├── components/
+    │   ├── HalalifyTopBar.kt          # Reusable top app bar
+    │   ├── HalalifyLogo.kt            # Animated brand logo (Canvas)
+    │   └── CelebrationOverlay.kt      # Confetti animation
+    └── theme/
+        ├── Color.kt                   # Teal/gold accent palette
+        ├── Theme.kt                   # Dark-only Material3 theme
+        └── Type.kt                    # Typography
 ```
 
-## Files To Understand First
+## Tech Stack
 
-Important implementation files:
+| Layer | Technology |
+|-------|-----------|
+| UI | Jetpack Compose + Material3 (dark theme) |
+| Video Playback | ExoPlayer / Media3 1.7.1 |
+| Media Processing | FFmpegKit Audio 6.0.1 |
+| YouTube Download | youtubedl-android 0.18.1 (yt-dlp + aria2c) |
+| Face Detection | ML Kit Face Detection 16.1.7 |
+| Gender Classification | TensorFlow Lite 2.11.0 |
+| Auth | AndroidX Credentials 1.3.0 (Google Sign-In) |
+| Networking | OkHttp 4.12.0 |
+| Image Loading | Coil Compose 2.7.0 |
+| Encrypted Storage | AndroidX Security Crypto 1.1.0-alpha06 |
 
-```text
-app/src/main/java/com/halalify/kotlin/media/YoutubeDlOperations.kt
-app/src/main/java/com/halalify/kotlin/media/FfmpegOperations.kt
-app/src/main/java/com/halalify/kotlin/viewmodel/HalalifyViewModel.kt
-app/src/main/java/com/halalify/kotlin/network/BackendApi.kt
-app/src/main/java/com/halalify/kotlin/ui/screens/ProcessingScreen.kt
-app/src/main/java/com/halalify/kotlin/ui/screens/ResultScreen.kt
-app/build.gradle.kts
-```
+## Build Configuration
 
-## Do Not Break These Decisions
+- **compileSdk:** 35
+- **minSdk:** 24 (Android 7.0)
+- **targetSdk:** 35
+- **JVM Target:** 17
+- **ABI Splits:** arm64-v8a, armeabi-v7a, x86_64
+- **Backend URL:** `https://halalify-backend-2.onrender.com` (configurable in DEBUG)
 
-Keep these decisions unless a replacement is tested on both emulator and a real Android phone:
+## Important Decisions (Do Not Break)
 
-1. Keep media download local to Android.
-2. Keep `aria2c` bundled and initialized.
-3. Keep `--downloader libaria2c.so` for real downloads.
-4. Do not use `formats=missing_pot`.
-5. Keep CLI timestamp and number formatting on `Locale.US`.
-6. Keep ABI split APKs instead of one huge universal APK.
-7. Do not make the backend download YouTube media.
-8. Test with a real YouTube URL and confirm the final video opens in the app player.
+1. Media download stays local to Android -- backend only receives audio chunks
+2. `aria2c` bundled and initialized for reliable downloads
+3. `--downloader libaria2c.so` used for all real downloads
+4. Never use `formats=missing_pot` -- causes YouTube 403 errors
+5. All CLI timestamps formatted with `Locale.US` (Arabic locale bug fix)
+6. ABI split APKs instead of a universal APK
+7. Backend never downloads YouTube media
 
-## Known Tradeoff
+## Backend
 
-The current baseline prioritizes reliability over maximum streaming speed. It downloads source audio/video locally and then cuts/muxes chunks. This proved the full Android flow works.
+This app requires the Halalify backend to process audio chunks. See the [halalify-backend-2](https://github.com/Azex01/halalify-backend-2) repo for backend setup.
 
-Future optimization should happen on a new branch. The next likely improvement is to make chunk availability faster while preserving the same reliable downloader rules:
+## License
 
-```text
-local yt-dlp + aria2c
-no formats=missing_pot
-Locale.US timestamps
-backend receives audio only
-```
-
+Private -- All rights reserved.

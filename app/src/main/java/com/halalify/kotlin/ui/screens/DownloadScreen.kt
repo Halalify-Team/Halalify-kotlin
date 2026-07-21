@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
@@ -19,6 +18,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.halalify.kotlin.model.ProcessingState
+import com.halalify.kotlin.ui.components.HalalifyLogo
+import com.halalify.kotlin.ui.components.HalalifyTopBar
 import com.halalify.kotlin.ui.theme.HalalifyAccent
 import com.halalify.kotlin.ui.theme.HalalifyError
 import com.halalify.kotlin.ui.theme.HalalifySuccess
@@ -45,20 +47,29 @@ internal fun DownloadScreen(
 ) {
     BackHandler(onBack = onBack)
 
+    Scaffold(
+        topBar = {
+            HalalifyTopBar(
+                title = when {
+                    state.errorMessage != null -> "Download Failed"
+                    state.isComplete -> "Downloaded"
+                    else -> "Downloading"
+                },
+                onBack = onBack,
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { paddingValues ->
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 28.dp, vertical = 64.dp),
+            .padding(paddingValues)
+            .padding(horizontal = 28.dp, vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = Icons.Default.Download,
-            contentDescription = null,
-            tint = if (state.errorMessage == null) HalalifyAccent else HalalifyError,
-        )
-        Spacer(modifier = Modifier.height(20.dp))
+        HalalifyLogo(size = 72.dp, animated = !state.isComplete && state.errorMessage == null)
+        Spacer(modifier = Modifier.height(24.dp))
         Text(
             text = when {
                 state.errorMessage != null -> "Download Failed"
@@ -159,5 +170,6 @@ internal fun DownloadScreen(
         ) {
             Text(if (state.errorMessage != null) "Try Another Video" else "Back")
         }
+    }
     }
 }

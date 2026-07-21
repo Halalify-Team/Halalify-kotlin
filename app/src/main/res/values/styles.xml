@@ -4,4 +4,10 @@
         <item name="android:navigationBarColor">#071D22</item>
         <item name="android:statusBarColor">#071D22</item>
     </style>
+
+    <style name="HalalifySplash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#071D22</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
 </resources>

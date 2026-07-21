@@ -2,6 +2,7 @@ package com.halalify.kotlin.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,26 +15,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +43,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.halalify.kotlin.model.ProcessingState
 import com.halalify.kotlin.ui.ChunkPlaylistPlayer
+import com.halalify.kotlin.ui.components.CelebrationOverlay
+import com.halalify.kotlin.ui.components.HalalifyTopBar
 import com.halalify.kotlin.ui.theme.HalalifyAccent
 import com.halalify.kotlin.ui.theme.HalalifyAccentDim
 import com.halalify.kotlin.ui.theme.HalalifyDarkCard
@@ -62,7 +65,13 @@ internal fun ResultScreen(
     onHalalifyAnother: () -> Unit,
 ) {
     val context = LocalContext.current
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var isFullscreen by remember { mutableStateOf(false) }
+    var hasCelebrated by remember { mutableStateOf(false) }
+    var showCelebration by remember { mutableStateOf(false) }
+    var hasHaptickedFirstChunk by remember { mutableStateOf(false) }
+    val isFreshComplete = state.isComplete && !state.isLibraryPlayback
     val shouldWarnBeforeDiscarding = state.isComplete &&
         !state.isSavedToGallery &&
         !state.isLibraryPlayback &&
@@ -73,65 +82,88 @@ internal fun ResultScreen(
         "Preparing preview"
     }
 
+    SystemBarsVisibilityEffect(isFullscreen = isFullscreen, context = context)
+
     BackHandler {
-        onBack()
+        if (isFullscreen) {
+            isFullscreen = false
+        } else if (shouldWarnBeforeDiscarding) {
+            showDiscardDialog = true
+        } else {
+            onBack()
+        }
     }
 
     LaunchedEffect(exportStatus) {
         if (exportStatus != null) {
             android.widget.Toast.makeText(context, exportStatus, android.widget.Toast.LENGTH_LONG).show()
+            if (!exportStatus.contains("fail", ignoreCase = true) &&
+                !exportStatus.contains("error", ignoreCase = true)
+            ) {
+                haptics.performHapticFeedback(
+                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                )
+            }
             onClearExportStatus()
         }
     }
 
+    LaunchedEffect(isFreshComplete) {
+        if (isFreshComplete && !hasCelebrated) {
+            hasCelebrated = true
+            showCelebration = true
+            haptics.performHapticFeedback(
+                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+            )
+            kotlinx.coroutines.delay(1500)
+            showCelebration = false
+        }
+    }
+
+    LaunchedEffect(state.firstChunkReady) {
+        if (state.firstChunkReady && !state.isLibraryPlayback && !hasHaptickedFirstChunk) {
+            hasHaptickedFirstChunk = true
+            haptics.performHapticFeedback(
+                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+            )
+        }
+    }
+
+    if (isFullscreen) {
+        FullscreenVideo(
+            state = state,
+            onExitFullscreen = { isFullscreen = false },
+        )
+        return
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+    Scaffold(
+        topBar = {
+            HalalifyTopBar(
+                title = when {
+                    !state.isComplete -> "Preview"
+                    state.removeMusic -> "Halalified ✓"
+                    else -> "Downloaded ✓"
+                },
+                subtitle = state.videoTitle.takeIf { it.isNotBlank() },
+                onBack = onBack,
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { paddingValues ->
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(top = 16.dp),
+            .padding(paddingValues),
     ) {
-        // Top bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = HalalifyTextPrimary,
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = when {
-                        !state.isComplete -> "Preview"
-                        state.removeMusic -> "Halalified ✓"
-                        else -> "Downloaded ✓"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    color = if (state.isComplete) HalalifySuccess else HalalifyAccent,
-                )
-                if (state.videoTitle.isNotBlank()) {
-                    Text(
-                        text = state.videoTitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = HalalifyTextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-
         // Video player
         if (state.playablePaths.isNotEmpty()) {
             ChunkPlaylistPlayer(
                 filePaths = state.playablePaths,
                 onChunkChanged = {},
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = { isFullscreen = !isFullscreen },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -187,25 +219,6 @@ internal fun ResultScreen(
                 isExporting = isExporting,
             )
 
-            if (!state.isComplete) {
-                Button(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = HalalifyTextPrimary,
-                    ),
-                ) {
-                    Text(
-                        text = "Back to progress",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                    )
-                }
-            }
-
             if (state.isComplete) {
                 Button(
                     onClick = onSaveToGallery,
@@ -237,36 +250,15 @@ internal fun ResultScreen(
                     )
                 }
             }
-
-            Button(
-                onClick = {
-                    if (shouldWarnBeforeDiscarding) {
-                        showDiscardDialog = true
-                    } else {
-                        onHalalifyAnother()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = HalalifyAccent,
-                    contentColor = HalalifyTextOnAccent,
-                ),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Halalify Another",
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                )
-            }
         }
+    }
+    }
+        CelebrationOverlay(
+            visible = showCelebration,
+            modifier = Modifier
+                .fillMaxSize()
+                .align(Alignment.TopCenter),
+        )
     }
 
     if (showDiscardDialog) {
@@ -364,6 +356,54 @@ private fun ResultStorageStatus(
                 style = MaterialTheme.typography.bodySmall,
                 color = HalalifyTextSecondary,
             )
+        }
+    }
+}
+
+@Composable
+private fun FullscreenVideo(
+    state: ProcessingState,
+    onExitFullscreen: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (state.playablePaths.isNotEmpty()) {
+            ChunkPlaylistPlayer(
+                filePaths = state.playablePaths,
+                onChunkChanged = {},
+                isFullscreen = true,
+                onToggleFullscreen = onExitFullscreen,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SystemBarsVisibilityEffect(isFullscreen: Boolean, context: android.content.Context) {
+    val window = (context as? android.app.Activity)?.window
+    DisposableEffect(isFullscreen, window) {
+        if (window == null) {
+            onDispose {}
+        } else {
+            val controller = androidx.core.view.WindowCompat.getInsetsController(
+                window,
+                window.decorView,
+            )
+            if (isFullscreen) {
+                controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+            onDispose {
+                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
         }
     }
 }

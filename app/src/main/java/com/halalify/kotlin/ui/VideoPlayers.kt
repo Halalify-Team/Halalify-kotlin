@@ -16,11 +16,17 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.io.File
 
 @Composable
-internal fun LocalVideoPlayer(filePath: String, modifier: Modifier = Modifier) {
+internal fun LocalVideoPlayer(
+    filePath: String,
+    modifier: Modifier = Modifier,
+    isFullscreen: Boolean = false,
+    onToggleFullscreen: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val player = remember(filePath) {
         ExoPlayer.Builder(context).build().apply {
@@ -41,11 +47,18 @@ internal fun LocalVideoPlayer(filePath: String, modifier: Modifier = Modifier) {
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 useController = true
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 this.player = player
+                if (onToggleFullscreen != null) {
+                    setFullscreenButtonClickListener { isFs ->
+                        onToggleFullscreen()
+                    }
+                }
             }
         },
         update = { playerView ->
             playerView.player = player
+            playerView.setFullscreenButtonState(isFullscreen)
         },
     )
 }
@@ -56,6 +69,8 @@ internal fun ChunkPlaylistPlayer(
     filePaths: List<String>,
     onChunkChanged: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    isFullscreen: Boolean = false,
+    onToggleFullscreen: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val player = remember {
@@ -126,12 +141,19 @@ internal fun ChunkPlaylistPlayer(
             PlayerView(viewContext).apply {
                 useController = true
                 setShowMultiWindowTimeBar(true)
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 this.player = player
+                if (onToggleFullscreen != null) {
+                    setFullscreenButtonClickListener { isFs ->
+                        onToggleFullscreen()
+                    }
+                }
             }
         },
         update = { playerView ->
             playerView.player = player
             playerView.setShowMultiWindowTimeBar(true)
+            playerView.setFullscreenButtonState(isFullscreen)
         },
     )
 }

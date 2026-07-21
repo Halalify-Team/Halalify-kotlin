@@ -45,6 +45,8 @@ internal data class DirectMediaSession(
 internal data class YoutubeFormatCatalog(
     val metadata: VideoMetadata,
     val sessionsByQuality: Map<VideoQuality, DirectMediaSession>,
+    val channelName: String = "",
+    val thumbnailUrl: String = "",
 ) {
     val availableQualities: List<VideoQuality>
         get() = sessionsByQuality.keys.sortedBy { it.maxHeight }

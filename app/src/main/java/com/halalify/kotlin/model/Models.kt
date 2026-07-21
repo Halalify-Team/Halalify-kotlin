@@ -84,6 +84,9 @@ enum class BlurStrictness(val label: String, val femaleBlurThreshold: Float, val
 data class FormatDiscoveryState(
     val url: String = "",
     val videoTitle: String = "",
+    val channelName: String = "",
+    val thumbnailUrl: String = "",
+    val durationSeconds: Int = 0,
     val availableQualities: List<VideoQuality> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -108,6 +111,7 @@ enum class ChunkPhase {
     CLEANING_BACKEND,
     MUXING,
     DONE,
+    SKIPPED,
     ERROR,
 }
 
@@ -136,4 +140,14 @@ data class ProcessingState(
     val blurWomen: Boolean = false,
     val quality: VideoQuality = VideoQuality.P360,
     val blurStrictness: BlurStrictness = BlurStrictness.BALANCED,
+    /**
+     * Elapsed realtime millis when the current processing job started.
+     * Used to project ETA from measured chunk throughput.
+     */
+    val processingStartedAt: Long = 0L,
+    /**
+     * When a chunk fails and the pipeline pauses, this is the failed chunk index.
+     * Null when processing is running, complete, or fully failed without partial output.
+     */
+    val pausedChunkIndex: Int? = null,
 )

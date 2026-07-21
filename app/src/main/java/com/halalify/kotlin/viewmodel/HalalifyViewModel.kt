@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -346,6 +347,9 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
             _formatDiscovery.value = FormatDiscoveryState(
                 url = url,
                 videoTitle = catalog.metadata.title,
+                channelName = catalog.channelName,
+                thumbnailUrl = catalog.thumbnailUrl,
+                durationSeconds = catalog.metadata.durationSeconds,
                 availableQualities = catalog.availableQualities,
             )
             return
@@ -504,6 +508,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         blurWomen: Boolean = false,
         quality: VideoQuality = VideoQuality.P360,
         blurStrictness: BlurStrictness = BlurStrictness.BALANCED,
+        resumeFromChunkIndex: Int = 0,
+        resumeState: ProcessingState? = null,
     ) {
         val url = youtubeUrl.trim()
         val baseUrl = _backendUrl.value.trim()
@@ -522,14 +528,29 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
         processingJob = viewModelScope.launch {
             perf("processing-start")
             _screen.value = if (removeMusic || blurWomen) AppScreen.PROCESSING else AppScreen.DOWNLOAD
-            _processing.value = ProcessingState(
+            val initialState = resumeState?.let { resume ->
+                resume.copy(
+                    pausedChunkIndex = null,
+                    errorMessage = null,
+                    currentPhaseLabel = if (resumeFromChunkIndex > 0) "Resuming..." else "Initializing...",
+                    chunks = resume.chunks.map { chunk ->
+                        when {
+                            chunk.index < resumeFromChunkIndex -> chunk
+                            chunk.phase == ChunkPhase.SKIPPED -> chunk
+                            else -> chunk.copy(phase = ChunkPhase.WAITING, errorMessage = null)
+                        }
+                    },
+                )
+            } ?: ProcessingState(
                 originalUrl = url,
                 currentPhaseLabel = "Initializing...",
                 removeMusic = removeMusic,
                 blurWomen = blurWomen,
                 quality = quality,
                 blurStrictness = blurStrictness,
+                processingStartedAt = SystemClock.elapsedRealtime(),
             )
+            _processing.value = initialState
             publishProcessingNotification()
             clearPlaybackScratch(activity)
 
@@ -599,8 +620,14 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 val chunkPlans = ChunkPlanner.buildPlans(metadata.durationSeconds)
                 val totalChunks = chunkPlans.size
 
+                val existingChunks = initialState.chunks
                 val initialChunks = (0 until totalChunks).map { i ->
-                    ChunkState(index = i, totalChunks = totalChunks)
+                    val existing = existingChunks.find { it.index == i }
+                    when {
+                        i < resumeFromChunkIndex -> existing ?: ChunkState(index = i, totalChunks = totalChunks)
+                        existing?.phase == ChunkPhase.SKIPPED -> existing
+                        else -> ChunkState(index = i, totalChunks = totalChunks)
+                    }
                 }
                 _processing.update {
                     it.copy(
@@ -619,16 +646,23 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 val videoRangeSemaphore = Semaphore(2)
                 val backendSemaphore = Semaphore(1)
                 val muxSemaphore = Semaphore(1)
-                val firstChunkPlayable = CompletableDeferred<Unit>()
-                val playableSegments = mutableListOf<String>()
+                val firstChunkPlayable = if (initialState.firstChunkReady) {
+                    CompletableDeferred(Unit).apply { complete(Unit) }
+                } else {
+                    CompletableDeferred<Unit>()
+                }
+                val playableSegments = initialState.playablePaths.toMutableList()
 
                 supervisorScope {
                     // Coordinated lazy refresh: when a chunk download hits 403 (YouTube
                     // signed URL expired) only one coroutine refetches the catalog;
                     // others reuse the refreshed session by snapshot identity.
                     val mediaRefreshMutex = Mutex()
-                    val videoChunkJobs = chunkPlans.map { plan ->
-                        async {
+                    val videoChunkJobs = Array<Deferred<String>?>(totalChunks) { null }
+                    val chunkJobs = Array<Deferred<Result<CleanChunkResult>>?>(totalChunks) { null }
+                    for (i in resumeFromChunkIndex until totalChunks) {
+                        val plan = chunkPlans[i]
+                        videoChunkJobs[i] = async {
                             if (plan.index > 1) firstChunkPlayable.await()
                             videoRangeSemaphore.withPermit {
                                 var attempt = 0
@@ -662,9 +696,7 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     .also { perf("chunk-${plan.index}-video-ready") }
                             }
                         }
-                    }
-                    val chunkJobs = chunkPlans.map { plan ->
-                        async {
+                        chunkJobs[i] = async {
                             try {
                                 if (plan.index > 1) firstChunkPlayable.await()
                                 updateChunk(plan.index, ChunkPhase.EXTRACTING_AUDIO)
@@ -737,12 +769,12 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                                     audioChunkPath
                                 }
 
-                                 Result.success(
-                                     CleanChunkResult(
-                                         index = plan.index,
-                                         cleanAudioPath = cleanPath,
-                                     )
-                                 )
+                                Result.success(
+                                    CleanChunkResult(
+                                        index = plan.index,
+                                        cleanAudioPath = cleanPath,
+                                    )
+                                )
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (error: Throwable) {
@@ -752,36 +784,35 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         }
                     }
 
-                    for (index in 0 until totalChunks) {
-                        val result = chunkJobs[index].await().getOrElse { chunkError ->
-                            val message = "Chunk ${index + 1}/$totalChunks failed: ${chunkError.userFacingMessage()}"
-                            chunkJobs.drop(index + 1).forEach { pendingJob ->
-                                pendingJob.cancel()
-                            }
-                            videoChunkJobs.drop(index).forEach { pendingJob ->
-                                pendingJob.cancel()
-                            }
-                            updateChunk(index, ChunkPhase.ERROR, chunkError.userFacingMessage())
-                            _processing.update { state ->
-                                state.copy(
-                                    playablePaths = playableSegments.toList(),
-                                    firstChunkReady = playableSegments.isNotEmpty(),
-                                    currentPhaseLabel = if (playableSegments.isNotEmpty()) {
-                                        "Stopped after ${playableSegments.size}/$totalChunks chunks"
-                                    } else {
-                                        "Failed"
-                                    },
-                                    errorMessage = message,
-                                )
-                            }
-                            throw PartialProcessingException(message)
+                    fun pauseOnChunkError(index: Int, cause: Throwable) {
+                        for (i in index + 1 until totalChunks) {
+                            chunkJobs[i]?.cancel()
+                            videoChunkJobs[i]?.cancel()
+                        }
+                        videoChunkJobs[index]?.cancel()
+                        updateChunk(index, ChunkPhase.ERROR, cause.userFacingMessage())
+                        _processing.update { state ->
+                            state.copy(
+                                playablePaths = playableSegments.toList(),
+                                firstChunkReady = playableSegments.isNotEmpty(),
+                                currentPhaseLabel = "Chunk ${index + 1} failed — tap to retry or skip",
+                                errorMessage = cause.userFacingMessage(),
+                                pausedChunkIndex = index,
+                            )
+                        }
+                    }
+
+                    for (index in resumeFromChunkIndex until totalChunks) {
+                        val result = chunkJobs[index]!!.await().getOrElse { chunkError ->
+                            pauseOnChunkError(index, chunkError)
+                            return@supervisorScope
                         }
                         val plan = chunkPlans[index]
 
                         updateChunk(index, ChunkPhase.MUXING)
                         updatePhase("Chunk ${index + 1}/$totalChunks: preparing video preview...")
                         val playablePath = try {
-                            val videoSegmentPath = videoChunkJobs[index].await()
+                            val videoSegmentPath = videoChunkJobs[index]!!.await()
                             var preparedVideoPath = videoSegmentPath
                             try {
                                 if (blurWomen) {
@@ -817,8 +848,8 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (error: Throwable) {
-                            updateChunk(index, ChunkPhase.ERROR, error.userFacingMessage())
-                            error("Chunk ${index + 1}/$totalChunks preview failed: ${error.userFacingMessage()}")
+                            pauseOnChunkError(index, error)
+                            return@supervisorScope
                         }
 
                         playableSegments += playablePath
@@ -842,6 +873,11 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                             _screen.value = AppScreen.RESULT
                         }
                     }
+                }
+
+                if (_processing.value.pausedChunkIndex != null) {
+                    ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
+                    return@launch
                 }
 
                 // The clean playable chunks are the final source. Joining them avoids
@@ -898,6 +934,45 @@ internal class HalalifyViewModel(application: Application) : AndroidViewModel(ap
                 ProcessingForegroundService.finish(getApplication<Application>(), _processing.value)
             }
         }
+    }
+
+    fun retryFailedChunk(activity: ComponentActivity) {
+        val state = _processing.value
+        val index = state.pausedChunkIndex ?: return
+        processingJob?.cancel()
+        startProcessing(
+            activity = activity,
+            youtubeUrl = state.originalUrl,
+            removeMusic = state.removeMusic,
+            blurWomen = state.blurWomen,
+            quality = state.quality,
+            blurStrictness = state.blurStrictness,
+            resumeFromChunkIndex = index,
+            resumeState = state,
+        )
+    }
+
+    fun skipFailedChunk(activity: ComponentActivity) {
+        val state = _processing.value
+        val index = state.pausedChunkIndex ?: return
+        val updatedChunks = state.chunks.map { chunk ->
+            if (chunk.index == index) {
+                chunk.copy(phase = ChunkPhase.SKIPPED, errorMessage = null)
+            } else {
+                chunk
+            }
+        }
+        processingJob?.cancel()
+        startProcessing(
+            activity = activity,
+            youtubeUrl = state.originalUrl,
+            removeMusic = state.removeMusic,
+            blurWomen = state.blurWomen,
+            quality = state.quality,
+            blurStrictness = state.blurStrictness,
+            resumeFromChunkIndex = index + 1,
+            resumeState = state.copy(chunks = updatedChunks),
+        )
     }
 
     private suspend fun downloadOriginalVideo(

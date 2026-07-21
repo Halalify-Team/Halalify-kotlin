@@ -10,10 +10,18 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
@@ -23,6 +31,8 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.model.AppScreen
+import com.halalify.kotlin.model.BlurStrictness
+import com.halalify.kotlin.model.VideoQuality
 import com.halalify.kotlin.ui.screens.InputScreen
 import com.halalify.kotlin.ui.screens.DownloadScreen
 import com.halalify.kotlin.ui.screens.ProfileScreen
@@ -30,7 +40,16 @@ import com.halalify.kotlin.ui.screens.ProcessingScreen
 import com.halalify.kotlin.ui.screens.ResultScreen
 import com.halalify.kotlin.ui.screens.LibraryScreen
 import com.halalify.kotlin.viewmodel.HalalifyViewModel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+private data class PendingProcessing(
+    val url: String,
+    val removeMusic: Boolean,
+    val blurWomen: Boolean,
+    val quality: VideoQuality,
+    val blurStrictness: BlurStrictness,
+)
 
 @Composable
 internal fun AppNavigation(
@@ -52,8 +71,10 @@ internal fun AppNavigation(
     val isExporting by viewModel.isExporting.collectAsState()
     val libraryStatus by viewModel.libraryStatus.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+    var pendingProcessingAfterSignIn by remember { mutableStateOf<PendingProcessing?>(null) }
 
     fun launchGoogleSignIn() {
+        val params = pendingProcessingAfterSignIn
         val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
         if (webClientId.isBlank()) {
             Toast.makeText(
@@ -91,6 +112,20 @@ internal fun AppNavigation(
                     Toast.makeText(activity, "Google sign-in returned an empty token.", Toast.LENGTH_LONG).show()
                 } else {
                     viewModel.googleLogin(idToken)
+                    if (params != null) {
+                        snapshotFlow { isLoggingIn }
+                            .first { !it }
+                        if (sessionToken.isNotBlank()) {
+                            viewModel.startProcessing(
+                                activity = activity,
+                                youtubeUrl = params.url,
+                                removeMusic = params.removeMusic,
+                                blurWomen = params.blurWomen,
+                                quality = params.quality,
+                                blurStrictness = params.blurStrictness,
+                            )
+                        }
+                    }
                 }
             } catch (e: GetCredentialCancellationException) {
                 viewModel.cancelGoogleSignIn()
@@ -108,6 +143,8 @@ internal fun AppNavigation(
                     "Google sign-in failed: $details",
                     Toast.LENGTH_LONG,
                 ).show()
+            } finally {
+                pendingProcessingAfterSignIn = null
             }
         }
     }
@@ -123,6 +160,27 @@ internal fun AppNavigation(
         }
     }
 
+    val showBottomBar = currentScreen in setOf(
+        com.halalify.kotlin.model.AppScreen.INPUT,
+        com.halalify.kotlin.model.AppScreen.LIBRARY,
+        com.halalify.kotlin.model.AppScreen.PROFILE,
+        com.halalify.kotlin.model.AppScreen.PROCESSING,
+        com.halalify.kotlin.model.AppScreen.DOWNLOAD,
+    )
+
+    Scaffold(
+        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (showBottomBar) {
+                HalalifyBottomBar(
+                    currentScreen = currentScreen,
+                    onNavigateToInput = { viewModel.resetToInput(discardTemporaryResult = false) },
+                    onNavigateToLibrary = { viewModel.navigateToLibrary() },
+                    onNavigateToProfile = { viewModel.navigateToProfile() },
+                )
+            }
+        },
+    ) { innerPadding ->
     AnimatedContent(
         targetState = currentScreen,
         transitionSpec = {
@@ -138,6 +196,7 @@ internal fun AppNavigation(
             }
         },
         label = "screenTransition",
+        modifier = androidx.compose.ui.Modifier.fillMaxSize().padding(innerPadding),
     ) { screen ->
         when (screen) {
             AppScreen.INPUT -> InputScreen(
@@ -148,12 +207,22 @@ internal fun AppNavigation(
                 loginStatus = loginStatus,
                 isLoggingIn = isLoggingIn,
                 formatDiscovery = formatDiscovery,
+                quotaState = quotaState,
                 showDeveloperControls = BuildConfig.DEBUG,
                 onBackendUrlChange = viewModel::updateBackendUrl,
                 onDevEmailChange = viewModel::updateDevEmail,
                 onSessionTokenChange = viewModel::updateSessionToken,
                 onDevLogin = viewModel::devLogin,
-                onGoogleLogin = ::launchGoogleSignIn,
+                onSignInToProcess = { url, removeMusic, blurWomen, quality, blurStrictness ->
+                    pendingProcessingAfterSignIn = PendingProcessing(
+                        url = url,
+                        removeMusic = removeMusic,
+                        blurWomen = blurWomen,
+                        quality = quality,
+                        blurStrictness = blurStrictness,
+                    )
+                    launchGoogleSignIn()
+                },
                 onSharedYoutubeUrlConsumed = viewModel::consumeSharedYoutubeUrl,
                 onDiscoverFormats = { url ->
                     viewModel.discoverFormats(activity, url)
@@ -178,6 +247,8 @@ internal fun AppNavigation(
                     }
                 },
                 onRetry = { viewModel.resetToInput() },
+                onRetryFailedChunk = { viewModel.retryFailedChunk(activity) },
+                onSkipFailedChunk = { viewModel.skipFailedChunk(activity) },
             )
             AppScreen.DOWNLOAD -> DownloadScreen(
                 state = processingState,
@@ -238,5 +309,6 @@ internal fun AppNavigation(
                 onBack = { viewModel.resetToInput(discardTemporaryResult = false) },
             )
         }
+    }
     }
 }

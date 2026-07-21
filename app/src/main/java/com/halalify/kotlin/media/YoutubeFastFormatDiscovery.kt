@@ -126,6 +126,9 @@ private fun queryClient(videoId: String, client: FastClient): YoutubeFormatCatal
                 ?.takeIf { it > 0 }
                 ?: error("${client.name} response did not include a valid duration."),
         )
+        val channelName = details.optString("author")
+            .ifBlank { details.optString("channelId") }
+        val thumbnailUrl = extractThumbnailUrl(details)
         val streamingData = json.optJSONObject("streamingData")
             ?: error("${client.name} response did not include streaming data.")
         val allFormats = buildList {
@@ -200,8 +203,20 @@ private fun queryClient(videoId: String, client: FastClient): YoutubeFormatCatal
                     "${quality.label}(v=${session.video.formatId},a=${session.audio.formatId})"
                 }
         )
-        YoutubeFormatCatalog(metadata = metadata, sessionsByQuality = sessions)
+        YoutubeFormatCatalog(
+            metadata = metadata,
+            sessionsByQuality = sessions,
+            channelName = channelName,
+            thumbnailUrl = thumbnailUrl,
+        )
     }
+}
+
+private fun extractThumbnailUrl(details: JSONObject): String {
+    val thumbnails = details.optJSONObject("thumbnail")?.optJSONArray("thumbnails") ?: return ""
+    return (thumbnails.length() - 1 downTo 0).firstNotNullOfOrNull { index ->
+        thumbnails.optJSONObject(index)?.optString("url")?.takeIf { it.startsWith("http") }
+    } ?: ""
 }
 
 private fun extractYoutubeVideoId(url: String): String? {

@@ -14,11 +14,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VpnKey
@@ -27,7 +27,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -36,8 +35,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.halalify.kotlin.model.QuotaState
+import com.halalify.kotlin.ui.components.HalalifyTopBar
 import com.halalify.kotlin.ui.theme.HalalifyAccent
 import com.halalify.kotlin.ui.theme.HalalifyDarkCard
 import com.halalify.kotlin.ui.theme.HalalifySuccess
@@ -54,7 +52,6 @@ import com.halalify.kotlin.ui.theme.HalalifyTextSecondary
 import com.halalify.kotlin.ui.theme.HalalifyTextTertiary
 import com.halalify.kotlin.ui.theme.HalalifyWarning
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ProfileScreen(
     backendUrl: String,
@@ -77,26 +74,9 @@ internal fun ProfileScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Profile",
-                        fontWeight = FontWeight.Bold,
-                        color = HalalifyTextPrimary,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = HalalifyTextPrimary,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
+            HalalifyTopBar(
+                title = "Profile",
+                onBack = onBack,
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -186,9 +166,9 @@ private fun AccountCard(
                     )
                 }
                 Icon(
-                    imageVector = Icons.Default.CheckCircle,
+                    imageVector = if (isSignedIn) Icons.Default.CheckCircle else Icons.Default.Info,
                     contentDescription = null,
-                    tint = if (isSignedIn) HalalifySuccess else HalalifyTextTertiary,
+                    tint = if (isSignedIn) HalalifySuccess else HalalifyWarning,
                 )
             }
 

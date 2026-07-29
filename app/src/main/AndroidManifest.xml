@@ -1,10 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET" />
-
     <application
-        android:allowBackup="true"
-        android:label="Halalify Kotlin"
-        android:usesCleartextTraffic="true"
+        android:allowBackup="false"
+        android:label="Halalify"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"

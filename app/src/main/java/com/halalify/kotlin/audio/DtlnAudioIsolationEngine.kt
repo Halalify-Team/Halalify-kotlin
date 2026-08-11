@@ -226,7 +226,7 @@ internal class DtlnAudioIsolationEngine(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val FIRST_MODEL_ASSET = "audio/dtln/model_1.tflite"
         const val SECOND_MODEL_ASSET = "audio/dtln/model_2.tflite"
         const val FRAME_SAMPLES = 16_000

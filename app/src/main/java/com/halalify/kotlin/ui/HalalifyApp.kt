@@ -3,7 +3,6 @@ package com.halalify.kotlin.ui
 import android.graphics.BitmapFactory
 import android.widget.ImageView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,24 +10,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,11 +31,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.halalify.kotlin.appselection.AppTarget
-import com.halalify.kotlin.appselection.loadLaunchableApps
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurTarget
@@ -58,16 +47,13 @@ private val TextMuted = Color(0xFFB8C8C5)
 internal fun HalalifyApp(
     initialSettings: BlurSettings,
     onSave: (BlurSettings) -> Unit,
-    onStartCapture: (AppTarget) -> Unit,
+    onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
 ) {
     var target by remember { mutableStateOf(initialSettings.target) }
     var blurImages by remember { mutableStateOf(initialSettings.blurImages) }
     var blurVideos by remember { mutableStateOf(initialSettings.blurVideos) }
-    var showApps by remember { mutableStateOf(false) }
     val captureState by CaptureSessionStore.state.collectAsState()
-    val context = LocalContext.current
-    val apps = remember { loadLaunchableApps(context.applicationContext) }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Background) {
@@ -82,7 +68,7 @@ internal fun HalalifyApp(
                 }
                 item {
                     SettingsCard("Capture session") {
-                        Text(if (captureState.isCapturing) "● CAPTURE ACTIVE" else "● READY", color = if (captureState.isCapturing) Accent else TextMuted)
+                        Text(if (captureState.isCapturing) "● MONITORING ACTIVE" else "● READY", color = if (captureState.isCapturing) Accent else TextMuted)
                         Text(captureState.targetLabel ?: captureState.message, color = TextPrimary, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                         if (captureState.targetLabel != null) Text(captureState.message, color = TextMuted, style = MaterialTheme.typography.bodySmall)
                         if (captureState.isCapturing) Button(
@@ -96,18 +82,19 @@ internal fun HalalifyApp(
                     item { ScreenPreview(jpeg) }
                 }
                 item {
-                    SettingsCard("Choose an app") {
-                        Text("Select an app to monitor its audio and screen.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-                        OutlinedButton(
-                            onClick = { showApps = true },
+                    SettingsCard("Start monitoring") {
+                        Text(
+                            "Android will securely ask which app or screen you want to share.",
+                            color = TextMuted,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Button(
+                            onClick = onStartCapture,
                             enabled = !captureState.isCapturing,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Accent,
-                                disabledContentColor = TextMuted,
-                            ),
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Background),
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         ) {
-                            Text("Show monitorable apps")
+                            Text("Start monitoring")
                         }
                     }
                 }
@@ -137,41 +124,6 @@ internal fun HalalifyApp(
         }
     }
 
-    if (showApps) {
-        AlertDialog(
-            onDismissRequest = { showApps = false },
-            title = { Text("Choose an app to monitor", color = TextPrimary) },
-            text = {
-                Column {
-                    Text(
-                        "Android may deny playback audio from apps that opt out.",
-                        color = TextMuted,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 10.dp),
-                    )
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 380.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(apps, key = { it.packageName }) { app ->
-                            AppRow(app, !captureState.isCapturing) {
-                                showApps = false
-                                onStartCapture(app)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showApps = false }) {
-                    Text("Close", color = Accent)
-                }
-            },
-            containerColor = SurfaceDark,
-            titleContentColor = TextPrimary,
-            textContentColor = TextMuted,
-        )
-    }
 }
 
 @Composable private fun ScreenPreview(jpeg: ByteArray) = SettingsCard("Live screen preview") {
@@ -181,22 +133,6 @@ internal fun HalalifyApp(
         modifier = Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(10.dp)),
     )
     Text("One low-resolution frame per second; not persisted or uploaded.", color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 7.dp))
-}
-
-@Composable private fun AppRow(app: AppTarget, enabled: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(SurfaceDark.copy(alpha = if (enabled) 1f else .55f))
-            .clickable(enabled = enabled, onClick = onClick).padding(14.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AndroidView(factory = { ImageView(it).apply { setImageDrawable(app.icon) } }, modifier = Modifier.size(42.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(app.label, color = TextPrimary, style = MaterialTheme.typography.titleSmall)
-            Text(app.packageName, color = TextMuted, style = MaterialTheme.typography.bodySmall)
-            Text("UID: ${app.uid}", color = TextMuted, style = MaterialTheme.typography.labelSmall)
-        }
-        Text("Capture", color = if (enabled) Accent else TextMuted, style = MaterialTheme.typography.labelLarge)
-    }
 }
 
 @Composable private fun SettingsCard(title: String, content: @Composable () -> Unit) {

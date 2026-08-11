@@ -50,25 +50,23 @@ internal class AudioCaptureService : Service() {
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
         @Suppress("DEPRECATION")
         val data = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
-        val targetUid = intent.getIntExtra(EXTRA_TARGET_UID, -1)
-        val targetLabel = intent.getStringExtra(EXTRA_TARGET_LABEL).orEmpty()
-        if (resultCode == Int.MIN_VALUE || data == null || targetUid < 0) {
+        if (resultCode == Int.MIN_VALUE || data == null) {
             CaptureSessionStore.update(message = "Capture session data is invalid.")
             stopSelf()
             return
         }
-        startForegroundNotification(targetLabel)
+        startForegroundNotification()
         try {
             val mediaProjection = getSystemService(MediaProjectionManager::class.java)
                 .getMediaProjection(resultCode, data) ?: error("MediaProjection was not created.")
             mediaProjection.registerCallback(projectionCallback, null)
             projection = mediaProjection
             startScreenPreview(mediaProjection)
-            startAudioPassThrough(mediaProjection, targetUid)
+            startAudioPassThrough(mediaProjection)
             CaptureSessionStore.update(
                 isCapturing = true,
-                targetLabel = targetLabel,
-                message = "Capturing screen and audio. A silent audio stream means the selected app blocks playback capture.",
+                targetLabel = "Shared app or screen",
+                message = "Monitoring the content selected in Android's secure sharing dialog.",
             )
         } catch (error: Throwable) {
             stopCapture("Could not start capture: ${error.message ?: error.javaClass.simpleName}")
@@ -76,11 +74,10 @@ internal class AudioCaptureService : Service() {
         }
     }
 
-    private fun startAudioPassThrough(mediaProjection: MediaProjection, uid: Int) {
+    private fun startAudioPassThrough(mediaProjection: MediaProjection) {
         val inputFormat = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
         val config = android.media.AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-            .addMatchingUid(uid)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .build()
@@ -163,7 +160,7 @@ internal class AudioCaptureService : Service() {
         CaptureSessionStore.update(isCapturing = false, targetLabel = null, message = message, previewJpeg = null)
     }
 
-    private fun startForegroundNotification(label: String) {
+    private fun startForegroundNotification() {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Capture", NotificationManager.IMPORTANCE_LOW),
@@ -171,7 +168,7 @@ internal class AudioCaptureService : Service() {
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) android.app.Notification.Builder(this, CHANNEL_ID)
         else android.app.Notification.Builder(this)
         notification.setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Halalify capture is active")
-            .setContentText("Capturing $label").setOngoing(true)
+            .setContentText("Monitoring shared content").setOngoing(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         else startForeground(NOTIFICATION_ID, notification.build())
     }
@@ -184,8 +181,6 @@ internal class AudioCaptureService : Service() {
         const val ACTION_STOP = "com.halalify.kotlin.STOP_CAPTURE"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_PROJECTION_DATA = "projection_data"
-        const val EXTRA_TARGET_UID = "target_uid"
-        const val EXTRA_TARGET_LABEL = "target_label"
         private const val CHANNEL_ID = "halalify_capture"
         private const val NOTIFICATION_ID = 41
         private const val SAMPLE_RATE = 48_000

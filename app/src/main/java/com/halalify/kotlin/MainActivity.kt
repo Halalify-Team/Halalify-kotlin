@@ -10,18 +10,14 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import com.halalify.kotlin.appselection.AppTarget
 import com.halalify.kotlin.capture.AudioCaptureService
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import com.halalify.kotlin.ui.HalalifyApp
 
 class MainActivity : ComponentActivity() {
-    private var pendingTarget: AppTarget? = null
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val target = pendingTarget
-        pendingTarget = null
-        if (result.resultCode != Activity.RESULT_OK || result.data == null || target == null) {
+        if (result.resultCode != Activity.RESULT_OK || result.data == null) {
             CaptureSessionStore.update(message = "Screen and audio capture permission was not granted.")
             return@registerForActivityResult
         }
@@ -29,14 +25,11 @@ class MainActivity : ComponentActivity() {
             action = AudioCaptureService.ACTION_START
             putExtra(AudioCaptureService.EXTRA_RESULT_CODE, result.resultCode)
             putExtra(AudioCaptureService.EXTRA_PROJECTION_DATA, result.data)
-            putExtra(AudioCaptureService.EXTRA_TARGET_UID, target.uid)
-            putExtra(AudioCaptureService.EXTRA_TARGET_LABEL, target.label)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent) else startService(serviceIntent)
     }
     private val recordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestProjection() else {
-            pendingTarget = null
             CaptureSessionStore.update(message = "Audio permission was denied.")
         }
     }
@@ -55,12 +48,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startCapture(target: AppTarget) {
+    private fun startCapture() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             CaptureSessionStore.update(message = "This feature needs Android 10 or newer.")
             return
         }
-        pendingTarget = target
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) requestProjection()
         else recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }

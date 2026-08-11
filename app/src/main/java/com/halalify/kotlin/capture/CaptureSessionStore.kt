@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 internal data class CaptureUiState(
     val isCapturing: Boolean = false,
     val targetLabel: String? = null,
-    val message: String = "Choose an app to begin.",
+    val message: String = "Tap Start monitoring to begin.",
     val previewJpeg: ByteArray? = null,
 )
 

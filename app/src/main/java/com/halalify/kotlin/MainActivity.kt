@@ -159,7 +159,9 @@ class MainActivity : ComponentActivity() {
             val projectionManager = getSystemService(MediaProjectionManager::class.java)
             val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 projectionManager.createScreenCaptureIntent(
-                    MediaProjectionConfig.createConfigForDefaultDisplay(),
+                    // Let Android show both choices: the entire display or one app.
+                    // Requesting the default-display config disables the app option.
+                    MediaProjectionConfig.createConfigForUserChoice(),
                 )
             } else {
                 projectionManager.createScreenCaptureIntent()

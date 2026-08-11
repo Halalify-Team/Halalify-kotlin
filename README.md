@@ -29,6 +29,8 @@ The verified deployed model, its machine-readable contract, provenance notes, an
 
 The playback-capture architecture, exact TFLite waveform contract, integration point, and Android platform limits are documented in [`docs/AUDIO_AI_ENGINE_PLAN_AR.md`](docs/AUDIO_AI_ENGINE_PLAN_AR.md).
 
+The downloaded YAMNet and DTLN models, licensed starter dataset, reproducible preparation scripts, local Python environment instructions, and fine-tuning/export commands are documented in [`training/audio/README_AR.md`](training/audio/README_AR.md).
+
 ## Verification
 
 Run the following from the repository root:

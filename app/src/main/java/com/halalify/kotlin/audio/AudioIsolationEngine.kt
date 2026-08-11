@@ -10,6 +10,10 @@ internal data class AudioIsolationResult(
     val musicDetected: Boolean,
     /** PCM16 mono speech stem returned by the model. */
     val speechPcm: ShortArray,
+    /** True when a separator actually produced the speech stem (rather than passthrough). */
+    val isolationActive: Boolean = true,
+    /** Human-readable detector label, when a classifier is used. */
+    val detectorLabel: String? = null,
 )
 
 internal interface AudioFrameProcessor : Closeable {

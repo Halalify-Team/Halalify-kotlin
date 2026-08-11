@@ -44,6 +44,7 @@ internal class AudioCaptureService : Service() {
     private var audioMonitor: PlaybackAudioMonitor? = null
     private var audioFocusController: PlaybackAudioFocusController? = null
     @Volatile private var musicPauseRequested = false
+    @Volatile private var musicMuted = false
     private var deviceOverlay: DeviceBlurOverlay? = null
     private var blurStyle = BlurStyle.BLUR
     private val protectionTracker = ProtectionTracker()
@@ -213,18 +214,23 @@ internal class AudioCaptureService : Service() {
         audioFocusController?.close()
         audioFocusController = PlaybackAudioFocusController(applicationContext)
         musicPauseRequested = false
+        musicMuted = false
         PlaybackAudioMonitor(
             mediaProjection = mediaProjection,
             processor = processor,
             onMusicDetected = {
-                musicPauseRequested = audioFocusController?.requestPause() == true
-                CaptureSessionStore.update(
-                    audioStatus = if (musicPauseRequested) {
-                        "Audio: music confirmed; pause request sent to the playing media app."
-                    } else {
-                        "Audio: music confirmed; the media app did not grant an audio-focus pause."
-                    },
-                )
+                val blockResult = audioFocusController?.blockMusic()
+                musicPauseRequested = blockResult?.pauseRequested == true
+                musicMuted = blockResult?.mediaMuted == true
+                val status = when {
+                    musicMuted && musicPauseRequested ->
+                        "Audio: music confirmed; media sound muted and pause requested."
+                    musicMuted -> "Audio: music confirmed; media sound muted on this device."
+                    musicPauseRequested -> "Audio: music confirmed; pause request sent to the playing media app."
+                    else -> "Audio: music confirmed, but the device media stream could not be muted."
+                }
+                CaptureSessionStore.update(audioStatus = status)
+                updateForegroundNotification(status)
             },
             onEvent = { event ->
                 val status = when (event) {
@@ -241,7 +247,8 @@ internal class AudioCaptureService : Service() {
                     is AudioMonitorEvent.Isolated -> if (event.musicDetected) {
                         val separator = if (event.isolationActive) "DTLN speech stem produced" else "isolation unavailable"
                         val pause = if (musicPauseRequested) "; pause request sent" else ""
-                        "Audio: music detected (${event.musicScore.asPercent()}, ${event.detectorLabel ?: "music"}); $separator$pause."
+                        val mute = if (musicMuted) "; media sound muted" else ""
+                        "Audio: music detected (${event.musicScore.asPercent()}, ${event.detectorLabel ?: "music"}); $separator$mute$pause."
                     } else {
                         val separator = if (event.isolationActive) "DTLN ready" else "passthrough"
                         "Audio: no significant music (${event.musicScore.asPercent()}); $separator."
@@ -308,6 +315,7 @@ internal class AudioCaptureService : Service() {
         audioMonitor?.close(); audioMonitor = null
         audioFocusController?.close(); audioFocusController = null
         musicPauseRequested = false
+        musicMuted = false
         display?.release(); display = null
         imageReader?.close(); imageReader = null
         visionThread?.quitSafely(); visionThread = null
@@ -332,12 +340,31 @@ internal class AudioCaptureService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Capture", NotificationManager.IMPORTANCE_LOW),
         )
+        val notification = buildForegroundNotification("Monitoring shared content")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun updateForegroundNotification(content: String) {
+        getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            buildForegroundNotification(content),
+        )
+    }
+
+    private fun buildForegroundNotification(content: String): android.app.Notification {
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) android.app.Notification.Builder(this, CHANNEL_ID)
         else android.app.Notification.Builder(this)
         notification.setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Halalify capture is active")
-            .setContentText("Monitoring shared content").setOngoing(true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        else startForeground(NOTIFICATION_ID, notification.build())
+            .setContentText(content).setOngoing(true)
+        return notification.build()
     }
 
     override fun onDestroy() { stopCapture("Capture stopped."); super.onDestroy() }

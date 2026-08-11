@@ -7,7 +7,12 @@ import android.media.AudioManager
 import android.os.Build
 import java.io.Closeable
 
-/** Best-effort request that asks a playing media app to pause when music is detected. */
+internal data class MusicBlockResult(
+    val pauseRequested: Boolean,
+    val mediaMuted: Boolean,
+)
+
+/** Pauses cooperative players and mutes the device media stream while protection is active. */
 internal class PlaybackAudioFocusController(
     context: Context,
 ) : Closeable {
@@ -15,6 +20,14 @@ internal class PlaybackAudioFocusController(
     private val listener = AudioManager.OnAudioFocusChangeListener { }
     private var request: AudioFocusRequest? = null
     private var requested = false
+    private var mutedByHalalify = false
+    private var volumeBeforeMute: Int? = null
+
+    @Synchronized
+    fun blockMusic(): MusicBlockResult = MusicBlockResult(
+        pauseRequested = requestPause(),
+        mediaMuted = muteMediaStream(),
+    )
 
     @Synchronized
     fun requestPause(): Boolean {
@@ -45,7 +58,40 @@ internal class PlaybackAudioFocusController(
     }
 
     @Synchronized
+    private fun muteMediaStream(): Boolean {
+        if (mutedByHalalify) return true
+        if (audioManager.isStreamMute(AudioManager.STREAM_MUSIC)) return true
+
+        volumeBeforeMute = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        audioManager.adjustStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            AudioManager.ADJUST_MUTE,
+            0,
+        )
+        mutedByHalalify = audioManager.isStreamMute(AudioManager.STREAM_MUSIC)
+        if (!mutedByHalalify && audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) > 0) {
+            // A few OEM implementations do not honor ADJUST_MUTE for media streams.
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            mutedByHalalify = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        }
+        return mutedByHalalify || audioManager.isStreamMute(AudioManager.STREAM_MUSIC)
+    }
+
+    @Synchronized
     override fun close() {
+        if (mutedByHalalify) {
+            audioManager.adjustStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                AudioManager.ADJUST_UNMUTE,
+                0,
+            )
+            val savedVolume = volumeBeforeMute
+            if (savedVolume != null && audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0)
+            }
+        }
+        mutedByHalalify = false
+        volumeBeforeMute = null
         if (!requested) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             request?.let { audioManager.abandonAudioFocusRequest(it) }

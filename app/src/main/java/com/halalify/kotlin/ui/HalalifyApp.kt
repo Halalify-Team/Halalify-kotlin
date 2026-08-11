@@ -55,6 +55,7 @@ internal fun HalalifyApp(
     var blurImages by remember { mutableStateOf(initialSettings.blurImages) }
     var blurVideos by remember { mutableStateOf(initialSettings.blurVideos) }
     var blurStyle by remember { mutableStateOf(initialSettings.style) }
+    var isolateMusic by remember { mutableStateOf(initialSettings.isolateMusic) }
     val captureState by CaptureSessionStore.state.collectAsState()
 
     MaterialTheme {
@@ -73,6 +74,9 @@ internal fun HalalifyApp(
                         Text(if (captureState.isCapturing) "● MONITORING ACTIVE" else "● READY", color = if (captureState.isCapturing) Accent else TextMuted)
                         Text(captureState.targetLabel ?: captureState.message, color = TextPrimary, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                         if (captureState.targetLabel != null) Text(captureState.message, color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                        captureState.audioStatus?.let { status ->
+                            Text(status, color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 5.dp))
+                        }
                         if (captureState.isCapturing) Button(
                             onClick = onStopCapture,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB7414D)),
@@ -92,7 +96,7 @@ internal fun HalalifyApp(
                         )
                         Button(
                             onClick = {
-                                val settings = BlurSettings(target, blurImages, blurVideos, blurStyle)
+                                val settings = BlurSettings(target, blurImages, blurVideos, blurStyle, isolateMusic)
                                 onSave(settings)
                                 onStartCapture(settings)
                             },
@@ -131,8 +135,13 @@ internal fun HalalifyApp(
                 item { SettingsCard("Content type") {
                     ToggleRow("Blur images", "Apply to detected still images.", blurImages) { blurImages = it }
                     ToggleRow("Blur video", "Apply to future captured video frames.", blurVideos) { blurVideos = it }
+                    ToggleRow(
+                        "Monitor and isolate music",
+                        "Capture eligible app audio locally and run the optional speech-only TFLite model.",
+                        isolateMusic,
+                    ) { isolateMusic = it }
                     Button(
-                        onClick = { onSave(BlurSettings(target, blurImages, blurVideos, blurStyle)) },
+                        onClick = { onSave(BlurSettings(target, blurImages, blurVideos, blurStyle, isolateMusic)) },
                         colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Background),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) { Text("Save blur settings") }

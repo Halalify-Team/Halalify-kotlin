@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(halalify_vision_core STATIC
+        core/audio_signal.cpp
         core/preprocess.cpp
         core/postprocess.cpp
         core/nms.cpp
@@ -36,7 +37,9 @@ if(ANDROID)
             INTERFACE_INCLUDE_DIRECTORIES "${TFLITE_MODULE_DIR}/include")
 
     add_library(halalify_litert_backend STATIC
+            backends/audio_litert_backend.cpp
             backends/litert_backend.cpp
+            audio_engine.cpp
             vision_engine.cpp)
     target_include_directories(halalify_litert_backend PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}"

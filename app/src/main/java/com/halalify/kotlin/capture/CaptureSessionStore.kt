@@ -7,6 +7,7 @@ internal data class CaptureUiState(
     val isCapturing: Boolean = false,
     val targetLabel: String? = null,
     val message: String = "Tap Start monitoring to begin.",
+    val audioStatus: String? = null,
     val previewJpeg: ByteArray? = null,
 )
 
@@ -27,6 +28,15 @@ internal object CaptureSessionStore {
         isCapturing: Boolean = mutableState.value.isCapturing,
         targetLabel: String? = mutableState.value.targetLabel,
         message: String = mutableState.value.message,
+        audioStatus: String? = mutableState.value.audioStatus,
         previewJpeg: ByteArray? = mutableState.value.previewJpeg,
-    ) { mutableState.value = CaptureUiState(isCapturing, targetLabel, message, previewJpeg) }
+    ) {
+        mutableState.value = CaptureUiState(
+            isCapturing = isCapturing,
+            targetLabel = targetLabel,
+            message = message,
+            audioStatus = audioStatus,
+            previewJpeg = previewJpeg,
+        )
+    }
 }

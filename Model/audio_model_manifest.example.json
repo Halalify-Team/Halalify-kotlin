@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "model_id": "halalify-music-to-speech-only-16k",
+  "model_file": "halalify_music_voice_16k.tflite",
+  "format": "tflite",
+  "installed": false,
+  "input": {
+    "name": "mixture_pcm",
+    "shape": [1, 16000],
+    "data_type": "float32",
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "duration_ms": 1000,
+    "normalization": "pcm16 / 32768.0",
+    "range": [-1.0, 1.0]
+  },
+  "output": {
+    "name": "speech_pcm",
+    "shape": [1, 16000],
+    "data_type": "float32",
+    "meaning": "speech-only mono waveform",
+    "range": [-1.0, 1.0]
+  },
+  "runtime": {
+    "default_threads": 2,
+    "music_score": "clamp(rms(input - speech) / rms(input), 0, 1)",
+    "initial_music_threshold": 0.12
+  },
+  "notes": [
+    "This file documents the required contract; it is not a trained model.",
+    "The native engine accepts any tensor layout whose float32 element count is exactly 16000."
+  ]
+}

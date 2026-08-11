@@ -19,6 +19,10 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import com.halalify.kotlin.audio.AudioFrameProcessor
+import com.halalify.kotlin.audio.AudioMonitorEvent
+import com.halalify.kotlin.audio.NativeMusicIsolationEngine
+import com.halalify.kotlin.audio.PlaybackAudioMonitor
 import com.halalify.kotlin.media.DeviceBlurOverlay
 import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionTracker
@@ -34,6 +38,7 @@ internal class AudioCaptureService : Service() {
     private var display: VirtualDisplay? = null
     private var visionThread: HandlerThread? = null
     private var visionEngine: NativeVisionEngine? = null
+    private var audioMonitor: PlaybackAudioMonitor? = null
     private var deviceOverlay: DeviceBlurOverlay? = null
     private var blurStyle = BlurStyle.BLUR
     private val protectionTracker = ProtectionTracker()
@@ -86,6 +91,7 @@ internal class AudioCaptureService : Service() {
                 CaptureSessionStore.update(message = "Device blur overlay failed: $message")
             }
             startScreenPreview(mediaProjection)
+            if (settings.isolateMusic) startAudioMonitoring(mediaProjection)
             CaptureSessionStore.update(
                 isCapturing = true,
                 targetLabel = "Blur target: ${settings.target.title}",
@@ -181,6 +187,48 @@ internal class AudioCaptureService : Service() {
         }
     }
 
+    private fun startAudioMonitoring(mediaProjection: MediaProjection) {
+        var modelIssue: String? = null
+        val processor: AudioFrameProcessor? = if (
+            NativeMusicIsolationEngine.isModelInstalled(applicationContext)
+        ) {
+            runCatching { NativeMusicIsolationEngine(applicationContext) }
+                .onFailure { error ->
+                    modelIssue = error.message ?: error.javaClass.simpleName
+                }
+                .getOrNull()
+        } else {
+            modelIssue = "speech-only model asset is not installed"
+            null
+        }
+        PlaybackAudioMonitor(mediaProjection, processor) { event ->
+            val status = when (event) {
+                is AudioMonitorEvent.Started -> if (event.modelActive) {
+                    "Audio: eligible app playback is being captured; the speech-only model is active."
+                } else {
+                    "Audio: capture is active, but isolation is unavailable (${modelIssue ?: "model unavailable"})."
+                }
+                is AudioMonitorEvent.CapturedOnly -> if (event.rms > AUDIBLE_RMS) {
+                    "Audio: playback detected; add the speech-only model to enable music isolation."
+                } else {
+                    "Audio: waiting for capturable media playback."
+                }
+                is AudioMonitorEvent.Isolated -> if (event.musicDetected) {
+                    "Audio: music detected (${event.musicScore.asPercent()}); speech-only PCM produced by the AI core."
+                } else {
+                    "Audio: no significant music (${event.musicScore.asPercent()}); speech-only PCM produced."
+                }
+                is AudioMonitorEvent.Failed -> "Audio capture stopped: ${event.reason}"
+            }
+            CaptureSessionStore.update(audioStatus = status)
+        }.also { monitor ->
+            audioMonitor = monitor
+            monitor.start()
+        }
+    }
+
+    private fun Float.asPercent(): String = "%.0f%%".format(this * 100F)
+
     private fun android.media.Image.Plane.sampleGrid(
         width: Int,
         height: Int,
@@ -228,6 +276,7 @@ internal class AudioCaptureService : Service() {
 
     private fun stopCapture(message: String) {
         visionRunning = false
+        audioMonitor?.close(); audioMonitor = null
         display?.release(); display = null
         imageReader?.close(); imageReader = null
         visionThread?.quitSafely(); visionThread = null
@@ -238,7 +287,13 @@ internal class AudioCaptureService : Service() {
         deviceOverlay?.close(); deviceOverlay = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null
-        CaptureSessionStore.update(isCapturing = false, targetLabel = null, message = message, previewJpeg = null)
+        CaptureSessionStore.update(
+            isCapturing = false,
+            targetLabel = null,
+            message = message,
+            audioStatus = null,
+            previewJpeg = null,
+        )
     }
 
     private fun startForegroundNotification() {
@@ -273,6 +328,7 @@ internal class AudioCaptureService : Service() {
         private const val SAMPLE_ROWS = 32
         private const val IGNORED_SAMPLE = -1
         private const val OVERLAY_MASK_PADDING_RATIO = 0.35F
+        private const val AUDIBLE_RMS = 0.002F
         private const val TAG = "HalalifyVision"
     }
 }

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "model_id": "halalify-gender-detector-v3-float32",
+  "model_file": "halalify_gender_v3_float32.tflite",
+  "format": "tflite",
+  "version": "3.0.0",
+  "size_bytes": 12132492,
+  "sha256": "8F03A7F817C4604FFB8E29C5E2ECE70F4AE8A1BB2C2D189C11E9DD82DEF7E07A",
+  "input": {
+    "name": "images",
+    "shape": [1, 416, 416, 3],
+    "layout": "NHWC",
+    "data_type": "float32",
+    "color_space": "RGB",
+    "normalization": {
+      "formula": "value / 255.0",
+      "range": [0.0, 1.0]
+    },
+    "resize": {
+      "strategy": "aspect_fit_letterbox",
+      "width": 416,
+      "height": 416,
+      "pad_rgb": [114, 114, 114],
+      "interpolation": "bilinear",
+      "alignment": "center"
+    }
+  },
+  "output": {
+    "name": "Identity",
+    "shape": [1, 7, 3549],
+    "layout": "channels_first_candidates",
+    "data_type": "float32",
+    "channels": ["center_x", "center_y", "width", "height", "class_a", "class_b", "class_c"],
+    "box_encoding": "cxcywh",
+    "coordinate_mode": "legacy_auto_normalized_or_pixels"
+  },
+  "classes": [
+    {"id": 0, "label": "a", "meaning": "female", "blur_eligible": true},
+    {"id": 1, "label": "b", "meaning": "male", "blur_eligible": true},
+    {"id": 2, "label": "c", "meaning": "ignored", "blur_eligible": false}
+  ],
+  "postprocess": {
+    "initial_confidence_threshold": 0.25,
+    "requires_threshold_calibration": true,
+    "iou_threshold": 0.5,
+    "class_agnostic_nms": true,
+    "max_detections": 100
+  }
+}

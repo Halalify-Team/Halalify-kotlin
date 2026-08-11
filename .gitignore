@@ -1,4 +1,13 @@
-# Built application files
+# Ignore docs folder (keep locally, don't commit)
+docs/
+
+# Common ignores
+.gradle/
+*/build/
+.idea/
+*.iml
+*.class
+.DS_Store# Built application files
 *.apk
 *.aar
 *.ap_

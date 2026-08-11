@@ -17,6 +17,10 @@ The UI and settings layer are complete, but the TFLite inference and drawing pip
 
 The extracted web implementation currently interprets model label `a` as female and `b` as male, while `c` is not blurred. Validate that mapping with known images before relying on it in a production inference pipeline.
 
+## Image AI engine plan
+
+The verified deployed model, its machine-readable contract, provenance notes, and the cross-platform C++ integration plan are in [`Model`](Model/README.md) and [`docs/IMAGE_AI_ENGINE_PLAN_AR.md`](docs/IMAGE_AI_ENGINE_PLAN_AR.md).
+
 ## Verification
 
 Run the following from the repository root:

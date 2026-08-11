@@ -11,6 +11,7 @@ import kotlin.math.min
 internal class ProtectionTracker(
     private val maxMissedContentChanges: Int = DEFAULT_MAX_MISSED_CONTENT_CHANGES,
     private val matchingIou: Float = DEFAULT_MATCHING_IOU,
+    private val smoothingAlpha: Float = DEFAULT_SMOOTHING_ALPHA,
 ) {
     private class Track(
         var detection: Detection,
@@ -33,7 +34,7 @@ internal class ProtectionTracker(
 
             // Preserve the protection decision even when a later frame briefly
             // changes the class assigned to the same person.
-            track.detection = detection.copy(shouldBlur = true)
+            track.detection = smooth(track.detection, detection).copy(shouldBlur = true)
             track.missedContentChanges = 0
             availableTracks.remove(track)
             matchedDetections += detection
@@ -76,8 +77,20 @@ internal class ProtectionTracker(
         return if (union > 0F) intersection / union else 0F
     }
 
+    private fun smooth(previous: Detection, current: Detection): Detection {
+        val alpha = smoothingAlpha.coerceIn(0F, 1F)
+        fun blend(old: Float, new: Float): Float = old + (new - old) * alpha
+        return current.copy(
+            x1 = blend(previous.x1, current.x1),
+            y1 = blend(previous.y1, current.y1),
+            x2 = blend(previous.x2, current.x2),
+            y2 = blend(previous.y2, current.y2),
+        )
+    }
+
     private companion object {
-        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 12
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 1
         const val DEFAULT_MATCHING_IOU = 0.20F
+        const val DEFAULT_SMOOTHING_ALPHA = 0.55F
     }
 }

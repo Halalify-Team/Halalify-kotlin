@@ -20,7 +20,7 @@ The extracted web implementation currently interprets model label `a` as female 
 
 ## Image AI engine plan
 
-The verified deployed model, its machine-readable contract, provenance notes, and the cross-platform C++ integration plan are in [`Model`](Model/README.md) and [`docs/IMAGE_AI_ENGINE_PLAN_AR.md`](docs/IMAGE_AI_ENGINE_PLAN_AR.md).
+The verified deployed model, its machine-readable contract, provenance notes, and the cross-platform C++ integration plan are in [`Model`](Model/README.md)
 
 ## Verification
 

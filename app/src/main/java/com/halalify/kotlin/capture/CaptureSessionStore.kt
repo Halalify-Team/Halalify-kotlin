@@ -13,6 +13,16 @@ internal data class CaptureUiState(
 internal object CaptureSessionStore {
     private val mutableState = MutableStateFlow(CaptureUiState())
     val state = mutableState.asStateFlow()
+    @Volatile var isPreviewRequested: Boolean = false
+        private set
+
+    fun setPreviewRequested(requested: Boolean) {
+        isPreviewRequested = requested
+        if (!requested && mutableState.value.previewJpeg != null) {
+            update(previewJpeg = null)
+        }
+    }
+
     fun update(
         isCapturing: Boolean = mutableState.value.isCapturing,
         targetLabel: String? = mutableState.value.targetLabel,

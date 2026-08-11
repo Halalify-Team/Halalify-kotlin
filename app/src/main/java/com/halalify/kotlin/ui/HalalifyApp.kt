@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,12 +20,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,6 +64,7 @@ internal fun HalalifyApp(
     var target by remember { mutableStateOf(initialSettings.target) }
     var blurImages by remember { mutableStateOf(initialSettings.blurImages) }
     var blurVideos by remember { mutableStateOf(initialSettings.blurVideos) }
+    var showApps by remember { mutableStateOf(false) }
     val captureState by CaptureSessionStore.state.collectAsState()
     val context = LocalContext.current
     val apps = remember { loadLaunchableApps(context.applicationContext) }
@@ -91,11 +96,20 @@ internal fun HalalifyApp(
                     item { ScreenPreview(jpeg) }
                 }
                 item {
-                    Text("Choose an app", color = TextPrimary, style = MaterialTheme.typography.titleMedium)
-                    Text("Android may deny playback audio from apps that opt out. Screen preview is saved only in memory.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-                }
-                items(apps, key = { it.packageName }) { app ->
-                    AppRow(app, !captureState.isCapturing) { onStartCapture(app) }
+                    SettingsCard("Choose an app") {
+                        Text("Select an app to monitor its audio and screen.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(
+                            onClick = { showApps = true },
+                            enabled = !captureState.isCapturing,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Accent,
+                                disabledContentColor = TextMuted,
+                            ),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        ) {
+                            Text("Show monitorable apps")
+                        }
+                    }
                 }
                 item { SettingsCard("Blur target") {
                     BlurTarget.entries.forEach { option ->
@@ -121,6 +135,42 @@ internal fun HalalifyApp(
                 item { Spacer(Modifier.height(18.dp)) }
             }
         }
+    }
+
+    if (showApps) {
+        AlertDialog(
+            onDismissRequest = { showApps = false },
+            title = { Text("Choose an app to monitor", color = TextPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "Android may deny playback audio from apps that opt out.",
+                        color = TextMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    )
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(apps, key = { it.packageName }) { app ->
+                            AppRow(app, !captureState.isCapturing) {
+                                showApps = false
+                                onStartCapture(app)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showApps = false }) {
+                    Text("Close", color = Accent)
+                }
+            },
+            containerColor = SurfaceDark,
+            titleContentColor = TextPrimary,
+            textContentColor = TextMuted,
+        )
     }
 }
 

@@ -195,7 +195,7 @@ internal fun HalalifyApp(
                             PreferenceToggle(
                                 shortLabel = "AUD",
                                 title = "Music isolation",
-                                description = "Detect music locally, request a media pause, and run speech isolation.",
+                                description = "Detect music locally, mute media sound, and run speech isolation.",
                                 checked = isolateMusic,
                                 enabled = !captureState.isCapturing,
                                 onCheckedChange = { isolateMusic = it },

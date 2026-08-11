@@ -8,7 +8,7 @@ An Android prototype for on-device content blur. Users select one visual model c
 - Settings persist locally across app launches.
 - A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
 - Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
-- The optional Android playback-audio monitor now runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. After two consecutive music-positive frames it requests a transient audio focus so a cooperative media player pauses, while the captured frame is processed into a speech stem.
+- The optional Android playback-audio monitor now runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. After two consecutive music-positive frames it mutes the device media stream, requests a transient audio focus so a cooperative media player pauses, and shows the action in the app and foreground notification.
 - The model stays on device. Captured preview frames are not persisted or uploaded.
 
 ## Current limitation

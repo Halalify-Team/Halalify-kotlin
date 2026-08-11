@@ -9,17 +9,20 @@ import kotlin.math.min
  * Once a region is protected, any detection at the same location refreshes it.
  */
 internal class ProtectionTracker(
-    private val retentionMs: Long = DEFAULT_RETENTION_MS,
+    private val maxMissedContentChanges: Int = DEFAULT_MAX_MISSED_CONTENT_CHANGES,
     private val matchingIou: Float = DEFAULT_MATCHING_IOU,
 ) {
     private class Track(
         var detection: Detection,
-        var lastSeenAtMs: Long,
+        var missedContentChanges: Int = 0,
     )
 
     private val tracks = mutableListOf<Track>()
 
-    fun update(detections: List<Detection>, nowMs: Long): List<Detection> {
+    fun update(
+        detections: List<Detection>,
+        contentChanged: Boolean = false,
+    ): List<Detection> {
         val availableTracks = tracks.toMutableList()
         val matchedDetections = mutableSetOf<Detection>()
         detections.sortedByDescending(Detection::confidence).forEach { detection ->
@@ -31,7 +34,7 @@ internal class ProtectionTracker(
             // Preserve the protection decision even when a later frame briefly
             // changes the class assigned to the same person.
             track.detection = detection.copy(shouldBlur = true)
-            track.lastSeenAtMs = nowMs
+            track.missedContentChanges = 0
             availableTracks.remove(track)
             matchedDetections += detection
         }
@@ -39,11 +42,16 @@ internal class ProtectionTracker(
         detections.asSequence()
             .filter(Detection::shouldBlur)
             .filterNot(matchedDetections::contains)
-            .forEach { detection -> tracks += Track(detection, nowMs) }
+            .forEach { detection -> tracks += Track(detection) }
 
-        // Expire only after matching so a periodically sampled frame can refresh
-        // an existing protected person even when the class briefly changes.
-        tracks.removeAll { nowMs - it.lastSeenAtMs > retentionMs }
+        // A static or periodically refreshed screen never ages protected regions.
+        // Only real screen changes age unmatched regions, preventing timed flicker.
+        if (contentChanged) {
+            availableTracks.forEach { track -> track.missedContentChanges += 1 }
+            tracks.removeAll { track ->
+                track.missedContentChanges >= maxMissedContentChanges
+            }
+        }
 
         return tracks.map(Track::detection)
     }
@@ -69,7 +77,7 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        const val DEFAULT_RETENTION_MS = 8_000L
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 12
         const val DEFAULT_MATCHING_IOU = 0.20F
     }
 }

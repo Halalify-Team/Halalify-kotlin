@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val tfliteNative by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+val tfliteNativeDirectory = layout.buildDirectory.dir("generated/tflite-native")
+val extractTfliteNative by tasks.registering(Sync::class) {
+    from({ tfliteNative.map { dependency -> zipTree(dependency) } })
+    into(tfliteNativeDirectory)
+}
+
 android {
     namespace = "com.halalify.kotlin"
     compileSdk = 35
@@ -14,7 +24,16 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += "-DTFLITE_NATIVE_DIR=${tfliteNativeDirectory.get().asFile.invariantSeparatorsPath}"
+            }
+        }
     }
+
+    ndkVersion = "26.3.11579264"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -25,11 +44,34 @@ android {
         jvmTarget = "17"
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("../native/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    sourceSets {
+        getByName("main").assets.srcDir(rootProject.file("Model"))
+    }
+
+    androidResources {
+        noCompress += "tflite"
+    }
+
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.06.00"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
+    implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
+    tfliteNative("com.google.android.gms:play-services-tflite-java:16.4.0") {
+        isTransitive = false
+    }
     testImplementation("junit:junit:4.13.2")
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(extractTfliteNative)
 }

@@ -47,7 +47,7 @@ private val TextMuted = Color(0xFFB8C8C5)
 internal fun HalalifyApp(
     initialSettings: BlurSettings,
     onSave: (BlurSettings) -> Unit,
-    onStartCapture: () -> Unit,
+    onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
 ) {
     var target by remember { mutableStateOf(initialSettings.target) }
@@ -89,7 +89,11 @@ internal fun HalalifyApp(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Button(
-                            onClick = onStartCapture,
+                            onClick = {
+                                val settings = BlurSettings(target, blurImages, blurVideos)
+                                onSave(settings)
+                                onStartCapture(settings)
+                            },
                             enabled = !captureState.isCapturing,
                             colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Background),
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -108,7 +112,7 @@ internal fun HalalifyApp(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                         )
                     }
-                    Text("These settings are stored now and will be used when a local detection-and-blur engine is connected.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                    Text("The local model blurs only detections matching this target.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
                 } }
                 item { SettingsCard("Content type") {
                     ToggleRow("Blur images", "Apply to detected still images.", blurImages) { blurImages = it }
@@ -126,13 +130,13 @@ internal fun HalalifyApp(
 
 }
 
-@Composable private fun ScreenPreview(jpeg: ByteArray) = SettingsCard("Live screen preview") {
+@Composable private fun ScreenPreview(jpeg: ByteArray) = SettingsCard("AI-protected screen preview") {
     AndroidView(
         factory = { ImageView(it).apply { adjustViewBounds = true; scaleType = ImageView.ScaleType.CENTER_CROP } },
         update = { view -> view.setImageBitmap(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)) },
         modifier = Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(10.dp)),
     )
-    Text("One low-resolution frame per second; not persisted or uploaded.", color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 7.dp))
+    Text("Selected detections are blurred locally; frames are not persisted or uploaded.", color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 7.dp))
 }
 
 @Composable private fun SettingsCard(title: String, content: @Composable () -> Unit) {

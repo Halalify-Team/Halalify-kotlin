@@ -11,7 +11,7 @@ This package contains the version that was actually deployed in the inspected Ha
 - Output: `float32`, shape `[1, 7, 3549]`
 - Classes: `a = female`, `b = male`, `c = ignored`
 
-Preprocessing details are defined in `model_manifest.json`. This directory is the canonical model source, but it is not yet connected to an APK. During implementation, Gradle will package it as an uncompressed asset so the C++ engine can memory-map it without committing a second copy to the repository.
+Preprocessing details are defined in `model_manifest.json`. This directory is the canonical model source. Gradle now packages the model directly from this directory as an uncompressed Android asset, without committing a second copy to the repository, and the C++ engine validates its tensor contract when it starts.
 
 ## What the model does
 

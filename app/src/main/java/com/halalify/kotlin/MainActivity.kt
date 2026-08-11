@@ -10,15 +10,21 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.gms.tflite.java.TfLiteNative
 import com.halalify.kotlin.capture.AudioCaptureService
 import com.halalify.kotlin.capture.CaptureSessionStore
+import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import com.halalify.kotlin.ui.HalalifyApp
 
 class MainActivity : ComponentActivity() {
+    private lateinit var settingsRepository: BlurSettingsRepository
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != Activity.RESULT_OK || result.data == null) {
             CaptureSessionStore.update(message = "Screen and audio capture permission was not granted.")
+            startService(
+                Intent(this, AudioCaptureService::class.java).setAction(AudioCaptureService.ACTION_STOP),
+            )
             return@registerForActivityResult
         }
         val serviceIntent = Intent(this, AudioCaptureService::class.java).apply {
@@ -26,7 +32,15 @@ class MainActivity : ComponentActivity() {
             putExtra(AudioCaptureService.EXTRA_RESULT_CODE, result.resultCode)
             putExtra(AudioCaptureService.EXTRA_PROJECTION_DATA, result.data)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent) else startService(serviceIntent)
+        try {
+            // The service was started while this activity was visible, before Android's
+            // app-selection screen moved Halalify to the background.
+            startService(serviceIntent)
+        } catch (error: Throwable) {
+            CaptureSessionStore.update(
+                message = "Could not start screen monitoring: ${error.message ?: error.javaClass.simpleName}",
+            )
+        }
     }
     private val recordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestProjection() else {
@@ -35,7 +49,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val settingsRepository = BlurSettingsRepository(applicationContext)
+        settingsRepository = BlurSettingsRepository(applicationContext)
         setContent {
             HalalifyApp(
                 initialSettings = settingsRepository.load(),
@@ -48,16 +62,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startCapture() {
+    private fun startCapture(settings: BlurSettings) {
+        settingsRepository.save(settings)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             CaptureSessionStore.update(message = "This feature needs Android 10 or newer.")
             return
         }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) requestProjection()
-        else recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        CaptureSessionStore.update(message = "Loading the on-device gender detection model…")
+        TfLiteNative.initialize(applicationContext)
+            .addOnSuccessListener { requestAudioThenProjection() }
+            .addOnFailureListener { error ->
+                CaptureSessionStore.update(
+                    message = "LiteRT could not start: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
+    }
+
+    private fun requestAudioThenProjection() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            requestProjection()
+        } else {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     private fun requestProjection() {
-        projectionLauncher.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
+        try {
+            // Starting a lightweight service now preserves a legal launch path when the
+            // user chooses one app and Android backgrounds this activity before returning.
+            startService(
+                Intent(this, AudioCaptureService::class.java)
+                    .setAction(AudioCaptureService.ACTION_PREPARE),
+            )
+            projectionLauncher.launch(
+                getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent(),
+            )
+        } catch (error: Throwable) {
+            CaptureSessionStore.update(
+                message = "Could not open screen sharing: ${error.message ?: error.javaClass.simpleName}",
+            )
+        }
     }
 }

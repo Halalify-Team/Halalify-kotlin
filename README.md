@@ -1,17 +1,18 @@
 # Halalify
 
-An Android prototype for configuring on-device content blur. Users select one target for the future inference engine: detected male people or detected female people. They can enable the rule for images, video, or both.
+An Android prototype for on-device content blur. Users select one visual model class—male or female—and the local vision engine blurs matching detections in captured preview frames.
 
 ## Current functionality
 
 - English settings screen for blur target and content type.
 - Settings persist locally across app launches.
-- Unit-tested mapping from the extracted model labels to the selected blur target.
-- No YouTube URL handling, download code, network access, microphone, media-projection, or foreground-service permissions.
+- A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
+- Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred in the in-app protected preview and detection counts are shown live.
+- The model stays on device. Captured preview frames are not persisted or uploaded.
 
 ## Current limitation
 
-The UI and settings layer are complete, but the TFLite inference and drawing pipeline is not connected yet. Android applications cannot inspect the visual content of every other installed app automatically; the engine must run in an explicitly supported surface such as a built-in browser or another permitted integration.
+The current renderer protects the preview inside Halalify. It does not yet draw a system-wide overlay above the shared application; that remains phase 4 of the plan and requires the overlay permission, coordinate/inset handling, and OEM testing. Android protected surfaces may also be absent from MediaProjection captures.
 
 ## Model-label contract
 
@@ -28,3 +29,5 @@ Run the following from the repository root:
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
 ```
+
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.

@@ -60,3 +60,4 @@ ehthumbs.db
 # External native build folder
 .cxx/
 .externalNativeBuild/
+native/build-host/

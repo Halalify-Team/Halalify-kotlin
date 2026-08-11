@@ -17,7 +17,14 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
+import android.util.Log
+import com.halalify.kotlin.media.FrameBlurRenderer
+import com.halalify.kotlin.model.Detection
+import com.halalify.kotlin.model.NativeVisionEngine
+import com.halalify.kotlin.settings.BlurSettingsRepository
 import java.io.ByteArrayOutputStream
 
 internal class AudioCaptureService : Service() {
@@ -27,8 +34,11 @@ internal class AudioCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var audioThread: Thread? = null
+    private var visionThread: HandlerThread? = null
+    private var visionEngine: NativeVisionEngine? = null
     private var lastFrameAt = 0L
     @Volatile private var running = false
+    @Volatile private var visionRunning = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -39,6 +49,9 @@ internal class AudioCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PREPARE -> CaptureSessionStore.update(
+                message = "Choose the app or screen to protect in Android's sharing dialog.",
+            )
             ACTION_START -> startCapture(intent)
             ACTION_STOP -> { stopCapture("Capture stopped."); stopSelf() }
         }
@@ -61,12 +74,14 @@ internal class AudioCaptureService : Service() {
                 .getMediaProjection(resultCode, data) ?: error("MediaProjection was not created.")
             mediaProjection.registerCallback(projectionCallback, null)
             projection = mediaProjection
+            val settings = BlurSettingsRepository(applicationContext).load()
+            visionEngine = NativeVisionEngine(applicationContext, settings.target)
             startScreenPreview(mediaProjection)
             startAudioPassThrough(mediaProjection)
             CaptureSessionStore.update(
                 isCapturing = true,
-                targetLabel = "Shared app or screen",
-                message = "Monitoring the content selected in Android's secure sharing dialog.",
+                targetLabel = "Blur target: ${settings.target.title}",
+                message = "The local model is monitoring the shared screen.",
             )
         } catch (error: Throwable) {
             stopCapture("Could not start capture: ${error.message ?: error.javaClass.simpleName}")
@@ -115,32 +130,47 @@ internal class AudioCaptureService : Service() {
         val width = PREVIEW_WIDTH.coerceAtMost(metrics.widthPixels)
         val height = (metrics.heightPixels.toFloat() * width / metrics.widthPixels).toInt().coerceAtLeast(1)
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        val handlerThread = HandlerThread("halalify-vision").apply { start() }
+        visionThread = handlerThread
+        lastFrameAt = 0L
+        visionRunning = true
         reader.setOnImageAvailableListener({ source ->
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
+                if (!visionRunning) return@setOnImageAvailableListener
                 val now = System.currentTimeMillis()
                 if (now - lastFrameAt < PREVIEW_INTERVAL_MS) return@setOnImageAvailableListener
                 val plane = image.planes.firstOrNull() ?: return@setOnImageAvailableListener
-                val bitmap = Bitmap.createBitmap(
-                    image.width + (plane.rowStride - plane.pixelStride * image.width) / plane.pixelStride,
-                    image.height,
-                    Bitmap.Config.ARGB_8888,
-                )
+                if (plane.pixelStride != RGBA_PIXEL_STRIDE) return@setOnImageAvailableListener
                 plane.buffer.rewind()
-                bitmap.copyPixelsFromBuffer(plane.buffer)
+                val detections = visionEngine?.process(
+                    rgbaBuffer = plane.buffer,
+                    width = image.width,
+                    height = image.height,
+                    rowStride = plane.rowStride,
+                    rotationDegrees = 0,
+                    timestampNs = image.timestamp,
+                ).orEmpty()
+                if (!visionRunning) return@setOnImageAvailableListener
+                plane.buffer.rewind()
+                val bitmap = plane.toBitmap(image.width, image.height)
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
                 if (cropped !== bitmap) bitmap.recycle()
+                val blurredCount = FrameBlurRenderer.blurSelectedDetections(cropped, detections)
+                updateDetectionStatus(detections, blurredCount)
                 val stream = ByteArrayOutputStream()
                 cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
                 cropped.recycle()
                 lastFrameAt = now
                 CaptureSessionStore.update(previewJpeg = stream.toByteArray())
-            } catch (_: Throwable) {
-                // A preview decoding failure must not interrupt the audio session.
+            } catch (error: Throwable) {
+                CaptureSessionStore.update(
+                    message = "Vision frame failed: ${error.message ?: error.javaClass.simpleName}",
+                )
             } finally {
                 image.close()
             }
-        }, null)
+        }, Handler(handlerThread.looper))
         imageReader = reader
         display = mediaProjection.createVirtualDisplay(
             "HalalifyPreview", width, height, resources.configuration.densityDpi,
@@ -148,13 +178,32 @@ internal class AudioCaptureService : Service() {
         )
     }
 
+    private fun android.media.Image.Plane.toBitmap(width: Int, height: Int): Bitmap {
+        val paddedWidth = width + (rowStride - pixelStride * width) / pixelStride
+        return Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+            bitmap.copyPixelsFromBuffer(buffer)
+        }
+    }
+
+    private fun updateDetectionStatus(detections: List<Detection>, blurredCount: Int) {
+        val femaleCount = detections.count { it.classId == 0 }
+        val maleCount = detections.count { it.classId == 1 }
+        Log.d(TAG, "detections female=$femaleCount male=$maleCount blurred=$blurredCount")
+        CaptureSessionStore.update(
+            message = "Detected: $femaleCount female, $maleCount male · blurred: $blurredCount",
+        )
+    }
+
     private fun stopCapture(message: String) {
         running = false
+        visionRunning = false
         audioThread?.interrupt(); audioThread = null
         runCatching { recorder?.stop() }; runCatching { player?.pause() }
         recorder?.release(); player?.release(); recorder = null; player = null
         display?.release(); display = null
         imageReader?.close(); imageReader = null
+        visionThread?.quitSafely(); visionThread = null
+        visionEngine?.close(); visionEngine = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null
         CaptureSessionStore.update(isCapturing = false, targetLabel = null, message = message, previewJpeg = null)
@@ -177,6 +226,7 @@ internal class AudioCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        const val ACTION_PREPARE = "com.halalify.kotlin.PREPARE_CAPTURE"
         const val ACTION_START = "com.halalify.kotlin.START_CAPTURE"
         const val ACTION_STOP = "com.halalify.kotlin.STOP_CAPTURE"
         const val EXTRA_RESULT_CODE = "result_code"
@@ -186,7 +236,9 @@ internal class AudioCaptureService : Service() {
         private const val SAMPLE_RATE = 48_000
         private const val BUFFER_BYTES = 8192
         private const val PREVIEW_WIDTH = 480
-        private const val PREVIEW_INTERVAL_MS = 1_000L
+        private const val PREVIEW_INTERVAL_MS = 350L
         private const val JPEG_QUALITY = 70
+        private const val RGBA_PIXEL_STRIDE = 4
+        private const val TAG = "HalalifyVision"
     }
 }

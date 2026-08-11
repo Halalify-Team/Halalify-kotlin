@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "core/audio_signal.h"
 #include "core/nms.h"
 #include "core/postprocess.h"
 #include "core/preprocess.h"
@@ -59,11 +60,33 @@ void TestDecodeAndNms() {
     assert(detections.front().should_blur == 1);
 }
 
+void TestAudioSignalConversionAndResidualScore() {
+    const std::vector<int16_t> pcm = {0, 16384, -32768};
+    std::vector<float> normalized;
+    halalify::NormalizePcm16(pcm.data(), pcm.size(), &normalized);
+    assert(std::fabs(normalized[0]) < 1e-6F);
+    assert(std::fabs(normalized[1] - 0.5F) < 1e-6F);
+    assert(std::fabs(normalized[2] + 1.0F) < 1e-6F);
+
+    const std::vector<float> mixture = {0.5F, -0.5F};
+    const std::vector<float> speech = {0.25F, -0.25F};
+    const float score = halalify::ResidualEnergyRatio(
+            mixture.data(), speech.data(), mixture.size());
+    assert(std::fabs(score - 0.5F) < 1e-6F);
+
+    std::vector<int16_t> round_trip(normalized.size());
+    halalify::FloatToPcm16(normalized.data(), normalized.size(), round_trip.data());
+    assert(round_trip[0] == 0);
+    assert(round_trip[1] == 16384);
+    assert(round_trip[2] == -32768);
+}
+
 }  // namespace
 
 int main() {
     TestPolicy();
     TestPreprocessLetterboxAndRgb();
     TestDecodeAndNms();
+    TestAudioSignalConversionAndResidualScore();
     return 0;
 }

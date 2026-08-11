@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "asset_model_loader.h"
+#include "halalify_audio.h"
 #include "halalify_vision.h"
 
 namespace {
@@ -22,6 +23,14 @@ hb_engine* FromHandle(jlong handle) {
 }
 
 jlong ToHandle(hb_engine* engine) {
+    return static_cast<jlong>(reinterpret_cast<intptr_t>(engine));
+}
+
+ha_audio_engine* AudioFromHandle(jlong handle) {
+    return reinterpret_cast<ha_audio_engine*>(static_cast<intptr_t>(handle));
+}
+
+jlong ToAudioHandle(ha_audio_engine* engine) {
     return static_cast<jlong>(reinterpret_cast<intptr_t>(engine));
 }
 
@@ -149,4 +158,96 @@ Java_com_halalify_kotlin_model_NativeVisionEngine_nativeDestroy(
         jobject /* instance */,
         jlong handle) {
     hb_engine_destroy(FromHandle(handle));
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_halalify_kotlin_audio_NativeMusicIsolationEngine_nativeCreate(
+        JNIEnv* env,
+        jobject /* instance */,
+        jobject java_asset_manager,
+        jstring java_asset_name,
+        jint sample_rate,
+        jint frame_samples,
+        jfloat music_threshold) {
+    if (java_asset_manager == nullptr || java_asset_name == nullptr) {
+        Throw(env, "java/lang/IllegalArgumentException", "Audio asset manager and model name are required.");
+        return 0;
+    }
+    AAssetManager* asset_manager = AAssetManager_fromJava(env, java_asset_manager);
+    const char* asset_name = env->GetStringUTFChars(java_asset_name, nullptr);
+    if (asset_name == nullptr) return 0;
+    std::vector<uint8_t> model_bytes;
+    std::string error;
+    const bool loaded = halalify::android::ReadAsset(
+            asset_manager, asset_name, &model_bytes, &error);
+    env->ReleaseStringUTFChars(java_asset_name, asset_name);
+    if (!loaded) {
+        Throw(env, "java/lang/IllegalStateException", error);
+        return 0;
+    }
+
+    ha_audio_config config = ha_audio_default_config();
+    config.sample_rate = sample_rate;
+    config.frame_samples = frame_samples;
+    config.music_threshold = music_threshold;
+    ha_audio_engine* engine = nullptr;
+    const ha_status status = ha_audio_engine_create_from_buffer(
+            model_bytes.data(), model_bytes.size(), &config, &engine);
+    if (status != HA_STATUS_OK || engine == nullptr) {
+        ha_audio_engine_destroy(engine);
+        Throw(
+                env,
+                "java/lang/IllegalStateException",
+                "LiteRT could not initialize the speech-only audio model; verify its tensor contract.");
+        return 0;
+    }
+    return ToAudioHandle(engine);
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_halalify_kotlin_audio_NativeMusicIsolationEngine_nativeProcess(
+        JNIEnv* env,
+        jobject /* instance */,
+        jlong handle,
+        jshortArray java_input_pcm,
+        jshortArray java_speech_pcm) {
+    ha_audio_engine* engine = AudioFromHandle(handle);
+    if (engine == nullptr || java_input_pcm == nullptr || java_speech_pcm == nullptr) {
+        Throw(env, "java/lang/IllegalArgumentException", "Audio engine or PCM buffers are invalid.");
+        return 0.0F;
+    }
+    const jsize input_samples = env->GetArrayLength(java_input_pcm);
+    const jsize output_samples = env->GetArrayLength(java_speech_pcm);
+    if (input_samples <= 0 || output_samples < input_samples) {
+        Throw(env, "java/lang/IllegalArgumentException", "Speech PCM output is smaller than the input.");
+        return 0.0F;
+    }
+    std::vector<int16_t> input(static_cast<size_t>(input_samples));
+    std::vector<int16_t> speech(static_cast<size_t>(output_samples));
+    env->GetShortArrayRegion(
+            java_input_pcm, 0, input_samples, reinterpret_cast<jshort*>(input.data()));
+    if (env->ExceptionCheck()) return 0.0F;
+    ha_audio_result result{};
+    const ha_status status = ha_audio_engine_process(
+            engine,
+            input.data(),
+            input.size(),
+            speech.data(),
+            speech.size(),
+            &result);
+    if (status != HA_STATUS_OK) {
+        Throw(env, "java/lang/IllegalStateException", ha_audio_engine_last_error(engine));
+        return 0.0F;
+    }
+    env->SetShortArrayRegion(
+            java_speech_pcm, 0, input_samples, reinterpret_cast<const jshort*>(speech.data()));
+    return result.music_score;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_halalify_kotlin_audio_NativeMusicIsolationEngine_nativeDestroy(
+        JNIEnv* /* env */,
+        jobject /* instance */,
+        jlong handle) {
+    ha_audio_engine_destroy(AudioFromHandle(handle));
 }

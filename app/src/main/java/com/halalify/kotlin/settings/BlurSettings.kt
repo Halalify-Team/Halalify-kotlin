@@ -17,6 +17,7 @@ internal data class BlurSettings(
     val blurImages: Boolean = true,
     val blurVideos: Boolean = true,
     val style: BlurStyle = BlurStyle.BLUR,
+    val isolateMusic: Boolean = false,
 ) {
     /** Model mapping verified in the extracted web integration: a=female, b=male. */
     fun shouldBlurLabel(label: String): Boolean = when (label.lowercase()) {
@@ -38,6 +39,7 @@ internal class BlurSettingsRepository(context: Context) {
         style = preferences.getString(KEY_BLUR_STYLE, null)
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
             ?: BlurStyle.BLUR,
+        isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
     )
 
     fun save(settings: BlurSettings) {
@@ -46,6 +48,7 @@ internal class BlurSettingsRepository(context: Context) {
             .putBoolean(KEY_BLUR_IMAGES, settings.blurImages)
             .putBoolean(KEY_BLUR_VIDEOS, settings.blurVideos)
             .putString(KEY_BLUR_STYLE, settings.style.name)
+            .putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
             .apply()
     }
 
@@ -55,5 +58,6 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_BLUR_IMAGES = "blur_images"
         const val KEY_BLUR_VIDEOS = "blur_videos"
         const val KEY_BLUR_STYLE = "blur_style"
+        const val KEY_ISOLATE_MUSIC = "isolate_music"
     }
 }

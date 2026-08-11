@@ -45,3 +45,5 @@ The source training script starts from `yolov8n.pt` and uses Ultralytics. The mo
 ## Plan
 
 The engine, integration, and testing plan is documented in the [Image AI Engine Plan](../docs/IMAGE_AI_ENGINE_PLAN_AR.md).
+
+The optional music-isolation model is separate from this vision detector. Its required filename and waveform tensor contract are documented in [audio_model_manifest.example.json](audio_model_manifest.example.json) and the [Audio AI Engine Plan](../docs/AUDIO_AI_ENGINE_PLAN_AR.md). No trained audio model is currently bundled.

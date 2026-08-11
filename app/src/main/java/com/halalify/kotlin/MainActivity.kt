@@ -1,7 +1,10 @@
 package com.halalify.kotlin
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -18,8 +21,24 @@ import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import com.halalify.kotlin.ui.HalalifyApp
 
+// Halalify uses ComponentActivity directly and does not include FragmentActivity; the Fragment
+// compatibility warning attached to Activity Result registration therefore does not apply.
+@SuppressLint("InvalidFragmentVersionForActivityResult")
 class MainActivity : ComponentActivity() {
     private lateinit var settingsRepository: BlurSettingsRepository
+    private var pendingCaptureSettings: BlurSettings? = null
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val settings = pendingCaptureSettings.also { pendingCaptureSettings = null }
+        if (granted && settings != null) {
+            continueStartingCapture(settings)
+        } else {
+            CaptureSessionStore.update(
+                message = "Audio permission is required only when music isolation is enabled.",
+            )
+        }
+    }
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
@@ -85,6 +104,18 @@ class MainActivity : ComponentActivity() {
             CaptureSessionStore.update(message = "This feature needs Android 10 or newer.")
             return
         }
+        if (settings.isolateMusic &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingCaptureSettings = settings
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        continueStartingCapture(settings)
+    }
+
+    private fun continueStartingCapture(settings: BlurSettings) {
+        settingsRepository.save(settings)
         if (!Settings.canDrawOverlays(this)) {
             CaptureSessionStore.update(
                 message = "Allow Halalify to display over other apps, then return here.",

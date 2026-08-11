@@ -14,7 +14,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal sealed interface AudioMonitorEvent {
     data class Started(val modelActive: Boolean) : AudioMonitorEvent
     data class CapturedOnly(val rms: Float) : AudioMonitorEvent
-    data class Isolated(val musicScore: Float, val musicDetected: Boolean) : AudioMonitorEvent
+    data class Isolated(
+        val musicScore: Float,
+        val musicDetected: Boolean,
+        val isolationActive: Boolean,
+        val detectorLabel: String?,
+    ) : AudioMonitorEvent
     data class Failed(val reason: String) : AudioMonitorEvent
 }
 
@@ -24,11 +29,14 @@ internal class PlaybackAudioMonitor(
     private val mediaProjection: MediaProjection,
     private val processor: AudioFrameProcessor?,
     private val onSpeechFrame: (ShortArray) -> Unit = {},
+    private val onMusicDetected: () -> Unit = {},
     private val onEvent: (AudioMonitorEvent) -> Unit,
 ) : Closeable {
     private val running = AtomicBoolean(false)
     private var audioRecord: AudioRecord? = null
     private var captureThread: Thread? = null
+    private var consecutiveMusicFrames = 0
+    private var musicActionTriggered = false
 
     @SuppressLint("MissingPermission")
     fun start() {
@@ -110,14 +118,24 @@ internal class PlaybackAudioMonitor(
         }
         val result = activeProcessor.process(frame)
         onSpeechFrame(result.speechPcm)
+        if (result.musicDetected) {
+            consecutiveMusicFrames += 1
+            if (consecutiveMusicFrames >= MUSIC_CONFIRMATION_FRAMES && !musicActionTriggered) {
+                musicActionTriggered = true
+                onMusicDetected()
+            }
+        } else {
+            consecutiveMusicFrames = 0
+            musicActionTriggered = false
+        }
         onEvent(
             AudioMonitorEvent.Isolated(
                 musicScore = result.musicScore,
                 musicDetected = result.musicDetected,
+                isolationActive = result.isolationActive,
+                detectorLabel = result.detectorLabel,
             ),
         )
-        // Android does not let a normal app replace another app's live output. The callback is an
-        // explicit integration point for a future in-app player or offline export sink.
     }
 
     override fun close() {
@@ -128,6 +146,8 @@ internal class PlaybackAudioMonitor(
         captureThread = null
         audioRecord?.release()
         audioRecord = null
+        consecutiveMusicFrames = 0
+        musicActionTriggered = false
         processor?.close()
     }
 
@@ -136,5 +156,6 @@ internal class PlaybackAudioMonitor(
         const val READ_SAMPLES = 2_048
         const val MONITOR_FRAME_SAMPLES = SAMPLE_RATE / 2
         const val PCM16_BYTES = 2
+        const val MUSIC_CONFIRMATION_FRAMES = 2
     }
 }

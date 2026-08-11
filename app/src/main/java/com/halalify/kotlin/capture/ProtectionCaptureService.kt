@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import androidx.annotation.RequiresApi
 import com.halalify.kotlin.audio.AudioMonitorFactory
 import com.halalify.kotlin.audio.AudioProtectionSession
 import com.halalify.kotlin.audio.BundledAudioProcessorProvider
@@ -105,6 +106,7 @@ internal class ProtectionCaptureService : Service() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     private fun startScreenProtection(
         activeProjection: MediaProjection,
         settings: BlurSettings,
@@ -130,6 +132,7 @@ internal class ProtectionCaptureService : Service() {
         session.start()
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun startAudioProtection(activeProjection: MediaProjection) {
         val session = AudioProtectionSession(
             statePublisher = CaptureSessionStore,

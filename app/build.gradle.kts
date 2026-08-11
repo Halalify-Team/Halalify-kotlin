@@ -45,10 +45,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     externalNativeBuild {
         cmake {
             path = file("../native/CMakeLists.txt")
@@ -64,6 +60,11 @@ android {
         noCompress += "tflite"
     }
 
+}
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))

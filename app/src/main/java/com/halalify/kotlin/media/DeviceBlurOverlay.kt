@@ -100,7 +100,11 @@ internal class DeviceBlurOverlay(
     }
 
     private class BlurOverlayView(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val paint = Paint().apply {
+            isAntiAlias = false
+            isFilterBitmap = false
+            isDither = false
+        }
         private val destination = Rect()
         private var bitmap: Bitmap? = null
 

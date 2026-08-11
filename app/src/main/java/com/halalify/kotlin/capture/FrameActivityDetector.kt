@@ -16,20 +16,20 @@ internal class FrameActivityDetector(
     private var lastAnalysisAtMs = Long.MIN_VALUE
     private var remainingBurstAnalyses = 0
 
-    fun shouldAnalyze(sample: IntArray, nowMs: Long): Boolean {
+    fun analysisReason(sample: IntArray, nowMs: Long): FrameAnalysisReason? {
         val previous = baseline
         if (previous == null || previous.size != sample.size) {
             baseline = sample.copyOf()
             remainingBurstAnalyses = (burstAnalyses - 1).coerceAtLeast(0)
             lastAnalysisAtMs = nowMs
-            return true
+            return FrameAnalysisReason.INITIAL
         }
 
         val contentChanged = changedRatio(previous, sample) >= changedPixelRatio
         val burstDue = remainingBurstAnalyses > 0 &&
             elapsedSinceLastAnalysis(nowMs) >= burstIntervalMs
         val safetyRefreshDue = elapsedSinceLastAnalysis(nowMs) >= safetyRefreshMs
-        if (!contentChanged && !burstDue && !safetyRefreshDue) return false
+        if (!contentChanged && !burstDue && !safetyRefreshDue) return null
 
         baseline = sample.copyOf()
         if (contentChanged) {
@@ -38,7 +38,11 @@ internal class FrameActivityDetector(
             remainingBurstAnalyses -= 1
         }
         lastAnalysisAtMs = nowMs
-        return true
+        return when {
+            contentChanged -> FrameAnalysisReason.CONTENT_CHANGED
+            burstDue -> FrameAnalysisReason.STABILIZATION
+            else -> FrameAnalysisReason.SAFETY_REFRESH
+        }
     }
 
     fun reset() {
@@ -71,4 +75,11 @@ internal class FrameActivityDetector(
         const val DEFAULT_BURST_ANALYSES = 3
         const val DEFAULT_BURST_INTERVAL_MS = 350L
     }
+}
+
+internal enum class FrameAnalysisReason {
+    INITIAL,
+    CONTENT_CHANGED,
+    STABILIZATION,
+    SAFETY_REFRESH,
 }

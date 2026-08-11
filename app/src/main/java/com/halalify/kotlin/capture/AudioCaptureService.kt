@@ -113,9 +113,8 @@ internal class AudioCaptureService : Service() {
                 val plane = image.planes.firstOrNull() ?: return@setOnImageAvailableListener
                 if (plane.pixelStride != RGBA_PIXEL_STRIDE) return@setOnImageAvailableListener
                 val sample = plane.sampleGrid(image.width, image.height)
-                if (!frameActivityDetector.shouldAnalyze(sample, now)) {
-                    return@setOnImageAvailableListener
-                }
+                val analysisReason = frameActivityDetector.analysisReason(sample, now)
+                    ?: return@setOnImageAvailableListener
                 plane.buffer.rewind()
                 val detections = visionEngine?.process(
                     rgbaBuffer = plane.buffer,
@@ -128,7 +127,7 @@ internal class AudioCaptureService : Service() {
                 if (!visionRunning) return@setOnImageAvailableListener
                 val protectedDetections = protectionTracker.update(
                     detections,
-                    SystemClock.elapsedRealtime(),
+                    contentChanged = analysisReason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
                 plane.buffer.rewind()
                 val bitmap = plane.toBitmap(image.width, image.height)

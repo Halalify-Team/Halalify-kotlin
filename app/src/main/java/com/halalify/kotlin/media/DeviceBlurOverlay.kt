@@ -99,13 +99,15 @@ internal class DeviceBlurOverlay(
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_SECURE or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         return WindowManager.LayoutParams(
             bounds.width().coerceAtLeast(1),
             bounds.height().coerceAtLeast(1),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
+            // Every protected region is fully opaque. The windows are already
+            // limited to detection bounds, so transparency is neither needed
+            // nor desirable here.
             PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.START

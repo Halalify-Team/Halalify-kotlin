@@ -2,7 +2,6 @@ package com.halalify.kotlin.media
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import com.halalify.kotlin.model.Detection
@@ -35,10 +34,6 @@ internal object FrameBlurRenderer {
             isFilterBitmap = false
             isDither = false
         }
-        val privacyShadePaint = Paint().apply {
-            color = Color.BLACK
-            alpha = PRIVACY_SHADE_ALPHA
-        }
         var blurredCount = 0
         val overlayRegions = mutableListOf<OverlayRegion>()
         try {
@@ -48,7 +43,6 @@ internal object FrameBlurRenderer {
                     source = bitmap,
                     rect = rect,
                     pixelPaint = pixelPaint,
-                    privacyShadePaint = privacyShadePaint,
                 )
                 blurredCount += 1
             }
@@ -71,15 +65,17 @@ internal object FrameBlurRenderer {
         source: Bitmap,
         rect: Rect,
         pixelPaint: Paint,
-        privacyShadePaint: Paint,
     ): OverlayRegion {
         val patch = Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
         var tiny: Bitmap? = null
         var protectedPatch: Bitmap? = null
         try {
-            val tinyWidth = (rect.width() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
-            val tinyHeight = (rect.height() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
-            tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, false)
+            val tinyWidth = ceil(rect.width().toFloat() / MOSAIC_BLOCK_SIZE).toInt().coerceAtLeast(1)
+            val tinyHeight = ceil(rect.height().toFloat() / MOSAIC_BLOCK_SIZE).toInt().coerceAtLeast(1)
+            // Filtering is useful only while reducing the source into one
+            // representative colour per cell. The later enlargement remains
+            // nearest-neighbour so every cell is a solid, hard-edged square.
+            tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, true)
             protectedPatch = Bitmap.createBitmap(
                 rect.width(),
                 rect.height(),
@@ -88,7 +84,7 @@ internal object FrameBlurRenderer {
             val patchCanvas = Canvas(protectedPatch)
             val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
             patchCanvas.drawBitmap(tiny, null, patchBounds, pixelPaint)
-            patchCanvas.drawRect(patchBounds, privacyShadePaint)
+            protectedPatch.setHasAlpha(false)
             return OverlayRegion(
                 bitmap = protectedPatch,
                 bounds = Rect(rect),
@@ -118,7 +114,6 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    private const val PIXEL_BLOCK_SIZE = 40
-    private const val BOX_PADDING_RATIO = 0.15F
-    private const val PRIVACY_SHADE_ALPHA = 112
+    private const val MOSAIC_BLOCK_SIZE = 32
+    private const val BOX_PADDING_RATIO = 0.20F
 }

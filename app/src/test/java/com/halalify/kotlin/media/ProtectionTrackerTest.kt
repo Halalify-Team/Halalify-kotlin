@@ -9,10 +9,10 @@ import org.junit.Test
 class ProtectionTrackerTest {
     @Test
     fun `protected detection survives a missed frame`() {
-        val tracker = ProtectionTracker(retentionMs = 3_000L)
+        val tracker = ProtectionTracker()
 
-        tracker.update(listOf(detection(shouldBlur = true)), nowMs = 1_000L)
-        val protected = tracker.update(emptyList(), nowMs = 2_000L)
+        tracker.update(listOf(detection(shouldBlur = true)))
+        val protected = tracker.update(emptyList())
 
         assertEquals(1, protected.size)
         assertTrue(protected.single().shouldBlur)
@@ -20,12 +20,12 @@ class ProtectionTrackerTest {
 
     @Test
     fun `changed classification at same location stays protected and refreshes track`() {
-        val tracker = ProtectionTracker(retentionMs = 3_000L)
-        tracker.update(listOf(detection(shouldBlur = true)), nowMs = 1_000L)
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
 
         val changedClass = detection(classId = 1, shouldBlur = false)
-        val protected = tracker.update(listOf(changedClass), nowMs = 3_000L)
-        val stillProtected = tracker.update(emptyList(), nowMs = 5_500L)
+        val protected = tracker.update(listOf(changedClass))
+        val stillProtected = tracker.update(emptyList())
 
         assertEquals(1, protected.size)
         assertTrue(protected.single().shouldBlur)
@@ -33,13 +33,25 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `stale region expires after retention window`() {
-        val tracker = ProtectionTracker(retentionMs = 3_000L)
-        tracker.update(listOf(detection(shouldBlur = true)), nowMs = 1_000L)
+    fun `static region never expires with time or safety refreshes`() {
+        val tracker = ProtectionTracker(maxMissedContentChanges = 2)
+        tracker.update(listOf(detection(shouldBlur = true)))
 
-        val protected = tracker.update(emptyList(), nowMs = 4_001L)
+        repeat(100) { tracker.update(emptyList(), contentChanged = false) }
 
-        assertTrue(protected.isEmpty())
+        assertEquals(1, tracker.update(emptyList()).size)
+    }
+
+    @Test
+    fun `stale region expires only after repeated content changes`() {
+        val tracker = ProtectionTracker(maxMissedContentChanges = 2)
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val afterFirstChange = tracker.update(emptyList(), contentChanged = true)
+        val afterSecondChange = tracker.update(emptyList(), contentChanged = true)
+
+        assertEquals(1, afterFirstChange.size)
+        assertTrue(afterSecondChange.isEmpty())
     }
 
     @Test
@@ -48,7 +60,6 @@ class ProtectionTrackerTest {
 
         val protected = tracker.update(
             listOf(detection(classId = 1, shouldBlur = false)),
-            nowMs = 1_000L,
         )
 
         assertFalse(protected.any())

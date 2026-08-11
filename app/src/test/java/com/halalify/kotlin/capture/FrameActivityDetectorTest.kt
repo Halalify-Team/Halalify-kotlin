@@ -1,7 +1,7 @@
 package com.halalify.kotlin.capture
 
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class FrameActivityDetectorTest {
@@ -14,11 +14,11 @@ class FrameActivityDetectorTest {
         )
         val frame = IntArray(100) { 0x102030 }
 
-        assertTrue(detector.shouldAnalyze(frame, 0L))
-        assertFalse(detector.shouldAnalyze(frame, 50L))
-        assertTrue(detector.shouldAnalyze(frame, 100L))
-        assertTrue(detector.shouldAnalyze(frame, 200L))
-        assertFalse(detector.shouldAnalyze(frame, 300L))
+        assertEquals(FrameAnalysisReason.INITIAL, detector.analysisReason(frame, 0L))
+        assertNull(detector.analysisReason(frame, 50L))
+        assertEquals(FrameAnalysisReason.STABILIZATION, detector.analysisReason(frame, 100L))
+        assertEquals(FrameAnalysisReason.STABILIZATION, detector.analysisReason(frame, 200L))
+        assertNull(detector.analysisReason(frame, 300L))
     }
 
     @Test
@@ -29,9 +29,12 @@ class FrameActivityDetectorTest {
             for (index in 0 until 4) this[index] = 0xF0F0F0
         }
 
-        detector.shouldAnalyze(original, 0L)
+        detector.analysisReason(original, 0L)
 
-        assertTrue(detector.shouldAnalyze(changed, 100L))
+        assertEquals(
+            FrameAnalysisReason.CONTENT_CHANGED,
+            detector.analysisReason(changed, 100L),
+        )
     }
 
     @Test
@@ -42,9 +45,12 @@ class FrameActivityDetectorTest {
         )
         val frame = IntArray(100) { 0x101010 }
 
-        detector.shouldAnalyze(frame, 0L)
+        detector.analysisReason(frame, 0L)
 
-        assertFalse(detector.shouldAnalyze(frame, 999L))
-        assertTrue(detector.shouldAnalyze(frame, 1_000L))
+        assertNull(detector.analysisReason(frame, 999L))
+        assertEquals(
+            FrameAnalysisReason.SAFETY_REFRESH,
+            detector.analysisReason(frame, 1_000L),
+        )
     }
 }

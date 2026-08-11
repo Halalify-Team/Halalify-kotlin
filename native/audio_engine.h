@@ -8,14 +8,14 @@
 #include <string>
 #include <vector>
 
-#include "backends/audio_litert_backend.h"
+#include "backends/audio_inference_backend.h"
 #include "halalify_audio.h"
 
 namespace halalify {
 
 class AudioEngine {
 public:
-    explicit AudioEngine(std::unique_ptr<AudioLiteRtBackend> backend);
+    explicit AudioEngine(std::unique_ptr<AudioInferenceBackend> backend);
     bool Initialize(
             const uint8_t* model_data,
             size_t model_size,
@@ -31,7 +31,7 @@ public:
 private:
     bool ValidateConfig(const ha_audio_config& config, std::string* error) const;
 
-    std::unique_ptr<AudioLiteRtBackend> backend_;
+    std::unique_ptr<AudioInferenceBackend> backend_;
     mutable std::mutex mutex_;
     ha_audio_config config_{};
     std::vector<float> input_;

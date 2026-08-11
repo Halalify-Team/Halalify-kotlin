@@ -6,6 +6,7 @@ import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class MusicClassification(
     val musicProbability: Float,
@@ -22,18 +23,10 @@ internal data class MusicClassification(
 internal class YamnetMusicClassifier(
     context: Context,
 ) : AutoCloseable {
-    private val yamnet = InterpreterApi.create(
-        context.assetBuffer(YAMNET_ASSET),
-        InterpreterApi.Options()
-            .setNumThreads(2)
-            .setRuntime(InterpreterApi.Options.TfLiteRuntime.PREFER_SYSTEM_OVER_APPLICATION),
-    )
-    private val head = InterpreterApi.create(
-        context.assetBuffer(HEAD_ASSET),
-        InterpreterApi.Options()
-            .setNumThreads(2)
-            .setRuntime(InterpreterApi.Options.TfLiteRuntime.PREFER_SYSTEM_OVER_APPLICATION),
-    )
+    private val interpreters = context.createInterpreters()
+    private val yamnet = interpreters.first
+    private val head = interpreters.second
+    private val closed = AtomicBoolean(false)
 
     private val waveform = FloatArray(YAMNET_SAMPLES)
     private val yamnetScores = Array(1) { FloatArray(YAMNET_CLASSES) }
@@ -74,9 +67,27 @@ internal class YamnetMusicClassifier(
     }
 
     override fun close() {
-        head.close()
-        yamnet.close()
+        if (!closed.compareAndSet(false, true)) return
+        try {
+            head.close()
+        } finally {
+            yamnet.close()
+        }
     }
+
+    private fun Context.createInterpreters(): Pair<InterpreterApi, InterpreterApi> {
+        val yamnetInterpreter = InterpreterApi.create(assetBuffer(YAMNET_ASSET), options())
+        return try {
+            yamnetInterpreter to InterpreterApi.create(assetBuffer(HEAD_ASSET), options())
+        } catch (error: Exception) {
+            yamnetInterpreter.close()
+            throw error
+        }
+    }
+
+    private fun options() = InterpreterApi.Options()
+        .setNumThreads(2)
+        .setRuntime(InterpreterApi.Options.TfLiteRuntime.PREFER_SYSTEM_OVER_APPLICATION)
 
     private fun softmax(logits: FloatArray): FloatArray {
         var maximum = Float.NEGATIVE_INFINITY

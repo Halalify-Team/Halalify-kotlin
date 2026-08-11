@@ -16,6 +16,14 @@ internal class FrameActivityDetector(
     private var lastAnalysisAtMs = Long.MIN_VALUE
     private var remainingBurstAnalyses = 0
 
+    init {
+        require(changedPixelRatio in 0F..1F) { "Changed pixel ratio must be between 0 and 1." }
+        require(channelDifference >= 0) { "Channel difference must not be negative." }
+        require(safetyRefreshMs > 0L) { "Safety refresh interval must be positive." }
+        require(burstAnalyses > 0) { "Burst analysis count must be positive." }
+        require(burstIntervalMs >= 0L) { "Burst interval must not be negative." }
+    }
+
     fun analysisReason(sample: IntArray, nowMs: Long): FrameAnalysisReason? {
         val previous = baseline
         if (previous == null || previous.size != sample.size) {

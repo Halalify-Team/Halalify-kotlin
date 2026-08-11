@@ -1,13 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Requested at runtime only when the optional playback-audio monitor is enabled. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@drawable/ic_halalify"
         android:label="Halalify"
+        android:roundIcon="@drawable/ic_halalify"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
@@ -18,7 +24,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".capture.AudioCaptureService"
+            android:name=".capture.ProtectionCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>

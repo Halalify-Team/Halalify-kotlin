@@ -1,13 +1,13 @@
 package com.halalify.kotlin.audio
 
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.os.Build
+import androidx.annotation.RequiresApi
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -23,23 +23,30 @@ internal sealed interface AudioMonitorEvent {
     data class Failed(val reason: String) : AudioMonitorEvent
 }
 
+internal interface AudioMonitor : Closeable {
+    fun start()
+}
+
 /** Captures playback permitted by Android and feeds fixed mono PCM frames to the AI core. */
-@TargetApi(Build.VERSION_CODES.Q)
+@RequiresApi(Build.VERSION_CODES.Q)
 internal class PlaybackAudioMonitor(
     private val mediaProjection: MediaProjection,
     private val processor: AudioFrameProcessor?,
     private val onSpeechFrame: (ShortArray) -> Unit = {},
     private val onMusicDetected: () -> Unit = {},
     private val onEvent: (AudioMonitorEvent) -> Unit,
-) : Closeable {
+) : AudioMonitor {
     private val running = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+    private val processorClosed = AtomicBoolean(false)
     private var audioRecord: AudioRecord? = null
     private var captureThread: Thread? = null
     private var consecutiveMusicFrames = 0
     private var musicActionTriggered = false
 
     @SuppressLint("MissingPermission")
-    fun start() {
+    override fun start() {
+        check(!closed.get()) { "Playback audio monitor is closed." }
         check(running.compareAndSet(false, true)) { "Playback audio monitor is already running." }
         try {
             val playbackConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
@@ -73,11 +80,12 @@ internal class PlaybackAudioMonitor(
                 "halalify-playback-audio",
             ).apply { start() }
             onEvent(AudioMonitorEvent.Started(modelActive = processor != null))
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             running.set(false)
             audioRecord?.release()
             audioRecord = null
-            processor?.close()
+            closed.set(true)
+            closeProcessor()
             onEvent(AudioMonitorEvent.Failed(error.message ?: error.javaClass.simpleName))
         }
     }
@@ -101,7 +109,7 @@ internal class PlaybackAudioMonitor(
                     error("Playback audio read failed with code $read.")
                 }
             }
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             if (running.getAndSet(false)) {
                 onEvent(AudioMonitorEvent.Failed(error.message ?: error.javaClass.simpleName))
             }
@@ -139,16 +147,21 @@ internal class PlaybackAudioMonitor(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         val wasRunning = running.getAndSet(false)
         if (wasRunning) runCatching { audioRecord?.stop() }
         val thread = captureThread
         if (thread != null && thread !== Thread.currentThread()) runCatching { thread.join(1_000) }
         captureThread = null
-        audioRecord?.release()
+        runCatching { audioRecord?.release() }
         audioRecord = null
         consecutiveMusicFrames = 0
         musicActionTriggered = false
-        processor?.close()
+        closeProcessor()
+    }
+
+    private fun closeProcessor() {
+        if (processorClosed.compareAndSet(false, true)) processor?.close()
     }
 
     private companion object {

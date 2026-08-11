@@ -1,6 +1,7 @@
 package com.halalify.kotlin.audio
 
 import android.content.Context
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Connects the YAMNet detector to the streaming DTLN separator. */
 internal class YamnetDtlnAudioProcessor(
@@ -18,6 +19,7 @@ internal class YamnetDtlnAudioProcessor(
 
     override val frameSamples: Int = FRAME_SAMPLES
     val isolationAvailable: Boolean get() = separator != null
+    private val closed = AtomicBoolean(false)
 
     @Synchronized
     override fun process(pcm: ShortArray): AudioIsolationResult {
@@ -34,6 +36,7 @@ internal class YamnetDtlnAudioProcessor(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         separator?.close()
         classifier.close()
     }

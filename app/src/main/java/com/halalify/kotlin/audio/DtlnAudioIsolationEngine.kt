@@ -5,6 +5,7 @@ import org.tensorflow.lite.InterpreterApi
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -20,14 +21,10 @@ import kotlin.math.sin
 internal class DtlnAudioIsolationEngine(
     context: Context,
 ) : AutoCloseable {
-    private val firstCore = InterpreterApi.create(
-        context.assetBuffer(FIRST_MODEL_ASSET),
-        options(),
-    )
-    private val secondCore = InterpreterApi.create(
-        context.assetBuffer(SECOND_MODEL_ASSET),
-        options(),
-    )
+    private val interpreters = context.createInterpreters()
+    private val firstCore = interpreters.first
+    private val secondCore = interpreters.second
+    private val closed = AtomicBoolean(false)
     private val fft = RealFft(BLOCK_LENGTH)
     private val inputWindow = FloatArray(BLOCK_LENGTH)
     private val outputWindow = FloatArray(BLOCK_LENGTH)
@@ -113,8 +110,22 @@ internal class DtlnAudioIsolationEngine(
     }
 
     override fun close() {
-        secondCore.close()
-        firstCore.close()
+        if (!closed.compareAndSet(false, true)) return
+        try {
+            secondCore.close()
+        } finally {
+            firstCore.close()
+        }
+    }
+
+    private fun Context.createInterpreters(): Pair<InterpreterApi, InterpreterApi> {
+        val first = InterpreterApi.create(assetBuffer(FIRST_MODEL_ASSET), options())
+        return try {
+            first to InterpreterApi.create(assetBuffer(SECOND_MODEL_ASSET), options())
+        } catch (error: Exception) {
+            first.close()
+            throw error
+        }
     }
 
     private fun options() = InterpreterApi.Options()

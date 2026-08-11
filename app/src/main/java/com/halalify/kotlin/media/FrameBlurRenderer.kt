@@ -8,14 +8,22 @@ import com.halalify.kotlin.model.Detection
 import kotlin.math.ceil
 import kotlin.math.floor
 
+internal data class FrameBlurResult(
+    val blurredCount: Int,
+    val overlayBitmap: Bitmap?,
+)
+
 internal object FrameBlurRenderer {
-    fun blurSelectedDetections(bitmap: Bitmap, detections: List<Detection>): Int {
+    fun renderSelectedDetections(bitmap: Bitmap, detections: List<Detection>): FrameBlurResult {
         val selected = detections.filter(Detection::shouldBlur)
-        if (selected.isEmpty()) return 0
+        if (selected.isEmpty()) return FrameBlurResult(0, null)
 
         val source = bitmap.copy(Bitmap.Config.ARGB_8888, false)
-        val canvas = Canvas(bitmap)
+        val overlay = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val previewCanvas = Canvas(bitmap)
+        val overlayCanvas = Canvas(overlay)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        var blurredCount = 0
         try {
             selected.forEach { detection ->
                 val rect = detection.toExpandedRect(bitmap.width, bitmap.height) ?: return@forEach
@@ -23,14 +31,20 @@ internal object FrameBlurRenderer {
                 val tinyWidth = (rect.width() / BLUR_SCALE).coerceAtLeast(1)
                 val tinyHeight = (rect.height() / BLUR_SCALE).coerceAtLeast(1)
                 val tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, true)
-                canvas.drawBitmap(tiny, null, rect, paint)
+                previewCanvas.drawBitmap(tiny, null, rect, paint)
+                overlayCanvas.drawBitmap(tiny, null, rect, paint)
+                blurredCount += 1
                 if (tiny !== patch) tiny.recycle()
                 patch.recycle()
             }
         } finally {
             source.recycle()
         }
-        return selected.size
+        if (blurredCount == 0) {
+            overlay.recycle()
+            return FrameBlurResult(0, null)
+        }
+        return FrameBlurResult(blurredCount, overlay)
     }
 
     private fun Detection.toExpandedRect(width: Int, height: Int): Rect? {

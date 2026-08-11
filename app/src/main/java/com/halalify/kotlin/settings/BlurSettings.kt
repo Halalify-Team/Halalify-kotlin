@@ -1,6 +1,7 @@
 package com.halalify.kotlin.settings
 
 import android.content.Context
+import androidx.core.content.edit
 
 internal enum class BlurTarget(val title: String, val description: String) {
     FEMALE("Female", "Blur detections classified as female."),
@@ -19,12 +20,11 @@ internal data class BlurSettings(
     val style: BlurStyle = BlurStyle.BLUR,
     val isolateMusic: Boolean = false,
 ) {
-    /** Model mapping verified in the extracted web integration: a=female, b=male. */
-    fun shouldBlurLabel(label: String): Boolean = when (label.lowercase()) {
-        "a" -> target == BlurTarget.FEMALE
-        "b" -> target == BlurTarget.MALE
-        else -> false
-    }
+    val hasVisualProtection: Boolean
+        get() = blurImages || blurVideos
+
+    val hasEnabledProtection: Boolean
+        get() = hasVisualProtection || isolateMusic
 }
 
 internal class BlurSettingsRepository(context: Context) {
@@ -43,13 +43,13 @@ internal class BlurSettingsRepository(context: Context) {
     )
 
     fun save(settings: BlurSettings) {
-        preferences.edit()
-            .putString(KEY_TARGET, settings.target.name)
-            .putBoolean(KEY_BLUR_IMAGES, settings.blurImages)
-            .putBoolean(KEY_BLUR_VIDEOS, settings.blurVideos)
-            .putString(KEY_BLUR_STYLE, settings.style.name)
-            .putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
-            .apply()
+        preferences.edit {
+            putString(KEY_TARGET, settings.target.name)
+            putBoolean(KEY_BLUR_IMAGES, settings.blurImages)
+            putBoolean(KEY_BLUR_VIDEOS, settings.blurVideos)
+            putString(KEY_BLUR_STYLE, settings.style.name)
+            putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
+        }
     }
 
     private companion object {

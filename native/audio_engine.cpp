@@ -3,11 +3,12 @@
 #include <new>
 #include <utility>
 
+#include "backends/audio_litert_backend.h"
 #include "core/audio_signal.h"
 
 namespace halalify {
 
-AudioEngine::AudioEngine(std::unique_ptr<AudioLiteRtBackend> backend)
+AudioEngine::AudioEngine(std::unique_ptr<AudioInferenceBackend> backend)
     : backend_(std::move(backend)) {}
 
 bool AudioEngine::ValidateConfig(const ha_audio_config& config, std::string* error) const {
@@ -56,6 +57,10 @@ ha_status AudioEngine::Process(
     }
     NormalizePcm16(input_pcm, input_samples, &input_);
     if (!backend_->Invoke(input_.data(), input_.size(), &output_, &last_error_)) {
+        return HA_STATUS_INFERENCE_ERROR;
+    }
+    if (output_.size() != required) {
+        last_error_ = "Audio inference output does not match the configured frame size.";
         return HA_STATUS_INFERENCE_ERROR;
     }
     FloatToPcm16(output_.data(), output_.size(), speech_pcm);

@@ -20,6 +20,12 @@ internal class ProtectionTracker(
 
     private val tracks = mutableListOf<Track>()
 
+    init {
+        require(maxMissedContentChanges > 0) { "Missed content-change limit must be positive." }
+        require(matchingIou in 0F..1F) { "Matching IoU must be between 0 and 1." }
+        require(smoothingAlpha in 0F..1F) { "Smoothing alpha must be between 0 and 1." }
+    }
+
     fun update(
         detections: List<Detection>,
         contentChanged: Boolean = false,

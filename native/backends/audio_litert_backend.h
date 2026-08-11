@@ -1,10 +1,9 @@
 #ifndef HALALIFY_BACKENDS_AUDIO_LITERT_BACKEND_H_
 #define HALALIFY_BACKENDS_AUDIO_LITERT_BACKEND_H_
 
-#include <cstddef>
-#include <cstdint>
-#include <string>
 #include <vector>
+
+#include "audio_inference_backend.h"
 
 struct TfLiteInterpreter;
 struct TfLiteInterpreterOptions;
@@ -12,10 +11,10 @@ struct TfLiteModel;
 
 namespace halalify {
 
-class AudioLiteRtBackend final {
+class AudioLiteRtBackend final : public AudioInferenceBackend {
 public:
     AudioLiteRtBackend() = default;
-    ~AudioLiteRtBackend();
+    ~AudioLiteRtBackend() override;
     AudioLiteRtBackend(const AudioLiteRtBackend&) = delete;
     AudioLiteRtBackend& operator=(const AudioLiteRtBackend&) = delete;
 
@@ -24,12 +23,12 @@ public:
             size_t model_size,
             size_t frame_samples,
             int num_threads,
-            std::string* error);
+            std::string* error) override;
     bool Invoke(
             const float* input,
             size_t input_count,
             std::vector<float>* output,
-            std::string* error);
+            std::string* error) override;
 
 private:
     void Reset();

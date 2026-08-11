@@ -13,13 +13,20 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.annotation.RequiresApi
 import java.io.Closeable
 import kotlin.math.roundToInt
 
+internal interface ProtectionOverlay : Closeable {
+    /** Takes ownership of every bitmap in [regions]. */
+    fun update(regions: List<OverlayRegion>)
+}
+
+@RequiresApi(Build.VERSION_CODES.O)
 internal class DeviceBlurOverlay(
     context: Context,
     private val onError: (String) -> Unit,
-) : Closeable {
+) : ProtectionOverlay {
     private data class OverlayWindow(
         val view: BlurOverlayView,
         val params: WindowManager.LayoutParams,
@@ -32,7 +39,7 @@ internal class DeviceBlurOverlay(
     @Volatile private var closed = false
 
     /** Takes ownership of every bitmap in [regions]. */
-    fun update(regions: List<OverlayRegion>) {
+    override fun update(regions: List<OverlayRegion>) {
         if (closed) {
             regions.recycleBitmaps()
             return
@@ -119,7 +126,7 @@ internal class DeviceBlurOverlay(
             x = bounds.left
             y = bounds.top
             title = "Halalify protected region $index"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
@@ -169,14 +176,12 @@ internal class DeviceBlurOverlay(
     private fun List<OverlayRegion>.recycleBitmaps() {
         forEach { region ->
             if (!region.bitmap.isRecycled) region.bitmap.recycle()
-            if (!region.fallbackBitmap.isRecycled) region.fallbackBitmap.recycle()
         }
     }
 
     private fun OverlayRegion.takeBitmapForOverlay(): Bitmap {
-        if (!bitmap.isRecycled) bitmap.recycle()
-        fallbackBitmap.prepareToDraw()
-        return fallbackBitmap
+        bitmap.prepareToDraw()
+        return bitmap
     }
 
     private class BlurOverlayView(

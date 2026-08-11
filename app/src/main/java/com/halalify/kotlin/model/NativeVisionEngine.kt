@@ -24,6 +24,17 @@ internal data class Detection(
 
 private const val DETECTION_FIELDS = 7
 
+internal interface VisionProcessor : Closeable {
+    fun process(
+        rgbaBuffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        rotationDegrees: Int,
+        timestampNs: Long,
+    ): List<Detection>
+}
+
 internal fun FloatArray.asListOfDetections(): List<Detection> {
     check(size % DETECTION_FIELDS == 0) { "Native detection result is malformed." }
     return buildList(size / DETECTION_FIELDS) {
@@ -43,7 +54,7 @@ internal fun FloatArray.asListOfDetections(): List<Detection> {
     }
 }
 
-internal class NativeVisionEngine(context: Context, target: BlurTarget) : Closeable {
+internal class NativeVisionEngine(context: Context, target: BlurTarget) : VisionProcessor {
     private var nativeHandle = nativeCreate(
         context.assets,
         MODEL_ASSET,
@@ -51,7 +62,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Closea
     )
 
     @Synchronized
-    fun process(
+    override fun process(
         rgbaBuffer: ByteBuffer,
         width: Int,
         height: Int,

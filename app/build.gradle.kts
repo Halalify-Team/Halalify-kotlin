@@ -8,20 +8,25 @@ val tfliteNative by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
 }
+val tfliteNativeArchives = tfliteNative.incoming.artifactView { }.files
 val tfliteNativeDirectory = layout.buildDirectory.dir("generated/tflite-native")
 val extractTfliteNative by tasks.registering(Sync::class) {
-    from({ tfliteNative.map { dependency -> zipTree(dependency) } })
+    from(
+        tfliteNativeArchives.elements.map { archives ->
+            archives.map { archive -> zipTree(archive.asFile) }
+        },
+    )
     into(tfliteNativeDirectory)
 }
 
 android {
     namespace = "com.halalify.kotlin"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.halalify.kotlin"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
@@ -61,12 +66,12 @@ android {
 
 }
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2025.06.00"))
-    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
+    implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
-    implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
-    tfliteNative("com.google.android.gms:play-services-tflite-java:16.4.0") {
+    implementation("com.google.android.gms:play-services-tflite-java:16.5.0")
+    tfliteNative("com.google.android.gms:play-services-tflite-java:16.5.0") {
         isTransitive = false
     }
     testImplementation("junit:junit:4.13.2")

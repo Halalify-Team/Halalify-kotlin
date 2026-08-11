@@ -2,6 +2,7 @@ package com.halalify.kotlin.capture
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 internal data class CaptureUiState(
     val isCapturing: Boolean = false,
@@ -11,32 +12,25 @@ internal data class CaptureUiState(
     val previewJpeg: ByteArray? = null,
 )
 
-internal object CaptureSessionStore {
+internal interface CaptureStatePublisher {
+    val isPreviewRequested: Boolean
+    fun updateState(transform: (CaptureUiState) -> CaptureUiState)
+}
+
+internal object CaptureSessionStore : CaptureStatePublisher {
     private val mutableState = MutableStateFlow(CaptureUiState())
     val state = mutableState.asStateFlow()
-    @Volatile var isPreviewRequested: Boolean = false
+    @Volatile override var isPreviewRequested: Boolean = false
         private set
 
     fun setPreviewRequested(requested: Boolean) {
         isPreviewRequested = requested
-        if (!requested && mutableState.value.previewJpeg != null) {
-            update(previewJpeg = null)
+        if (!requested) {
+            updateState { current -> current.copy(previewJpeg = null) }
         }
     }
 
-    fun update(
-        isCapturing: Boolean = mutableState.value.isCapturing,
-        targetLabel: String? = mutableState.value.targetLabel,
-        message: String = mutableState.value.message,
-        audioStatus: String? = mutableState.value.audioStatus,
-        previewJpeg: ByteArray? = mutableState.value.previewJpeg,
-    ) {
-        mutableState.value = CaptureUiState(
-            isCapturing = isCapturing,
-            targetLabel = targetLabel,
-            message = message,
-            audioStatus = audioStatus,
-            previewJpeg = previewJpeg,
-        )
+    override fun updateState(transform: (CaptureUiState) -> CaptureUiState) {
+        mutableState.update(transform)
     }
 }

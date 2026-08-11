@@ -38,7 +38,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +53,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurStyle
@@ -90,20 +88,15 @@ private val HalalifyColorScheme: ColorScheme = darkColorScheme(
 @Composable
 internal fun HalalifyApp(
     initialSettings: BlurSettings,
+    captureState: CaptureUiState,
     onSave: (BlurSettings) -> Unit,
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
 ) {
-    var target by remember(initialSettings) { mutableStateOf(initialSettings.target) }
-    var blurImages by remember(initialSettings) { mutableStateOf(initialSettings.blurImages) }
-    var blurVideos by remember(initialSettings) { mutableStateOf(initialSettings.blurVideos) }
-    var blurStyle by remember(initialSettings) { mutableStateOf(initialSettings.style) }
-    var isolateMusic by remember(initialSettings) { mutableStateOf(initialSettings.isolateMusic) }
-    val captureState by CaptureSessionStore.state.collectAsState()
-    val currentSettings = BlurSettings(target, blurImages, blurVideos, blurStyle, isolateMusic)
+    var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
 
-    LaunchedEffect(currentSettings) {
-        onSave(currentSettings)
+    LaunchedEffect(settings) {
+        onSave(settings)
     }
 
     MaterialTheme(colorScheme = HalalifyColorScheme) {
@@ -113,7 +106,7 @@ internal fun HalalifyApp(
             bottomBar = {
                 PrimaryActionBar(
                     isCapturing = captureState.isCapturing,
-                    settings = currentSettings,
+                    settings = settings,
                     onStartCapture = onStartCapture,
                     onStopCapture = onStopCapture,
                 )
@@ -126,7 +119,12 @@ internal fun HalalifyApp(
                 contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                item { CaptureStatusCard(captureState = captureState, target = target) }
+                item {
+                    CaptureStatusCard(
+                        captureState = captureState,
+                        target = settings.target,
+                    )
+                }
 
                 captureState.previewJpeg?.let { jpeg ->
                     item { ScreenPreview(jpeg = jpeg) }
@@ -144,9 +142,9 @@ internal fun HalalifyApp(
                             },
                         )
                         TargetSelector(
-                            selected = target,
+                            selected = settings.target,
                             enabled = !captureState.isCapturing,
-                            onSelect = { target = it },
+                            onSelect = { target -> settings = settings.copy(target = target) },
                         )
                     }
                 }
@@ -159,9 +157,9 @@ internal fun HalalifyApp(
                             description = "Select how protected detections should appear on screen.",
                         )
                         StyleSelector(
-                            selected = blurStyle,
+                            selected = settings.style,
                             enabled = !captureState.isCapturing,
-                            onSelect = { blurStyle = it },
+                            onSelect = { style -> settings = settings.copy(style = style) },
                         )
                     }
                 }
@@ -178,27 +176,33 @@ internal fun HalalifyApp(
                                 shortLabel = "IMG",
                                 title = "Images",
                                 description = "Protect detections in still images.",
-                                checked = blurImages,
+                                checked = settings.blurImages,
                                 enabled = !captureState.isCapturing,
-                                onCheckedChange = { blurImages = it },
+                                onCheckedChange = { enabled ->
+                                    settings = settings.copy(blurImages = enabled)
+                                },
                             )
                             HorizontalDivider(color = Outline)
                             PreferenceToggle(
                                 shortLabel = "VID",
                                 title = "Video",
                                 description = "Protect detections in changing frames.",
-                                checked = blurVideos,
+                                checked = settings.blurVideos,
                                 enabled = !captureState.isCapturing,
-                                onCheckedChange = { blurVideos = it },
+                                onCheckedChange = { enabled ->
+                                    settings = settings.copy(blurVideos = enabled)
+                                },
                             )
                             HorizontalDivider(color = Outline)
                             PreferenceToggle(
                                 shortLabel = "AUD",
                                 title = "Music isolation",
                                 description = "Detect music locally, mute media sound, and run speech isolation.",
-                                checked = isolateMusic,
+                                checked = settings.isolateMusic,
                                 enabled = !captureState.isCapturing,
-                                onCheckedChange = { isolateMusic = it },
+                                onCheckedChange = { enabled ->
+                                    settings = settings.copy(isolateMusic = enabled)
+                                },
                             )
                         }
                     }

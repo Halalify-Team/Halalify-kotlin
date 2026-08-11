@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.settings.BlurStyle
 import kotlin.math.ceil
@@ -15,10 +17,8 @@ internal data class FrameBlurResult(
 )
 
 internal data class OverlayRegion(
-    /** Full-colour source used by Android's GPU blur on API 31+. */
+    /** Fully obscured bitmap owned by the overlay after [ProtectionOverlay.update]. */
     val bitmap: Bitmap,
-    /** Already-obscured source used if RenderEffect is unavailable. */
-    val fallbackBitmap: Bitmap,
     val bounds: Rect,
     val sourceWidth: Int,
     val sourceHeight: Int,
@@ -35,11 +35,10 @@ internal object FrameBlurRenderer {
 
         val previewCanvas = Canvas(bitmap)
         val protectedPaint = Paint().apply {
-            // HaramBlur's censor effect is an opaque mosaic. Filtering while
-            // enlarging the reduced patch would blend the cells and make the
-            // protected subject visible through a soft blur.
-            isAntiAlias = false
-            isFilterBitmap = false
+            // Both styles stay opaque. Filtering distinguishes a dense smooth
+            // blur from the deliberately hard-edged pixelated style.
+            isAntiAlias = style == BlurStyle.BLUR
+            isFilterBitmap = style == BlurStyle.BLUR
             isDither = false
         }
         var blurredCount = 0
@@ -57,7 +56,7 @@ internal object FrameBlurRenderer {
             }
             overlayRegions.forEach { region ->
                 previewCanvas.drawBitmap(
-                    region.fallbackBitmap,
+                    region.bitmap,
                     region.bounds.left.toFloat(),
                     region.bounds.top.toFloat(),
                     protectedPaint,
@@ -66,7 +65,6 @@ internal object FrameBlurRenderer {
         } catch (error: Throwable) {
             overlayRegions.forEach { region ->
                 region.bitmap.recycle()
-                region.fallbackBitmap.recycle()
             }
             throw error
         }
@@ -85,26 +83,20 @@ internal object FrameBlurRenderer {
         var tiny: Bitmap? = null
         var protectedPatch: Bitmap? = null
         try {
-            val sampleSize = if (style == BlurStyle.PIXELATED) {
-                MOSAIC_BLOCK_SIZE
-            } else {
-                LEGACY_BLUR_SAMPLE_SIZE
-            }
+            val sampleSize = CENSOR_SAMPLE_SIZE
             val tinyWidth = ceil(rect.width().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             val tinyHeight = ceil(rect.height().toFloat() / sampleSize).toInt().coerceAtLeast(1)
-            tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, true)
-            protectedPatch = Bitmap.createBitmap(
+            tiny = patch.scale(tinyWidth, tinyHeight)
+            protectedPatch = createBitmap(
                 rect.width(),
                 rect.height(),
-                Bitmap.Config.ARGB_8888,
             )
             val patchCanvas = Canvas(protectedPatch)
             val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
             patchCanvas.drawBitmap(tiny, null, patchBounds, protectedPaint)
             protectedPatch.setHasAlpha(false)
             return OverlayRegion(
-                bitmap = patch,
-                fallbackBitmap = protectedPatch,
+                bitmap = protectedPatch,
                 bounds = Rect(rect),
                 sourceWidth = source.width,
                 sourceHeight = source.height,
@@ -115,6 +107,7 @@ internal object FrameBlurRenderer {
             throw error
         } finally {
             if (tiny != null && tiny !== patch) tiny.recycle()
+            patch.recycle()
         }
     }
 
@@ -132,10 +125,7 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    private const val MOSAIC_BLOCK_SIZE = 32
-    // Use the same large cells for the default blur so facial details cannot
-    // remain recognizable between neighbouring mosaic samples.
-    private const val LEGACY_BLUR_SAMPLE_SIZE = 32
+    private const val CENSOR_SAMPLE_SIZE = 32
     // The detector often returns a tight body box. HaramBlur visually covers
     // the whole subject, so extend only the rendered censor region around it.
     private const val BOX_PADDING_RATIO = 0.35F

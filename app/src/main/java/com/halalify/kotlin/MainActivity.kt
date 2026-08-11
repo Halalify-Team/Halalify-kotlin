@@ -7,16 +7,18 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
-import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.net.toUri
 import com.google.android.gms.tflite.java.TfLiteNative
-import com.halalify.kotlin.capture.AudioCaptureService
 import com.halalify.kotlin.capture.CaptureSessionStore
+import com.halalify.kotlin.capture.ProtectionCaptureService
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import com.halalify.kotlin.ui.HalalifyApp
@@ -34,55 +36,69 @@ class MainActivity : ComponentActivity() {
         if (granted && settings != null) {
             continueStartingCapture(settings)
         } else {
-            CaptureSessionStore.update(
-                message = "Audio permission is required only when music isolation is enabled.",
-            )
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Audio permission is required only when music isolation is enabled.",
+                )
+            }
         }
     }
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
         if (Settings.canDrawOverlays(this)) {
-            initializeVisionAndRequestCapture()
+            initializeRuntimeAndRequestCapture()
         } else {
-            CaptureSessionStore.update(
-                message = "Display-over-other-apps permission is required for device-level blur.",
-            )
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Display-over-other-apps permission is required for device-level blur.",
+                )
+            }
         }
     }
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != Activity.RESULT_OK || result.data == null) {
-            CaptureSessionStore.update(message = "Screen capture permission was not granted.")
+            CaptureSessionStore.updateState { current ->
+                current.copy(message = "Screen capture permission was not granted.")
+            }
             startService(
-                Intent(this, AudioCaptureService::class.java).setAction(AudioCaptureService.ACTION_STOP),
+                Intent(this, ProtectionCaptureService::class.java)
+                    .setAction(ProtectionCaptureService.ACTION_STOP),
             )
             return@registerForActivityResult
         }
-        val serviceIntent = Intent(this, AudioCaptureService::class.java).apply {
-            action = AudioCaptureService.ACTION_START
-            putExtra(AudioCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-            putExtra(AudioCaptureService.EXTRA_PROJECTION_DATA, result.data)
+        val serviceIntent = Intent(this, ProtectionCaptureService::class.java).apply {
+            action = ProtectionCaptureService.ACTION_START
+            putExtra(ProtectionCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+            putExtra(ProtectionCaptureService.EXTRA_PROJECTION_DATA, result.data)
         }
         try {
             // The service was started while this activity was visible, before Android's
             // app-selection screen moved Halalify to the background.
             startService(serviceIntent)
-        } catch (error: Throwable) {
-            CaptureSessionStore.update(
-                message = "Could not start screen monitoring: ${error.message ?: error.javaClass.simpleName}",
-            )
+        } catch (error: Exception) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Could not start screen monitoring: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
         }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsRepository = BlurSettingsRepository(applicationContext)
         setContent {
+            val captureState by CaptureSessionStore.state.collectAsState()
             HalalifyApp(
                 initialSettings = settingsRepository.load(),
+                captureState = captureState,
                 onSave = settingsRepository::save,
                 onStartCapture = ::startCapture,
                 onStopCapture = {
-                    startService(Intent(this, AudioCaptureService::class.java).setAction(AudioCaptureService.ACTION_STOP))
+                    startService(
+                        Intent(this, ProtectionCaptureService::class.java)
+                            .setAction(ProtectionCaptureService.ACTION_STOP),
+                    )
                 },
             )
         }
@@ -101,7 +117,15 @@ class MainActivity : ComponentActivity() {
     private fun startCapture(settings: BlurSettings) {
         settingsRepository.save(settings)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            CaptureSessionStore.update(message = "This feature needs Android 10 or newer.")
+            CaptureSessionStore.updateState { current ->
+                current.copy(message = "This feature needs Android 10 or newer.")
+            }
+            return
+        }
+        if (!settings.hasEnabledProtection) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(message = "Enable visual protection or music isolation before starting.")
+            }
             return
         }
         if (settings.isolateMusic &&
@@ -116,35 +140,43 @@ class MainActivity : ComponentActivity() {
 
     private fun continueStartingCapture(settings: BlurSettings) {
         settingsRepository.save(settings)
-        if (!Settings.canDrawOverlays(this)) {
-            CaptureSessionStore.update(
-                message = "Allow Halalify to display over other apps, then return here.",
-            )
+        if (settings.hasVisualProtection && !Settings.canDrawOverlays(this)) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Allow Halalify to display over other apps, then return here.",
+                )
+            }
             try {
                 overlayPermissionLauncher.launch(
                     Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName"),
+                        "package:$packageName".toUri(),
                     ),
                 )
-            } catch (error: Throwable) {
-                CaptureSessionStore.update(
-                    message = "Could not open overlay settings: ${error.message ?: error.javaClass.simpleName}",
-                )
+            } catch (error: Exception) {
+                CaptureSessionStore.updateState { current ->
+                    current.copy(
+                        message = "Could not open overlay settings: ${error.message ?: error.javaClass.simpleName}",
+                    )
+                }
             }
             return
         }
-        initializeVisionAndRequestCapture()
+        initializeRuntimeAndRequestCapture()
     }
 
-    private fun initializeVisionAndRequestCapture() {
-        CaptureSessionStore.update(message = "Loading the on-device gender detection model...")
+    private fun initializeRuntimeAndRequestCapture() {
+        CaptureSessionStore.updateState { current ->
+            current.copy(message = "Loading the on-device protection models...")
+        }
         TfLiteNative.initialize(applicationContext)
             .addOnSuccessListener { requestProjection() }
             .addOnFailureListener { error ->
-                CaptureSessionStore.update(
-                    message = "LiteRT could not start: ${error.message ?: error.javaClass.simpleName}",
-                )
+                CaptureSessionStore.updateState { current ->
+                    current.copy(
+                        message = "LiteRT could not start: ${error.message ?: error.javaClass.simpleName}",
+                    )
+                }
             }
     }
 
@@ -153,8 +185,8 @@ class MainActivity : ComponentActivity() {
             // Starting a lightweight service now preserves a legal launch path when the
             // user chooses one app and Android backgrounds this activity before returning.
             startService(
-                Intent(this, AudioCaptureService::class.java)
-                    .setAction(AudioCaptureService.ACTION_PREPARE),
+                Intent(this, ProtectionCaptureService::class.java)
+                    .setAction(ProtectionCaptureService.ACTION_PREPARE),
             )
             val projectionManager = getSystemService(MediaProjectionManager::class.java)
             val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -167,10 +199,12 @@ class MainActivity : ComponentActivity() {
                 projectionManager.createScreenCaptureIntent()
             }
             projectionLauncher.launch(captureIntent)
-        } catch (error: Throwable) {
-            CaptureSessionStore.update(
-                message = "Could not open screen sharing: ${error.message ?: error.javaClass.simpleName}",
-            )
+        } catch (error: Exception) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Could not open screen sharing: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
         }
     }
 }

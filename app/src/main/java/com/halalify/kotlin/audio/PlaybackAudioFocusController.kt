@@ -12,10 +12,14 @@ internal data class MusicBlockResult(
     val mediaMuted: Boolean,
 )
 
+internal interface MusicBlocker : Closeable {
+    fun blockMusic(): MusicBlockResult
+}
+
 /** Pauses cooperative players and mutes the device media stream while protection is active. */
 internal class PlaybackAudioFocusController(
     context: Context,
-) : Closeable {
+) : MusicBlocker {
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private val listener = AudioManager.OnAudioFocusChangeListener { }
     private var request: AudioFocusRequest? = null
@@ -24,13 +28,13 @@ internal class PlaybackAudioFocusController(
     private var volumeBeforeMute: Int? = null
 
     @Synchronized
-    fun blockMusic(): MusicBlockResult = MusicBlockResult(
+    override fun blockMusic(): MusicBlockResult = MusicBlockResult(
         pauseRequested = requestPause(),
         mediaMuted = muteMediaStream(),
     )
 
     @Synchronized
-    fun requestPause(): Boolean {
+    private fun requestPause(): Boolean {
         if (requested) return true
         val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
@@ -80,24 +84,28 @@ internal class PlaybackAudioFocusController(
     @Synchronized
     override fun close() {
         if (mutedByHalalify) {
-            audioManager.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                AudioManager.ADJUST_UNMUTE,
-                0,
-            )
-            val savedVolume = volumeBeforeMute
-            if (savedVolume != null && audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0)
+            runCatching {
+                audioManager.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_UNMUTE,
+                    0,
+                )
+                val savedVolume = volumeBeforeMute
+                if (savedVolume != null && audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0)
+                }
             }
         }
         mutedByHalalify = false
         volumeBeforeMute = null
         if (!requested) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            request?.let { audioManager.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(listener)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                request?.let { audioManager.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.abandonAudioFocus(listener)
+            }
         }
         requested = false
         request = null

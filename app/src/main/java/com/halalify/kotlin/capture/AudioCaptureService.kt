@@ -20,10 +20,12 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import com.halalify.kotlin.media.DeviceBlurOverlay
 import com.halalify.kotlin.media.FrameBlurRenderer
+import com.halalify.kotlin.media.ProtectionTracker
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.model.NativeVisionEngine
 import com.halalify.kotlin.settings.BlurSettingsRepository
@@ -39,6 +41,7 @@ internal class AudioCaptureService : Service() {
     private var visionThread: HandlerThread? = null
     private var visionEngine: NativeVisionEngine? = null
     private var deviceOverlay: DeviceBlurOverlay? = null
+    private val protectionTracker = ProtectionTracker()
     private var lastFrameAt = 0L
     @Volatile private var running = false
     @Volatile private var visionRunning = false
@@ -147,7 +150,7 @@ internal class AudioCaptureService : Service() {
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
                 if (!visionRunning) return@setOnImageAvailableListener
-                val now = System.currentTimeMillis()
+                val now = SystemClock.elapsedRealtime()
                 if (now - lastFrameAt < PREVIEW_INTERVAL_MS) return@setOnImageAvailableListener
                 val plane = image.planes.firstOrNull() ?: return@setOnImageAvailableListener
                 if (plane.pixelStride != RGBA_PIXEL_STRIDE) return@setOnImageAvailableListener
@@ -161,13 +164,17 @@ internal class AudioCaptureService : Service() {
                     timestampNs = image.timestamp,
                 ).orEmpty()
                 if (!visionRunning) return@setOnImageAvailableListener
+                val protectedDetections = protectionTracker.update(
+                    detections,
+                    SystemClock.elapsedRealtime(),
+                )
                 plane.buffer.rewind()
                 val bitmap = plane.toBitmap(image.width, image.height)
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
                 if (cropped !== bitmap) bitmap.recycle()
-                val rendered = FrameBlurRenderer.renderSelectedDetections(cropped, detections)
-                deviceOverlay?.update(rendered.overlayBitmap)
-                    ?: rendered.overlayBitmap?.recycle()
+                val rendered = FrameBlurRenderer.renderSelectedDetections(cropped, protectedDetections)
+                deviceOverlay?.update(rendered.overlayRegions)
+                    ?: rendered.overlayRegions.forEach { region -> region.bitmap.recycle() }
                 updateDetectionStatus(detections, rendered.blurredCount)
                 val stream = ByteArrayOutputStream()
                 cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
@@ -175,7 +182,6 @@ internal class AudioCaptureService : Service() {
                 lastFrameAt = now
                 CaptureSessionStore.update(previewJpeg = stream.toByteArray())
             } catch (error: Throwable) {
-                deviceOverlay?.clear()
                 CaptureSessionStore.update(
                     message = "Vision frame failed: ${error.message ?: error.javaClass.simpleName}",
                 )
@@ -216,6 +222,7 @@ internal class AudioCaptureService : Service() {
         imageReader?.close(); imageReader = null
         visionThread?.quitSafely(); visionThread = null
         visionEngine?.close(); visionEngine = null
+        protectionTracker.reset()
         deviceOverlay?.close(); deviceOverlay = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null

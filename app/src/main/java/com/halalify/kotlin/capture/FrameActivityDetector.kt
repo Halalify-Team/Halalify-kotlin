@@ -54,15 +54,20 @@ internal class FrameActivityDetector(
     private fun changedRatio(previous: IntArray, current: IntArray): Float {
         if (current.isEmpty()) return 0F
         var changed = 0
+        var compared = 0
         for (index in current.indices) {
             val before = previous[index]
             val after = current[index]
+            // Negative values represent samples hidden by our own overlay.
+            // Ignoring them prevents the mosaic from looking like page activity.
+            if (before < 0 || after < 0) continue
+            compared += 1
             val redDifference = kotlin.math.abs((before ushr 16 and 0xFF) - (after ushr 16 and 0xFF))
             val greenDifference = kotlin.math.abs((before ushr 8 and 0xFF) - (after ushr 8 and 0xFF))
             val blueDifference = kotlin.math.abs((before and 0xFF) - (after and 0xFF))
             if (redDifference + greenDifference + blueDifference >= channelDifference) changed += 1
         }
-        return changed.toFloat() / current.size
+        return if (compared > 0) changed.toFloat() / compared else 0F
     }
 
     private fun elapsedSinceLastAnalysis(nowMs: Long): Long =

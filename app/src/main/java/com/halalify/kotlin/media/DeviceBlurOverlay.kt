@@ -72,6 +72,7 @@ internal class DeviceBlurOverlay(
         }
         val displayBounds = currentDisplayBounds()
         regions.forEachIndexed { index, region ->
+            val overlayBitmap = region.takeBitmapForOverlay()
             val scaledBounds = region.bounds.scaleToDisplay(
                 sourceWidth = region.sourceWidth,
                 sourceHeight = region.sourceHeight,
@@ -79,12 +80,15 @@ internal class DeviceBlurOverlay(
             )
             val existing = windows.getOrNull(index)
             if (existing == null) {
-                val view = BlurOverlayView(appContext).apply { replaceBitmap(region.bitmap) }
+                val view = BlurOverlayView(
+                    context = appContext,
+                    smoothScaling = false,
+                ).apply { replaceBitmap(overlayBitmap) }
                 val params = createLayoutParams(scaledBounds, index)
                 windowManager.addView(view, params)
                 windows += OverlayWindow(view, params)
             } else {
-                existing.view.replaceBitmap(region.bitmap)
+                existing.view.replaceBitmap(overlayBitmap)
                 existing.params.setBounds(scaledBounds)
                 windowManager.updateViewLayout(existing.view, existing.params)
             }
@@ -165,13 +169,23 @@ internal class DeviceBlurOverlay(
     private fun List<OverlayRegion>.recycleBitmaps() {
         forEach { region ->
             if (!region.bitmap.isRecycled) region.bitmap.recycle()
+            if (!region.fallbackBitmap.isRecycled) region.fallbackBitmap.recycle()
         }
     }
 
-    private class BlurOverlayView(context: Context) : View(context) {
+    private fun OverlayRegion.takeBitmapForOverlay(): Bitmap {
+        if (!bitmap.isRecycled) bitmap.recycle()
+        fallbackBitmap.prepareToDraw()
+        return fallbackBitmap
+    }
+
+    private class BlurOverlayView(
+        context: Context,
+        smoothScaling: Boolean,
+    ) : View(context) {
         private val paint = Paint().apply {
-            isAntiAlias = false
-            isFilterBitmap = false
+            isAntiAlias = smoothScaling
+            isFilterBitmap = smoothScaling
             isDither = false
         }
         private val destination = Rect()

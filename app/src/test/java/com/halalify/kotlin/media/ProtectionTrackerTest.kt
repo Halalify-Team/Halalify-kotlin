@@ -43,15 +43,13 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `stale region expires only after repeated content changes`() {
-        val tracker = ProtectionTracker(maxMissedContentChanges = 2)
+    fun `stale region expires on the first real content change`() {
+        val tracker = ProtectionTracker(maxMissedContentChanges = 1)
         tracker.update(listOf(detection(shouldBlur = true)))
 
-        val afterFirstChange = tracker.update(emptyList(), contentChanged = true)
-        val afterSecondChange = tracker.update(emptyList(), contentChanged = true)
+        val afterChange = tracker.update(emptyList(), contentChanged = true)
 
-        assertEquals(1, afterFirstChange.size)
-        assertTrue(afterSecondChange.isEmpty())
+        assertTrue(afterChange.isEmpty())
     }
 
     @Test
@@ -63,6 +61,19 @@ class ProtectionTrackerTest {
         )
 
         assertFalse(protected.any())
+    }
+
+    @Test
+    fun `matched region movement is smoothed like HaramBlur`() {
+        val tracker = ProtectionTracker(smoothingAlpha = 0.55F)
+        val first = detection(shouldBlur = true)
+        tracker.update(listOf(first))
+
+        val moved = first.copy(x1 = 0.20F, x2 = 0.70F)
+        val protected = tracker.update(listOf(moved)).single()
+
+        assertEquals(0.155F, protected.x1, 0.0001F)
+        assertEquals(0.655F, protected.x2, 0.0001F)
     }
 
     private fun detection(

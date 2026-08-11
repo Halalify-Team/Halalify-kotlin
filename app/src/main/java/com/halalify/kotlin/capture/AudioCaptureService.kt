@@ -24,6 +24,7 @@ import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionTracker
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.model.NativeVisionEngine
+import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import java.io.ByteArrayOutputStream
 
@@ -34,8 +35,10 @@ internal class AudioCaptureService : Service() {
     private var visionThread: HandlerThread? = null
     private var visionEngine: NativeVisionEngine? = null
     private var deviceOverlay: DeviceBlurOverlay? = null
+    private var blurStyle = BlurStyle.BLUR
     private val protectionTracker = ProtectionTracker()
     private val frameActivityDetector = FrameActivityDetector()
+    private var lastProtectedDetections: List<Detection> = emptyList()
     private var lastChangeCheckAt = 0L
     @Volatile private var visionRunning = false
 
@@ -74,6 +77,7 @@ internal class AudioCaptureService : Service() {
             mediaProjection.registerCallback(projectionCallback, null)
             projection = mediaProjection
             val settings = BlurSettingsRepository(applicationContext).load()
+            blurStyle = settings.style
             check(Settings.canDrawOverlays(this)) {
                 "Display-over-other-apps permission is required for device-level blur."
             }
@@ -112,7 +116,11 @@ internal class AudioCaptureService : Service() {
                 lastChangeCheckAt = now
                 val plane = image.planes.firstOrNull() ?: return@setOnImageAvailableListener
                 if (plane.pixelStride != RGBA_PIXEL_STRIDE) return@setOnImageAvailableListener
-                val sample = plane.sampleGrid(image.width, image.height)
+                val sample = plane.sampleGrid(
+                    width = image.width,
+                    height = image.height,
+                    ignoredRegions = lastProtectedDetections,
+                )
                 val analysisReason = frameActivityDetector.analysisReason(sample, now)
                     ?: return@setOnImageAvailableListener
                 plane.buffer.rewind()
@@ -129,13 +137,21 @@ internal class AudioCaptureService : Service() {
                     detections,
                     contentChanged = analysisReason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
+                lastProtectedDetections = protectedDetections
                 plane.buffer.rewind()
                 val bitmap = plane.toBitmap(image.width, image.height)
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
                 if (cropped !== bitmap) bitmap.recycle()
-                val rendered = FrameBlurRenderer.renderSelectedDetections(cropped, protectedDetections)
+                val rendered = FrameBlurRenderer.renderSelectedDetections(
+                    cropped,
+                    protectedDetections,
+                    blurStyle,
+                )
                 deviceOverlay?.update(rendered.overlayRegions)
-                    ?: rendered.overlayRegions.forEach { region -> region.bitmap.recycle() }
+                    ?: rendered.overlayRegions.forEach { region ->
+                        region.bitmap.recycle()
+                        region.fallbackBitmap.recycle()
+                    }
                 updateDetectionStatus(detections, rendered.blurredCount)
                 if (CaptureSessionStore.isPreviewRequested) {
                     val stream = ByteArrayOutputStream()
@@ -165,7 +181,11 @@ internal class AudioCaptureService : Service() {
         }
     }
 
-    private fun android.media.Image.Plane.sampleGrid(width: Int, height: Int): IntArray {
+    private fun android.media.Image.Plane.sampleGrid(
+        width: Int,
+        height: Int,
+        ignoredRegions: List<Detection>,
+    ): IntArray {
         val columns = SAMPLE_COLUMNS.coerceAtMost(width)
         val rows = SAMPLE_ROWS.coerceAtMost(height)
         val sample = IntArray(columns * rows)
@@ -175,6 +195,18 @@ internal class AudioCaptureService : Service() {
             val y = (((row + 0.5F) * height) / rows).toInt().coerceIn(0, height - 1)
             for (column in 0 until columns) {
                 val x = (((column + 0.5F) * width) / columns).toInt().coerceIn(0, width - 1)
+                val normalizedX = x.toFloat() / width
+                val normalizedY = y.toFloat() / height
+                if (ignoredRegions.any { detection ->
+                        val paddingX = (detection.x2 - detection.x1) * OVERLAY_MASK_PADDING_RATIO
+                        val paddingY = (detection.y2 - detection.y1) * OVERLAY_MASK_PADDING_RATIO
+                        normalizedX in (detection.x1 - paddingX)..(detection.x2 + paddingX) &&
+                            normalizedY in (detection.y1 - paddingY)..(detection.y2 + paddingY)
+                    }
+                ) {
+                    sample[outputIndex++] = IGNORED_SAMPLE
+                    continue
+                }
                 val sourceIndex = y * rowStride + x * pixelStride
                 val red = source.get(sourceIndex).toInt() and 0xFF
                 val green = source.get(sourceIndex + 1).toInt() and 0xFF
@@ -202,6 +234,7 @@ internal class AudioCaptureService : Service() {
         visionEngine?.close(); visionEngine = null
         protectionTracker.reset()
         frameActivityDetector.reset()
+        lastProtectedDetections = emptyList()
         deviceOverlay?.close(); deviceOverlay = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null
@@ -238,6 +271,8 @@ internal class AudioCaptureService : Service() {
         private const val RGBA_PIXEL_STRIDE = 4
         private const val SAMPLE_COLUMNS = 20
         private const val SAMPLE_ROWS = 32
+        private const val IGNORED_SAMPLE = -1
+        private const val OVERLAY_MASK_PADDING_RATIO = 0.35F
         private const val TAG = "HalalifyVision"
     }
 }

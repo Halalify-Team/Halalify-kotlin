@@ -53,4 +53,18 @@ class FrameActivityDetectorTest {
             detector.analysisReason(frame, 1_000L),
         )
     }
+
+    @Test
+    fun `changes inside ignored overlay samples do not count as page activity`() {
+        val detector = FrameActivityDetector(
+            burstAnalyses = 1,
+            safetyRefreshMs = 5_000L,
+        )
+        val original = IntArray(100) { 0x101010 }.apply { this[0] = -1 }
+        val overlayChanged = original.copyOf().apply { this[0] = 0xFFFFFF }
+
+        detector.analysisReason(original, 0L)
+
+        assertNull(detector.analysisReason(overlayChanged, 100L))
+    }
 }

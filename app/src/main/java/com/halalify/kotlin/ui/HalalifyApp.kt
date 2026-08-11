@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.settings.BlurSettings
+import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurTarget
 
 private val Background = Color(0xFF071D22)
@@ -53,6 +54,7 @@ internal fun HalalifyApp(
     var target by remember { mutableStateOf(initialSettings.target) }
     var blurImages by remember { mutableStateOf(initialSettings.blurImages) }
     var blurVideos by remember { mutableStateOf(initialSettings.blurVideos) }
+    var blurStyle by remember { mutableStateOf(initialSettings.style) }
     val captureState by CaptureSessionStore.state.collectAsState()
 
     MaterialTheme {
@@ -90,7 +92,7 @@ internal fun HalalifyApp(
                         )
                         Button(
                             onClick = {
-                                val settings = BlurSettings(target, blurImages, blurVideos)
+                                val settings = BlurSettings(target, blurImages, blurVideos, blurStyle)
                                 onSave(settings)
                                 onStartCapture(settings)
                             },
@@ -114,11 +116,23 @@ internal fun HalalifyApp(
                     }
                     Text("The local model blurs only detections matching this target.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
                 } }
+                item { SettingsCard("Protection style") {
+                    BlurStyle.entries.forEach { option ->
+                        FilterChip(
+                            selected = blurStyle == option,
+                            onClick = { blurStyle = option },
+                            label = { Text(option.title) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Accent, selectedLabelColor = Background, labelColor = TextPrimary),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        )
+                        Text(option.description, color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                } }
                 item { SettingsCard("Content type") {
                     ToggleRow("Blur images", "Apply to detected still images.", blurImages) { blurImages = it }
                     ToggleRow("Blur video", "Apply to future captured video frames.", blurVideos) { blurVideos = it }
                     Button(
-                        onClick = { onSave(BlurSettings(target, blurImages, blurVideos)) },
+                        onClick = { onSave(BlurSettings(target, blurImages, blurVideos, blurStyle)) },
                         colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Background),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) { Text("Save blur settings") }

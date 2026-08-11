@@ -5,6 +5,7 @@ import org.tensorflow.lite.InterpreterApi
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 
 internal data class MusicClassification(
     val musicProbability: Float,
@@ -94,7 +95,7 @@ internal class YamnetMusicClassifier(
         assets.openFd(name).use { descriptor ->
             FileInputStream(descriptor.fileDescriptor).channel.use { channel ->
                 return channel.map(
-                    FileInputStream.MapMode.READ_ONLY,
+                    FileChannel.MapMode.READ_ONLY,
                     descriptor.startOffset,
                     descriptor.declaredLength,
                 ).order(ByteOrder.nativeOrder())

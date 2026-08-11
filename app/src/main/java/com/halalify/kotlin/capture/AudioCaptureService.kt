@@ -22,7 +22,10 @@ import android.util.Log
 import com.halalify.kotlin.audio.AudioFrameProcessor
 import com.halalify.kotlin.audio.AudioMonitorEvent
 import com.halalify.kotlin.audio.NativeMusicIsolationEngine
+import com.halalify.kotlin.audio.PlaybackAudioFocusController
 import com.halalify.kotlin.audio.PlaybackAudioMonitor
+import com.halalify.kotlin.audio.YamnetDtlnAudioProcessor
+import com.halalify.kotlin.audio.YamnetMusicClassifier
 import com.halalify.kotlin.media.DeviceBlurOverlay
 import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionTracker
@@ -39,6 +42,8 @@ internal class AudioCaptureService : Service() {
     private var visionThread: HandlerThread? = null
     private var visionEngine: NativeVisionEngine? = null
     private var audioMonitor: PlaybackAudioMonitor? = null
+    private var audioFocusController: PlaybackAudioFocusController? = null
+    @Volatile private var musicPauseRequested = false
     private var deviceOverlay: DeviceBlurOverlay? = null
     private var blurStyle = BlurStyle.BLUR
     private val protectionTracker = ProtectionTracker()
@@ -190,38 +195,62 @@ internal class AudioCaptureService : Service() {
     private fun startAudioMonitoring(mediaProjection: MediaProjection) {
         var modelIssue: String? = null
         val processor: AudioFrameProcessor? = if (
-            NativeMusicIsolationEngine.isModelInstalled(applicationContext)
+            YamnetMusicClassifier.isModelInstalled(applicationContext)
         ) {
-            runCatching { NativeMusicIsolationEngine(applicationContext) }
+            runCatching { YamnetDtlnAudioProcessor(applicationContext) }
                 .onFailure { error ->
                     modelIssue = error.message ?: error.javaClass.simpleName
                 }
                 .getOrNull()
+        } else if (NativeMusicIsolationEngine.isModelInstalled(applicationContext)) {
+            runCatching { NativeMusicIsolationEngine(applicationContext) }
+                .onFailure { error -> modelIssue = error.message ?: error.javaClass.simpleName }
+                .getOrNull()
         } else {
-            modelIssue = "speech-only model asset is not installed"
+            modelIssue = "YAMNet/DTLN audio assets are not installed"
             null
         }
-        PlaybackAudioMonitor(mediaProjection, processor) { event ->
-            val status = when (event) {
-                is AudioMonitorEvent.Started -> if (event.modelActive) {
-                    "Audio: eligible app playback is being captured; the speech-only model is active."
-                } else {
-                    "Audio: capture is active, but isolation is unavailable (${modelIssue ?: "model unavailable"})."
+        audioFocusController?.close()
+        audioFocusController = PlaybackAudioFocusController(applicationContext)
+        musicPauseRequested = false
+        PlaybackAudioMonitor(
+            mediaProjection = mediaProjection,
+            processor = processor,
+            onMusicDetected = {
+                musicPauseRequested = audioFocusController?.requestPause() == true
+                CaptureSessionStore.update(
+                    audioStatus = if (musicPauseRequested) {
+                        "Audio: music confirmed; pause request sent to the playing media app."
+                    } else {
+                        "Audio: music confirmed; the media app did not grant an audio-focus pause."
+                    },
+                )
+            },
+            onEvent = { event ->
+                val status = when (event) {
+                    is AudioMonitorEvent.Started -> if (event.modelActive) {
+                        "Audio: monitoring eligible playback; music detection is active."
+                    } else {
+                        "Audio: capture is active, but the audio AI is unavailable (${modelIssue ?: "model unavailable"})."
+                    }
+                    is AudioMonitorEvent.CapturedOnly -> if (event.rms > AUDIBLE_RMS) {
+                        "Audio: playback detected; waiting for the local music model."
+                    } else {
+                        "Audio: waiting for capturable media playback."
+                    }
+                    is AudioMonitorEvent.Isolated -> if (event.musicDetected) {
+                        val separator = if (event.isolationActive) "DTLN speech stem produced" else "isolation unavailable"
+                        val pause = if (musicPauseRequested) "; pause request sent" else ""
+                        "Audio: music detected (${event.musicScore.asPercent()}, ${event.detectorLabel ?: "music"}); $separator$pause."
+                    } else {
+                        val separator = if (event.isolationActive) "DTLN ready" else "passthrough"
+                        "Audio: no significant music (${event.musicScore.asPercent()}); $separator."
+                    }
+                    is AudioMonitorEvent.Failed -> "Audio capture stopped: ${event.reason}"
                 }
-                is AudioMonitorEvent.CapturedOnly -> if (event.rms > AUDIBLE_RMS) {
-                    "Audio: playback detected; add the speech-only model to enable music isolation."
-                } else {
-                    "Audio: waiting for capturable media playback."
-                }
-                is AudioMonitorEvent.Isolated -> if (event.musicDetected) {
-                    "Audio: music detected (${event.musicScore.asPercent()}); speech-only PCM produced by the AI core."
-                } else {
-                    "Audio: no significant music (${event.musicScore.asPercent()}); speech-only PCM produced."
-                }
-                is AudioMonitorEvent.Failed -> "Audio capture stopped: ${event.reason}"
-            }
-            CaptureSessionStore.update(audioStatus = status)
-        }.also { monitor ->
+                CaptureSessionStore.update(audioStatus = status)
+            },
+        ).also { monitor ->
             audioMonitor = monitor
             monitor.start()
         }
@@ -277,6 +306,8 @@ internal class AudioCaptureService : Service() {
     private fun stopCapture(message: String) {
         visionRunning = false
         audioMonitor?.close(); audioMonitor = null
+        audioFocusController?.close(); audioFocusController = null
+        musicPauseRequested = false
         display?.release(); display = null
         imageReader?.close(); imageReader = null
         visionThread?.quitSafely(); visionThread = null

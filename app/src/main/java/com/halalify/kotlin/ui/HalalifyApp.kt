@@ -64,7 +64,7 @@ internal fun HalalifyApp(
                 item { Spacer(Modifier.height(14.dp)) }
                 item {
                     Text("Halalify", color = TextPrimary, style = MaterialTheme.typography.headlineLarge)
-                    Text("Capture supported app audio and screen frames locally.", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                    Text("Detect locally and blur the selected class over other apps.", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
                 }
                 item {
                     SettingsCard("Capture session") {
@@ -84,7 +84,7 @@ internal fun HalalifyApp(
                 item {
                     SettingsCard("Start monitoring") {
                         Text(
-                            "Android will securely ask which app or screen you want to share.",
+                            "First allow display over other apps, then approve sharing the entire device screen.",
                             color = TextMuted,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -136,7 +136,7 @@ internal fun HalalifyApp(
         update = { view -> view.setImageBitmap(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)) },
         modifier = Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(10.dp)),
     )
-    Text("Selected detections are blurred locally; frames are not persisted or uploaded.", color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 7.dp))
+    Text("The same selected regions are drawn over other apps; frames are not persisted or uploaded.", color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 7.dp))
 }
 
 @Composable private fun SettingsCard(title: String, content: @Composable () -> Unit) {

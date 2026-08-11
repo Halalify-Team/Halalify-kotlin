@@ -1,18 +1,18 @@
 # Halalify
 
-An Android prototype for on-device content blur. Users select one visual model class—male or female—and the local vision engine blurs matching detections in captured preview frames.
+An Android prototype for on-device content blur. Users select one visual model class—male or female—and the local vision engine blurs matching detections over the shared app or device screen.
 
 ## Current functionality
 
 - English settings screen for blur target and content type.
 - Settings persist locally across app launches.
 - A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
-- Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred in the in-app protected preview and detection counts are shown live.
+- Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
 - The model stays on device. Captured preview frames are not persisted or uploaded.
 
 ## Current limitation
 
-The current renderer protects the preview inside Halalify. It does not yet draw a system-wide overlay above the shared application; that remains phase 4 of the plan and requires the overlay permission, coordinate/inset handling, and OEM testing. Android protected surfaces may also be absent from MediaProjection captures.
+Device-level blur requires the explicit Android display-over-other-apps permission. Application overlays remain below critical system windows such as the status bar and keyboard, and Android protected surfaces may also be absent from MediaProjection captures. Coordinate, rotation, and OEM behavior still require broader device testing.
 
 ## Model-label contract
 

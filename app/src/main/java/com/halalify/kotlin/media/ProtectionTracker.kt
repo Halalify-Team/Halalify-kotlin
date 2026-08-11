@@ -20,8 +20,6 @@ internal class ProtectionTracker(
     private val tracks = mutableListOf<Track>()
 
     fun update(detections: List<Detection>, nowMs: Long): List<Detection> {
-        tracks.removeAll { nowMs - it.lastSeenAtMs > retentionMs }
-
         val availableTracks = tracks.toMutableList()
         val matchedDetections = mutableSetOf<Detection>()
         detections.sortedByDescending(Detection::confidence).forEach { detection ->
@@ -42,6 +40,10 @@ internal class ProtectionTracker(
             .filter(Detection::shouldBlur)
             .filterNot(matchedDetections::contains)
             .forEach { detection -> tracks += Track(detection, nowMs) }
+
+        // Expire only after matching so a periodically sampled frame can refresh
+        // an existing protected person even when the class briefly changes.
+        tracks.removeAll { nowMs - it.lastSeenAtMs > retentionMs }
 
         return tracks.map(Track::detection)
     }
@@ -67,7 +69,7 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        const val DEFAULT_RETENTION_MS = 3_000L
+        const val DEFAULT_RETENTION_MS = 8_000L
         const val DEFAULT_MATCHING_IOU = 0.20F
     }
 }

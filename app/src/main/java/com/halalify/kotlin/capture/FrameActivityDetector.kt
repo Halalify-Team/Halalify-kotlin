@@ -1,0 +1,74 @@
+package com.halalify.kotlin.capture
+
+/**
+ * Avoids expensive inference while the captured screen is unchanged. A short
+ * burst after each change improves detection stability, then only a periodic
+ * safety refresh is performed.
+ */
+internal class FrameActivityDetector(
+    private val changedPixelRatio: Float = DEFAULT_CHANGED_PIXEL_RATIO,
+    private val channelDifference: Int = DEFAULT_CHANNEL_DIFFERENCE,
+    private val safetyRefreshMs: Long = DEFAULT_SAFETY_REFRESH_MS,
+    private val burstAnalyses: Int = DEFAULT_BURST_ANALYSES,
+    private val burstIntervalMs: Long = DEFAULT_BURST_INTERVAL_MS,
+) {
+    private var baseline: IntArray? = null
+    private var lastAnalysisAtMs = Long.MIN_VALUE
+    private var remainingBurstAnalyses = 0
+
+    fun shouldAnalyze(sample: IntArray, nowMs: Long): Boolean {
+        val previous = baseline
+        if (previous == null || previous.size != sample.size) {
+            baseline = sample.copyOf()
+            remainingBurstAnalyses = (burstAnalyses - 1).coerceAtLeast(0)
+            lastAnalysisAtMs = nowMs
+            return true
+        }
+
+        val contentChanged = changedRatio(previous, sample) >= changedPixelRatio
+        val burstDue = remainingBurstAnalyses > 0 &&
+            elapsedSinceLastAnalysis(nowMs) >= burstIntervalMs
+        val safetyRefreshDue = elapsedSinceLastAnalysis(nowMs) >= safetyRefreshMs
+        if (!contentChanged && !burstDue && !safetyRefreshDue) return false
+
+        baseline = sample.copyOf()
+        if (contentChanged) {
+            remainingBurstAnalyses = (burstAnalyses - 1).coerceAtLeast(0)
+        } else if (burstDue) {
+            remainingBurstAnalyses -= 1
+        }
+        lastAnalysisAtMs = nowMs
+        return true
+    }
+
+    fun reset() {
+        baseline = null
+        lastAnalysisAtMs = Long.MIN_VALUE
+        remainingBurstAnalyses = 0
+    }
+
+    private fun changedRatio(previous: IntArray, current: IntArray): Float {
+        if (current.isEmpty()) return 0F
+        var changed = 0
+        for (index in current.indices) {
+            val before = previous[index]
+            val after = current[index]
+            val redDifference = kotlin.math.abs((before ushr 16 and 0xFF) - (after ushr 16 and 0xFF))
+            val greenDifference = kotlin.math.abs((before ushr 8 and 0xFF) - (after ushr 8 and 0xFF))
+            val blueDifference = kotlin.math.abs((before and 0xFF) - (after and 0xFF))
+            if (redDifference + greenDifference + blueDifference >= channelDifference) changed += 1
+        }
+        return changed.toFloat() / current.size
+    }
+
+    private fun elapsedSinceLastAnalysis(nowMs: Long): Long =
+        if (lastAnalysisAtMs == Long.MIN_VALUE) Long.MAX_VALUE else nowMs - lastAnalysisAtMs
+
+    private companion object {
+        const val DEFAULT_CHANGED_PIXEL_RATIO = 0.03F
+        const val DEFAULT_CHANNEL_DIFFERENCE = 48
+        const val DEFAULT_SAFETY_REFRESH_MS = 5_000L
+        const val DEFAULT_BURST_ANALYSES = 3
+        const val DEFAULT_BURST_INTERVAL_MS = 350L
+    }
+}

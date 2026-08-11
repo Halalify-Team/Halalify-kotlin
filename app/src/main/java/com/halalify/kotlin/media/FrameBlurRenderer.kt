@@ -26,7 +26,6 @@ internal object FrameBlurRenderer {
         val selected = detections.filter(Detection::shouldBlur)
         if (selected.isEmpty()) return FrameBlurResult(0, emptyList())
 
-        val source = bitmap.copy(Bitmap.Config.ARGB_8888, false)
         val previewCanvas = Canvas(bitmap)
         // Nearest-neighbour scaling keeps every reduced source pixel as a hard,
         // visible censor block. Bitmap filtering would blend neighbouring blocks
@@ -45,37 +44,64 @@ internal object FrameBlurRenderer {
         try {
             selected.forEach { detection ->
                 val rect = detection.toExpandedRect(bitmap.width, bitmap.height) ?: return@forEach
-                val patch = Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
-                val tinyWidth = (rect.width() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
-                val tinyHeight = (rect.height() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
-                val tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, false)
-                val protectedPatch = Bitmap.createBitmap(
-                    rect.width(),
-                    rect.height(),
-                    Bitmap.Config.ARGB_8888,
-                )
-                val patchCanvas = Canvas(protectedPatch)
-                val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
-                patchCanvas.drawBitmap(tiny, null, patchBounds, pixelPaint)
-                patchCanvas.drawRect(patchBounds, privacyShadePaint)
-                previewCanvas.drawBitmap(protectedPatch, rect.left.toFloat(), rect.top.toFloat(), pixelPaint)
-                overlayRegions += OverlayRegion(
-                    bitmap = protectedPatch,
-                    bounds = Rect(rect),
-                    sourceWidth = bitmap.width,
-                    sourceHeight = bitmap.height,
+                overlayRegions += createOverlayRegion(
+                    source = bitmap,
+                    rect = rect,
+                    pixelPaint = pixelPaint,
+                    privacyShadePaint = privacyShadePaint,
                 )
                 blurredCount += 1
-                if (tiny !== patch) tiny.recycle()
-                patch.recycle()
+            }
+            overlayRegions.forEach { region ->
+                previewCanvas.drawBitmap(
+                    region.bitmap,
+                    region.bounds.left.toFloat(),
+                    region.bounds.top.toFloat(),
+                    pixelPaint,
+                )
             }
         } catch (error: Throwable) {
             overlayRegions.forEach { region -> region.bitmap.recycle() }
             throw error
-        } finally {
-            source.recycle()
         }
         return FrameBlurResult(blurredCount, overlayRegions)
+    }
+
+    private fun createOverlayRegion(
+        source: Bitmap,
+        rect: Rect,
+        pixelPaint: Paint,
+        privacyShadePaint: Paint,
+    ): OverlayRegion {
+        val patch = Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
+        var tiny: Bitmap? = null
+        var protectedPatch: Bitmap? = null
+        try {
+            val tinyWidth = (rect.width() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
+            val tinyHeight = (rect.height() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
+            tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, false)
+            protectedPatch = Bitmap.createBitmap(
+                rect.width(),
+                rect.height(),
+                Bitmap.Config.ARGB_8888,
+            )
+            val patchCanvas = Canvas(protectedPatch)
+            val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
+            patchCanvas.drawBitmap(tiny, null, patchBounds, pixelPaint)
+            patchCanvas.drawRect(patchBounds, privacyShadePaint)
+            return OverlayRegion(
+                bitmap = protectedPatch,
+                bounds = Rect(rect),
+                sourceWidth = source.width,
+                sourceHeight = source.height,
+            )
+        } catch (error: Throwable) {
+            protectedPatch?.recycle()
+            throw error
+        } finally {
+            if (tiny != null && tiny !== patch) tiny.recycle()
+            if (patch !== source) patch.recycle()
+        }
     }
 
     private fun Detection.toExpandedRect(width: Int, height: Int): Rect? {

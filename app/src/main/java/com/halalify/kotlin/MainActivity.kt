@@ -1,9 +1,7 @@
 package com.halalify.kotlin
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -35,7 +33,7 @@ class MainActivity : ComponentActivity() {
     }
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != Activity.RESULT_OK || result.data == null) {
-            CaptureSessionStore.update(message = "Screen and audio capture permission was not granted.")
+            CaptureSessionStore.update(message = "Screen capture permission was not granted.")
             startService(
                 Intent(this, AudioCaptureService::class.java).setAction(AudioCaptureService.ACTION_STOP),
             )
@@ -56,11 +54,6 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
-    private val recordAudioLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) requestProjection() else {
-            CaptureSessionStore.update(message = "Audio permission was denied.")
-        }
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsRepository = BlurSettingsRepository(applicationContext)
@@ -74,6 +67,16 @@ class MainActivity : ComponentActivity() {
                 },
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        CaptureSessionStore.setPreviewRequested(true)
+    }
+
+    override fun onStop() {
+        CaptureSessionStore.setPreviewRequested(false)
+        super.onStop()
     }
 
     private fun startCapture(settings: BlurSettings) {
@@ -106,20 +109,12 @@ class MainActivity : ComponentActivity() {
     private fun initializeVisionAndRequestCapture() {
         CaptureSessionStore.update(message = "Loading the on-device gender detection model...")
         TfLiteNative.initialize(applicationContext)
-            .addOnSuccessListener { requestAudioThenProjection() }
+            .addOnSuccessListener { requestProjection() }
             .addOnFailureListener { error ->
                 CaptureSessionStore.update(
                     message = "LiteRT could not start: ${error.message ?: error.javaClass.simpleName}",
                 )
             }
-    }
-
-    private fun requestAudioThenProjection() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            requestProjection()
-        } else {
-            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
     }
 
     private fun requestProjection() {

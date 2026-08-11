@@ -9,10 +9,6 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.AudioTrack
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -33,17 +29,14 @@ import java.io.ByteArrayOutputStream
 
 internal class AudioCaptureService : Service() {
     private var projection: MediaProjection? = null
-    private var recorder: AudioRecord? = null
-    private var player: AudioTrack? = null
     private var imageReader: ImageReader? = null
     private var display: VirtualDisplay? = null
-    private var audioThread: Thread? = null
     private var visionThread: HandlerThread? = null
     private var visionEngine: NativeVisionEngine? = null
     private var deviceOverlay: DeviceBlurOverlay? = null
     private val protectionTracker = ProtectionTracker()
-    private var lastFrameAt = 0L
-    @Volatile private var running = false
+    private val frameActivityDetector = FrameActivityDetector()
+    private var lastChangeCheckAt = 0L
     @Volatile private var visionRunning = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -89,7 +82,6 @@ internal class AudioCaptureService : Service() {
                 CaptureSessionStore.update(message = "Device blur overlay failed: $message")
             }
             startScreenPreview(mediaProjection)
-            startAudioPassThrough(mediaProjection)
             CaptureSessionStore.update(
                 isCapturing = true,
                 targetLabel = "Blur target: ${settings.target.title}",
@@ -101,59 +93,29 @@ internal class AudioCaptureService : Service() {
         }
     }
 
-    private fun startAudioPassThrough(mediaProjection: MediaProjection) {
-        val inputFormat = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
-        val config = android.media.AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUsage(AudioAttributes.USAGE_GAME)
-            .build()
-        val inputBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-            .coerceAtLeast(BUFFER_BYTES)
-        val audioRecord = AudioRecord.Builder().setAudioFormat(inputFormat).setBufferSizeInBytes(inputBuffer * 2)
-            .setAudioPlaybackCaptureConfig(config).build()
-        check(audioRecord.state == AudioRecord.STATE_INITIALIZED) { "Audio input could not be initialized." }
-
-        val outputFormat = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build()
-        val outputBuffer = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-            .coerceAtLeast(BUFFER_BYTES)
-        val audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
-            .setAudioFormat(outputFormat).setBufferSizeInBytes(outputBuffer * 2).setTransferMode(AudioTrack.MODE_STREAM).build()
-        check(audioTrack.state == AudioTrack.STATE_INITIALIZED) { "Audio output could not be initialized." }
-
-        recorder = audioRecord
-        player = audioTrack
-        running = true
-        audioRecord.startRecording()
-        audioTrack.play()
-        audioThread = Thread({
-            val buffer = ByteArray(BUFFER_BYTES)
-            while (running) {
-                val count = audioRecord.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
-                if (count > 0) audioTrack.write(buffer, 0, count, AudioTrack.WRITE_BLOCKING)
-            }
-        }, "halalify-audio").apply { start() }
-    }
-
     private fun startScreenPreview(mediaProjection: MediaProjection) {
         val metrics = resources.displayMetrics
-        val width = PREVIEW_WIDTH.coerceAtMost(metrics.widthPixels)
+        val width = CAPTURE_WIDTH.coerceAtMost(metrics.widthPixels)
         val height = (metrics.heightPixels.toFloat() * width / metrics.widthPixels).toInt().coerceAtLeast(1)
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         val handlerThread = HandlerThread("halalify-vision").apply { start() }
         visionThread = handlerThread
-        lastFrameAt = 0L
+        lastChangeCheckAt = 0L
+        frameActivityDetector.reset()
         visionRunning = true
         reader.setOnImageAvailableListener({ source ->
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
                 if (!visionRunning) return@setOnImageAvailableListener
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastFrameAt < PREVIEW_INTERVAL_MS) return@setOnImageAvailableListener
+                if (now - lastChangeCheckAt < CHANGE_CHECK_INTERVAL_MS) return@setOnImageAvailableListener
+                lastChangeCheckAt = now
                 val plane = image.planes.firstOrNull() ?: return@setOnImageAvailableListener
                 if (plane.pixelStride != RGBA_PIXEL_STRIDE) return@setOnImageAvailableListener
+                val sample = plane.sampleGrid(image.width, image.height)
+                if (!frameActivityDetector.shouldAnalyze(sample, now)) {
+                    return@setOnImageAvailableListener
+                }
                 plane.buffer.rewind()
                 val detections = visionEngine?.process(
                     rgbaBuffer = plane.buffer,
@@ -176,11 +138,12 @@ internal class AudioCaptureService : Service() {
                 deviceOverlay?.update(rendered.overlayRegions)
                     ?: rendered.overlayRegions.forEach { region -> region.bitmap.recycle() }
                 updateDetectionStatus(detections, rendered.blurredCount)
-                val stream = ByteArrayOutputStream()
-                cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
+                if (CaptureSessionStore.isPreviewRequested) {
+                    val stream = ByteArrayOutputStream()
+                    cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
+                    CaptureSessionStore.update(previewJpeg = stream.toByteArray())
+                }
                 cropped.recycle()
-                lastFrameAt = now
-                CaptureSessionStore.update(previewJpeg = stream.toByteArray())
             } catch (error: Throwable) {
                 CaptureSessionStore.update(
                     message = "Vision frame failed: ${error.message ?: error.javaClass.simpleName}",
@@ -203,6 +166,26 @@ internal class AudioCaptureService : Service() {
         }
     }
 
+    private fun android.media.Image.Plane.sampleGrid(width: Int, height: Int): IntArray {
+        val columns = SAMPLE_COLUMNS.coerceAtMost(width)
+        val rows = SAMPLE_ROWS.coerceAtMost(height)
+        val sample = IntArray(columns * rows)
+        val source = buffer
+        var outputIndex = 0
+        for (row in 0 until rows) {
+            val y = (((row + 0.5F) * height) / rows).toInt().coerceIn(0, height - 1)
+            for (column in 0 until columns) {
+                val x = (((column + 0.5F) * width) / columns).toInt().coerceIn(0, width - 1)
+                val sourceIndex = y * rowStride + x * pixelStride
+                val red = source.get(sourceIndex).toInt() and 0xFF
+                val green = source.get(sourceIndex + 1).toInt() and 0xFF
+                val blue = source.get(sourceIndex + 2).toInt() and 0xFF
+                sample[outputIndex++] = red shl 16 or (green shl 8) or blue
+            }
+        }
+        return sample
+    }
+
     private fun updateDetectionStatus(detections: List<Detection>, blurredCount: Int) {
         val femaleCount = detections.count { it.classId == 0 }
         val maleCount = detections.count { it.classId == 1 }
@@ -213,16 +196,13 @@ internal class AudioCaptureService : Service() {
     }
 
     private fun stopCapture(message: String) {
-        running = false
         visionRunning = false
-        audioThread?.interrupt(); audioThread = null
-        runCatching { recorder?.stop() }; runCatching { player?.pause() }
-        recorder?.release(); player?.release(); recorder = null; player = null
         display?.release(); display = null
         imageReader?.close(); imageReader = null
         visionThread?.quitSafely(); visionThread = null
         visionEngine?.close(); visionEngine = null
         protectionTracker.reset()
+        frameActivityDetector.reset()
         deviceOverlay?.close(); deviceOverlay = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null
@@ -253,12 +233,12 @@ internal class AudioCaptureService : Service() {
         const val EXTRA_PROJECTION_DATA = "projection_data"
         private const val CHANNEL_ID = "halalify_capture"
         private const val NOTIFICATION_ID = 41
-        private const val SAMPLE_RATE = 48_000
-        private const val BUFFER_BYTES = 8192
-        private const val PREVIEW_WIDTH = 480
-        private const val PREVIEW_INTERVAL_MS = 350L
+        private const val CAPTURE_WIDTH = 416
+        private const val CHANGE_CHECK_INTERVAL_MS = 250L
         private const val JPEG_QUALITY = 70
         private const val RGBA_PIXEL_STRIDE = 4
+        private const val SAMPLE_COLUMNS = 20
+        private const val SAMPLE_ROWS = 32
         private const val TAG = "HalalifyVision"
     }
 }

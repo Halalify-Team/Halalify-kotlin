@@ -22,17 +22,24 @@ internal object FrameBlurRenderer {
         val overlay = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
         val previewCanvas = Canvas(bitmap)
         val overlayCanvas = Canvas(overlay)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        // Nearest-neighbour scaling keeps every reduced source pixel as a hard,
+        // visible censor block. Bitmap filtering would blend neighbouring blocks
+        // and turn the effect back into a soft blur.
+        val pixelPaint = Paint().apply {
+            isAntiAlias = false
+            isFilterBitmap = false
+            isDither = false
+        }
         var blurredCount = 0
         try {
             selected.forEach { detection ->
                 val rect = detection.toExpandedRect(bitmap.width, bitmap.height) ?: return@forEach
                 val patch = Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
-                val tinyWidth = (rect.width() / BLUR_SCALE).coerceAtLeast(1)
-                val tinyHeight = (rect.height() / BLUR_SCALE).coerceAtLeast(1)
-                val tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, true)
-                previewCanvas.drawBitmap(tiny, null, rect, paint)
-                overlayCanvas.drawBitmap(tiny, null, rect, paint)
+                val tinyWidth = (rect.width() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
+                val tinyHeight = (rect.height() / PIXEL_BLOCK_SIZE).coerceAtLeast(1)
+                val tiny = Bitmap.createScaledBitmap(patch, tinyWidth, tinyHeight, false)
+                previewCanvas.drawBitmap(tiny, null, rect, pixelPaint)
+                overlayCanvas.drawBitmap(tiny, null, rect, pixelPaint)
                 blurredCount += 1
                 if (tiny !== patch) tiny.recycle()
                 patch.recycle()
@@ -61,6 +68,6 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    private const val BLUR_SCALE = 18
-    private const val BOX_PADDING_RATIO = 0.06F
+    private const val PIXEL_BLOCK_SIZE = 24
+    private const val BOX_PADDING_RATIO = 0.10F
 }

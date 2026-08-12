@@ -47,6 +47,44 @@ class AudioProtectionSessionTest {
         assertEquals(1, monitor.closeCalls)
     }
 
+    @Test
+    fun `session releases device audio when music clears`() {
+        val publisher = FakePublisher()
+        val monitor = FakeMonitor()
+        val blocker = FakeBlocker()
+        val notifications = mutableListOf<String>()
+        val session = AudioProtectionSession(
+            statePublisher = publisher,
+            processorProvider = AudioProcessorProvider {
+                AudioProcessorSelection(processor = null, unavailableReason = "missing")
+            },
+            monitorFactory = AudioMonitorFactory { _, onMusicDetected, onEvent ->
+                monitor.onMusicDetected = onMusicDetected
+                monitor.onEvent = onEvent
+                monitor
+            },
+            musicBlocker = blocker,
+            updateNotification = notifications::add,
+        )
+
+        session.start()
+        monitor.onMusicDetected()
+        monitor.onEvent(
+            AudioMonitorEvent.Isolated(
+                musicScore = 0.9F,
+                musicDetected = false,
+                isolationActive = true,
+                detectorLabel = "music",
+            ),
+        )
+
+        assertEquals(1, blocker.blockCalls)
+        assertEquals(1, blocker.closeCalls)
+        assertTrue(publisher.state.audioStatus.orEmpty().contains("no significant music"))
+
+        session.close()
+    }
+
     private class FakePublisher : CaptureStatePublisher {
         var state = CaptureUiState()
         override val isPreviewRequested = false

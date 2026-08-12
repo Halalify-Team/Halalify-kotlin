@@ -169,6 +169,6 @@ internal class PlaybackAudioMonitor(
         const val READ_SAMPLES = 2_048
         const val MONITOR_FRAME_SAMPLES = SAMPLE_RATE / 2
         const val PCM16_BYTES = 2
-        const val MUSIC_CONFIRMATION_FRAMES = 2
+        const val MUSIC_CONFIRMATION_FRAMES = 1
     }
 }

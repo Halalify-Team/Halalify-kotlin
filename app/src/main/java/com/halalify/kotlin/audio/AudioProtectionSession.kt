@@ -40,12 +40,9 @@ internal class AudioProtectionSession(
                 selection.processor,
                 ::onMusicDetected,
             ) { event ->
-                publishStatus(
-                    AudioStatusFormatter.forEvent(
-                        event = event,
-                        unavailableReason = selection.unavailableReason,
-                        protectionState = protectionState,
-                    ),
+                handleMonitorEvent(
+                    event = event,
+                    unavailableReason = selection.unavailableReason,
                 )
             }
             monitor = createdMonitor
@@ -64,6 +61,7 @@ internal class AudioProtectionSession(
     }
 
     private fun onMusicDetected() {
+        if (protectionState.mediaMuted || protectionState.pauseRequested) return
         val result = musicBlocker.blockMusic()
         protectionState = MusicProtectionState(
             pauseRequested = result.pauseRequested,
@@ -72,6 +70,24 @@ internal class AudioProtectionSession(
         val status = AudioStatusFormatter.forBlockResult(result)
         publishStatus(status)
         updateNotification(status)
+    }
+
+    private fun handleMonitorEvent(
+        event: AudioMonitorEvent,
+        unavailableReason: String?,
+    ) {
+        if (event is AudioMonitorEvent.Isolated && !event.musicDetected &&
+            (protectionState.mediaMuted || protectionState.pauseRequested)
+        ) {
+            musicBlocker.close()
+            protectionState = MusicProtectionState()
+        }
+        val status = AudioStatusFormatter.forEvent(
+            event = event,
+            unavailableReason = unavailableReason,
+            protectionState = protectionState,
+        )
+        publishStatus(status)
     }
 
     private fun publishStatus(status: String) {

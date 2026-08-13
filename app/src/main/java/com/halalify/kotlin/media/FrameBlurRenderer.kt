@@ -35,10 +35,9 @@ internal object FrameBlurRenderer {
 
         val previewCanvas = Canvas(bitmap)
         val protectedPaint = Paint().apply {
-            // Both styles stay opaque. Filtering distinguishes a dense smooth
-            // blur from the deliberately hard-edged pixelated style.
-            isAntiAlias = style == BlurStyle.BLUR
-            isFilterBitmap = style == BlurStyle.BLUR
+            // Pixelated style uses nearest-neighbour scaling and hard edges.
+            isAntiAlias = false
+            isFilterBitmap = false
             isDither = false
         }
         var blurredCount = 0

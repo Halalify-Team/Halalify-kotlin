@@ -149,20 +149,6 @@ internal fun HalalifyApp(
                     }
                 }
 
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        SectionHeading(
-                            eyebrow = "APPEARANCE",
-                            title = "Censor style",
-                            description = "Select how protected detections should appear on screen.",
-                        )
-                        StyleSelector(
-                            selected = settings.style,
-                            enabled = !captureState.isCapturing,
-                            onSelect = { style -> settings = settings.copy(style = style) },
-                        )
-                    }
-                }
 
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {

@@ -15,7 +15,7 @@ An Android prototype for on-device content blur. Users select one visual model c
 
 Device-level blur requires the explicit Android display-over-other-apps permission. Application overlays remain below critical system windows such as the status bar and keyboard, and Android protected surfaces may also be absent from MediaProjection captures. Coordinate, rotation, and OEM behavior still require broader device testing.
 
-Playback capture is limited to apps and players that allow it. Android gives a normal app a copy of eligible playback; it does not guarantee that Halalify can close another app or replace its device output with the processed speech stem. The pause request is best-effort and player-dependent. See [`docs/AUDIO_AI_ENGINE_PLAN_AR.md`](docs/AUDIO_AI_ENGINE_PLAN_AR.md).
+Playback capture is limited to apps and players that allow it. Android gives a normal app a copy of eligible playback; it does not guarantee that Halalify can close another app or replace its device output with the processed speech stem. The pause request is best-effort and player-dependent.
 
 ## Model-label contract
 
@@ -27,9 +27,9 @@ The verified deployed model, its machine-readable contract, provenance notes, an
 
 ## Audio AI engine plan
 
-The playback-capture architecture, exact TFLite waveform contract, integration point, and Android platform limits are documented in [`docs/AUDIO_AI_ENGINE_PLAN_AR.md`](docs/AUDIO_AI_ENGINE_PLAN_AR.md).
+The playback-capture architecture, exact TFLite waveform contract, integration point, and Android platform limits are documented.
 
-The downloaded YAMNet and DTLN models, licensed starter dataset, reproducible preparation scripts, local Python environment instructions, and fine-tuning/export commands are documented in [`training/audio/README_AR.md`](training/audio/README_AR.md).
+The downloaded YAMNet and DTLN models, licensed starter dataset, reproducible preparation scripts, local Python environment instructions, and fine-tuning/export commands are documented.
 
 ## Verification
 

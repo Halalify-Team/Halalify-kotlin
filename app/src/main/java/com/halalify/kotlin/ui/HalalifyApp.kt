@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.BlurSettings
-import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurTarget
 
 private val AppBackground = Color(0xFF071A1D)
@@ -435,57 +434,6 @@ private fun SelectableTile(
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun StyleSelector(
-    selected: BlurStyle,
-    enabled: Boolean,
-    onSelect: (BlurStyle) -> Unit,
-) {
-    Column(
-        modifier = Modifier.alpha(if (enabled) 1f else 0.55f),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        BlurStyle.entries.forEach { option ->
-            val isSelected = selected == option
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (isSelected) AccentSoft else AppSurface)
-                    .border(
-                        width = if (isSelected) 1.5.dp else 1.dp,
-                        color = if (isSelected) Accent else Outline,
-                        shape = RoundedCornerShape(18.dp),
-                    )
-                    .clickable(
-                        enabled = enabled,
-                        role = Role.RadioButton,
-                        onClick = { onSelect(option) },
-                    )
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = option.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = option.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
-                Spacer(Modifier.width(16.dp))
-                SelectionIndicator(selected = isSelected)
-            }
-        }
     }
 }
 

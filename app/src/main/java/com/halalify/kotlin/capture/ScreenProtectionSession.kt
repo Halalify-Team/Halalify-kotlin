@@ -264,7 +264,9 @@ internal class ScreenProtectionSession(
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
         const val IGNORED_SAMPLE = -1
-        const val OVERLAY_MASK_PADDING_RATIO = 0.35F
+        // Match FrameBlurRenderer so change detection ignores only the small
+        // protected subject region, not a large area around it.
+        const val OVERLAY_MASK_PADDING_RATIO = 0.05F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1
         const val TAG = "HalalifyVision"

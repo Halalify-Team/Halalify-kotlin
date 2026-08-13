@@ -9,7 +9,6 @@ internal enum class BlurTarget(val title: String, val description: String) {
 }
 
 internal enum class BlurStyle(val title: String, val description: String) {
-    BLUR("Strong blur", "Dense, fully opaque HaramBlur-style censor blocks."),
     PIXELATED("Pixelated", "Large, hard censor blocks for maximum visual concealment."),
 }
 
@@ -17,7 +16,7 @@ internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
     val blurImages: Boolean = true,
     val blurVideos: Boolean = true,
-    val style: BlurStyle = BlurStyle.BLUR,
+    val style: BlurStyle = BlurStyle.PIXELATED,
     val isolateMusic: Boolean = false,
 ) {
     val hasVisualProtection: Boolean
@@ -38,7 +37,7 @@ internal class BlurSettingsRepository(context: Context) {
         blurVideos = preferences.getBoolean(KEY_BLUR_VIDEOS, true),
         style = preferences.getString(KEY_BLUR_STYLE, null)
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
-            ?: BlurStyle.BLUR,
+            ?: BlurStyle.PIXELATED,
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
     )
 

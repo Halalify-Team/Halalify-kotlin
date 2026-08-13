@@ -53,7 +53,9 @@ internal class AudioCaptureService : Service() {
         val targetUid = intent.getIntExtra(EXTRA_TARGET_UID, -1)
         val targetLabel = intent.getStringExtra(EXTRA_TARGET_LABEL).orEmpty()
         if (resultCode == Int.MIN_VALUE || data == null || targetUid < 0) {
-            CaptureSessionStore.update(message = "Capture session data is invalid.")
+            CaptureSessionStore.updateState { current ->
+                current.copy(message = "Capture session data is invalid.")
+            }
             stopSelf()
             return
         }
@@ -65,11 +67,13 @@ internal class AudioCaptureService : Service() {
             projection = mediaProjection
             startScreenPreview(mediaProjection)
             startAudioPassThrough(mediaProjection, targetUid)
-            CaptureSessionStore.update(
-                isCapturing = true,
-                targetLabel = targetLabel,
-                message = "Capturing screen and audio. A silent audio stream means the selected app blocks playback capture.",
-            )
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    isCapturing = true,
+                    targetLabel = targetLabel,
+                    message = "Capturing screen and audio. A silent audio stream means the selected app blocks playback capture.",
+                )
+            }
         } catch (error: Throwable) {
             stopCapture("Could not start capture: ${error.message ?: error.javaClass.simpleName}")
             stopSelf()
@@ -137,7 +141,9 @@ internal class AudioCaptureService : Service() {
                 cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
                 cropped.recycle()
                 lastFrameAt = now
-                CaptureSessionStore.update(previewJpeg = stream.toByteArray())
+                CaptureSessionStore.updateState { current ->
+                    current.copy(previewJpeg = stream.toByteArray())
+                }
             } catch (_: Throwable) {
                 // A preview decoding failure must not interrupt the audio session.
             } finally {
@@ -160,7 +166,9 @@ internal class AudioCaptureService : Service() {
         imageReader?.close(); imageReader = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop(); projection = null
-        CaptureSessionStore.update(isCapturing = false, targetLabel = null, message = message, previewJpeg = null)
+        CaptureSessionStore.updateState { current ->
+            current.copy(isCapturing = false, targetLabel = null, message = message, previewJpeg = null)
+        }
     }
 
     private fun startForegroundNotification(label: String) {

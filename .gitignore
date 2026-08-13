@@ -1,6 +1,14 @@
 # Ignore docs folder (keep locally, don't commit)
 docs/
 
+# Common ignores
+.gradle/
+*/build/
+.idea/
+*.iml
+*.class
+.DS_Store
+
 # Built application files
 *.apk
 *.aar
@@ -13,14 +21,12 @@ docs/
 # Java class files
 *.class
 
-# Generated files
 bin/
 gen/
 out/
 release/
 
 # Gradle files
-.gradle/
 build/
 **/build/
 */build/
@@ -31,6 +37,7 @@ local.properties
 # Signing files
 *.jks
 *.keystore
+*.password.txt
 
 # Log files
 *.log
@@ -46,7 +53,6 @@ captures/
 .kotlin/
 
 # OS files
-.DS_Store
 .DS_Store?
 ._*
 Thumbs.db

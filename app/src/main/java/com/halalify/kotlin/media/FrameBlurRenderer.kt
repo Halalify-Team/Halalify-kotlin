@@ -124,8 +124,10 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    private const val CENSOR_SAMPLE_SIZE = 32
-    // The detector often returns a tight body box. HaramBlur visually covers
-    // the whole subject, so extend only the rendered censor region around it.
-    private const val BOX_PADDING_RATIO = 0.35F
+    // Keep the mosaic detailed enough to follow the detected subject without
+    // turning the protected region into a handful of oversized blocks.
+    private const val CENSOR_SAMPLE_SIZE = 8
+    // Keep the overlay close to the detector box so nearby background content
+    // is not covered. A small safety margin prevents edge clipping.
+    private const val BOX_PADDING_RATIO = 0.05F
 }

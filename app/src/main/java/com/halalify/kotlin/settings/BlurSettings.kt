@@ -9,7 +9,7 @@ internal enum class BlurTarget(val title: String, val description: String) {
 }
 
 internal enum class BlurStyle(val title: String, val description: String) {
-    PIXELATED("Pixelated", "Large, hard censor blocks for maximum visual concealment."),
+    PIXELATED("Pixelated", "Small, hard censor blocks focused on the detected subject."),
 }
 
 internal data class BlurSettings(

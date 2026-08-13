@@ -1,17 +1,7 @@
-<<<<<<< HEAD
-# Built application files
-=======
 # Ignore docs folder (keep locally, don't commit)
 docs/
 
-# Common ignores
-.gradle/
-*/build/
-.idea/
-*.iml
-*.class
-.DS_Store# Built application files
->>>>>>> origin/master
+# Built application files
 *.apk
 *.aar
 *.ap_
@@ -33,6 +23,7 @@ release/
 .gradle/
 build/
 **/build/
+*/build/
 
 # Local configuration file (sdk path, etc)
 local.properties
@@ -44,7 +35,7 @@ local.properties
 # Log files
 *.log
 
-# Android Studio
+# Android Studio / IntelliJ
 .idea/
 *.iml
 *.iws
@@ -64,10 +55,7 @@ ehthumbs.db
 # External native build folder
 .cxx/
 .externalNativeBuild/
-<<<<<<< HEAD
-=======
 native/build-host/
 
-# Local audio-model training workspace.
+# Local audio-model training workspace
 training/
->>>>>>> origin/master

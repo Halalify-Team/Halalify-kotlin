@@ -5,8 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BlurSettingsTest {
+
     @Test
-<<<<<<< HEAD
     fun `female target blurs only the female model label`() {
         val settings = BlurSettings(target = BlurTarget.FEMALE)
 
@@ -30,7 +30,9 @@ class BlurSettingsTest {
 
         assertFalse(femaleSettings.shouldBlurLabel("c"))
         assertFalse(maleSettings.shouldBlurLabel("unknown"))
-=======
+    }
+
+    @Test
     fun `visual protection is enabled by either visual media option`() {
         assertTrue(BlurSettings(blurImages = true, blurVideos = false).hasVisualProtection)
         assertTrue(BlurSettings(blurImages = false, blurVideos = true).hasVisualProtection)
@@ -58,6 +60,5 @@ class BlurSettingsTest {
         )
 
         assertFalse(settings.hasEnabledProtection)
->>>>>>> origin/master
     }
 }

@@ -1,11 +1,16 @@
 # Halalify
 
+<<<<<<< HEAD
 An Android prototype for configuring on-device content blur. Users select one target for the future inference engine: detected male people or detected female people. They can enable the rule for images, video, or both.
+=======
+An Android prototype for on-device content blur. Users select one visual model class—male or female—and the local vision engine blurs matching detections over the shared app or device screen.
+>>>>>>> origin/master
 
 ## Current functionality
 
 - English settings screen for blur target and content type.
 - Settings persist locally across app launches.
+<<<<<<< HEAD
 - Unit-tested mapping from the extracted model labels to the selected blur target.
 - No YouTube URL handling, download code, network access, microphone, media-projection, or foreground-service permissions.
 
@@ -55,6 +60,32 @@ The local v3 validation record, using `1,475` images and `1,839` objects, report
 | Overall | 0.629 | 0.691 | 0.691 | 0.535 |
 
 These are reference numbers, not production acceptance results. In particular, the current `female` accuracy is not sufficient to claim reliable protection without an evaluation set representative of real app screens, per-class threshold calibration, and model improvement where needed.
+=======
+- A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
+- Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
+- The optional Android playback-audio monitor now runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. After two consecutive music-positive frames it mutes the device media stream, requests a transient audio focus so a cooperative media player pauses, and shows the action in the app and foreground notification.
+- The model stays on device. Captured preview frames are not persisted or uploaded.
+
+## Current limitation
+
+Device-level blur requires the explicit Android display-over-other-apps permission. Application overlays remain below critical system windows such as the status bar and keyboard, and Android protected surfaces may also be absent from MediaProjection captures. Coordinate, rotation, and OEM behavior still require broader device testing.
+
+Playback capture is limited to apps and players that allow it. Android gives a normal app a copy of eligible playback; it does not guarantee that Halalify can close another app or replace its device output with the processed speech stem. The pause request is best-effort and player-dependent. See [`docs/AUDIO_AI_ENGINE_PLAN_AR.md`](docs/AUDIO_AI_ENGINE_PLAN_AR.md).
+
+## Model-label contract
+
+The extracted web implementation currently interprets model label `a` as female and `b` as male, while `c` is not blurred. Validate that mapping with known images before relying on it in a production inference pipeline.
+
+## Image AI engine plan
+
+The verified deployed model, its machine-readable contract, provenance notes, and the cross-platform C++ integration plan are in [`Model`](Model/README.md)
+
+## Audio AI engine plan
+
+The playback-capture architecture, exact TFLite waveform contract, integration point, and Android platform limits are documented in [`docs/AUDIO_AI_ENGINE_PLAN_AR.md`](docs/AUDIO_AI_ENGINE_PLAN_AR.md).
+
+The downloaded YAMNet and DTLN models, licensed starter dataset, reproducible preparation scripts, local Python environment instructions, and fine-tuning/export commands are documented in [`training/audio/README_AR.md`](training/audio/README_AR.md).
+>>>>>>> origin/master
 
 ## Verification
 
@@ -64,8 +95,12 @@ Run the following from the repository root:
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
 ```
 
+<<<<<<< HEAD
 ## Licensing notice
 
 The source training script starts from `yolov8n.pt` and uses Ultralytics. The model and training-data licensing must be resolved before commercial distribution. The TFLite format does not remove obligations associated with the training framework or weights. Review the [official Ultralytics licensing page](https://www.ultralytics.com/license) with qualified legal counsel when needed.
 
 
+=======
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+>>>>>>> origin/master

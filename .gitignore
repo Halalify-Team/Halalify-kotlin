@@ -1,4 +1,17 @@
+<<<<<<< HEAD
 # Built application files
+=======
+# Ignore docs folder (keep locally, don't commit)
+docs/
+
+# Common ignores
+.gradle/
+*/build/
+.idea/
+*.iml
+*.class
+.DS_Store# Built application files
+>>>>>>> origin/master
 *.apk
 *.aar
 *.ap_
@@ -51,3 +64,10 @@ ehthumbs.db
 # External native build folder
 .cxx/
 .externalNativeBuild/
+<<<<<<< HEAD
+=======
+native/build-host/
+
+# Local audio-model training workspace.
+training/
+>>>>>>> origin/master

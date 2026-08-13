@@ -4,11 +4,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-<<<<<<< HEAD
-android {
-    namespace = "com.halalify.kotlin"
-    compileSdk = 35
-=======
 val tfliteNative by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -27,18 +22,10 @@ val extractTfliteNative by tasks.registering(Sync::class) {
 android {
     namespace = "com.halalify.kotlin"
     compileSdk = 36
->>>>>>> origin/master
 
     defaultConfig {
         applicationId = "com.halalify.kotlin"
         minSdk = 24
-<<<<<<< HEAD
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-    }
-
-=======
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
@@ -53,26 +40,11 @@ android {
 
     ndkVersion = "26.3.11579264"
 
->>>>>>> origin/master
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-<<<<<<< HEAD
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-}
-dependencies {
-    implementation(platform("androidx.compose:compose-bom:2025.06.00"))
-    implementation("androidx.activity:activity-compose:1.10.1")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.ui:ui")
-    testImplementation("junit:junit:4.13.2")
-}
-=======
     externalNativeBuild {
         cmake {
             path = file("../native/CMakeLists.txt")
@@ -87,13 +59,14 @@ dependencies {
     androidResources {
         noCompress += "tflite"
     }
-
 }
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.activity:activity-compose:1.13.0")
@@ -109,4 +82,3 @@ dependencies {
 tasks.named("preBuild").configure {
     dependsOn(extractTfliteNative)
 }
->>>>>>> origin/master

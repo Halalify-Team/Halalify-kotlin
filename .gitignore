@@ -65,3 +65,4 @@ native/build-host/
 
 # Local audio-model training workspace
 training/
+!training/quantize_vision_model.py

@@ -55,9 +55,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurTarget
+import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
 
 private val AppBackground = Color(0xFF071A1D)
 private val AppSurface = Color(0xFF0D2529)
@@ -555,8 +557,9 @@ private fun BlurIntensitySelector(
     enabled: Boolean,
     onIntensityChange: (Float) -> Unit,
 ) {
-    val displayedIntensity = intensity.coerceIn(0f, 1f)
-    val percentage = (displayedIntensity * 100).toInt()
+    val displayedIntensity = intensity.coerceIn(MIN_BLUR_INTENSITY, 1f)
+    val level = (((displayedIntensity - MIN_BLUR_INTENSITY) / (1f - MIN_BLUR_INTENSITY)) * 4f)
+        .roundToInt() + 1
 
     Column(
         modifier = Modifier
@@ -579,14 +582,18 @@ private fun BlurIntensitySelector(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (percentage >= 70) "Dense protection" else if (percentage <= 30) "Light protection" else "Balanced protection",
+                text = when {
+                    level >= 4 -> "Dense protection"
+                    level <= 2 -> "Light protection"
+                    else -> "Balanced protection"
+                },
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
             Text(
-                text = "$percentage%",
+                text = "Level $level/5",
                 style = MaterialTheme.typography.titleMedium,
                 color = Accent,
                 fontWeight = FontWeight.Bold,
@@ -596,8 +603,8 @@ private fun BlurIntensitySelector(
             value = displayedIntensity,
             onValueChange = onIntensityChange,
             enabled = enabled,
-            valueRange = 0f..1f,
-            steps = 9,
+            valueRange = MIN_BLUR_INTENSITY..1f,
+            steps = 3,
             colors = SliderDefaults.colors(
                 thumbColor = Accent,
                 activeTrackColor = Accent,
@@ -610,13 +617,13 @@ private fun BlurIntensitySelector(
         )
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Light",
+                text = "Level 1",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = "Dense",
+                text = "Level 5",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
             )

@@ -63,6 +63,17 @@ ehthumbs.db
 .externalNativeBuild/
 native/build-host/
 
+# Local validation datasets and downloaded archives
+test-data/
+*.zip
+**/.venv/
+**/__pycache__/
+
 # Local audio-model training workspace
 training/
+!training/
+training/*
 !training/quantize_vision_model.py
+!training/experimental_quantize_tflite_weights.py
+!training/full_int8_quantize_tflite.py
+!training/quantize_split_output_tflite.py

@@ -153,9 +153,9 @@ hb_status hb_engine_update_config(hb_engine* engine, const hb_config* config) {
 hb_model_info hb_engine_get_model_info(const hb_engine* engine) {
     (void)engine;
     return {
-            "halalify-gender-detector-v3-float32",
+            "halalify-gender-detector-v3-full-int8-split-output",
             "3.0.0",
-            "8F03A7F817C4604FFB8E29C5E2ECE70F4AE8A1BB2C2D189C11E9DD82DEF7E07A",
+            "65E2B0BE46BC7E865EEDD2E084E6FC8CCB4258C81213A3EBE1D8333218A503B0",
             halalify::kModelWidth,
             halalify::kModelHeight,
             halalify::kOutputChannels,

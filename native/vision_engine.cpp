@@ -98,7 +98,9 @@ hb_config hb_default_config(void) {
     config.ignored_confidence_threshold = 0.25F;
     config.iou_threshold = 0.5F;
     config.max_detections = 100;
-    config.num_threads = 2;
+    // One thread reduces sustained CPU wakeups and battery drain on phones.
+    // The capture loop is intentionally rate-limited on the Kotlin side.
+    config.num_threads = 1;
     return config;
 }
 

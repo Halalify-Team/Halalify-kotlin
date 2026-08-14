@@ -88,7 +88,9 @@ ha_audio_config ha_audio_default_config(void) {
     ha_audio_config config{};
     config.sample_rate = 16000;
     config.frame_samples = 16000;
-    config.num_threads = 2;
+    // Prefer lower sustained CPU power over parallel throughput for the
+    // continuous playback-monitoring path.
+    config.num_threads = 1;
     config.music_threshold = 0.12F;
     return config;
 }

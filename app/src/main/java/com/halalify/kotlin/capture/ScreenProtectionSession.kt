@@ -259,7 +259,9 @@ internal class ScreenProtectionSession(
         const val VISION_THREAD_NAME = "halalify-vision"
         const val CAPTURE_WIDTH = 416
         const val MAX_IMAGES = 2
-        const val CHANGE_CHECK_INTERVAL_MS = 250L
+        // Avoid running the detector continuously while keeping protection
+        // responsive enough for normal screen changes.
+        const val CHANGE_CHECK_INTERVAL_MS = 350L
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20

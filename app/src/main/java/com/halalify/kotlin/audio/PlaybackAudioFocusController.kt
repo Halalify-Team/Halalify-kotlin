@@ -28,8 +28,15 @@ internal class PlaybackAudioFocusController(
     private var volumeBeforeMute: Int? = null
 
     @Synchronized
+    /**
+     * When music is detected we only want to lower the device volume so that the user cannot
+     * hear any sound. The previous implementation also requested a transient exclusive audio
+     * focus which caused cooperative media players (e.g., video playback) to pause. That behavior
+     * is no longer desired, so we skip the pause request and only mute the media stream.
+     */
     override fun blockMusic(): MusicBlockResult = MusicBlockResult(
-        pauseRequested = requestPause(),
+        // Do not request audio focus pause; keep playback running but muted.
+        pauseRequested = false,
         mediaMuted = muteMediaStream(),
     )
 

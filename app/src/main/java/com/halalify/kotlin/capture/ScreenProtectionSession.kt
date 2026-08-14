@@ -158,6 +158,7 @@ internal class ScreenProtectionSession(
                 croppedBitmap,
                 protectedDetections,
                 settings.style,
+                settings.intensity,
             )
             overlay.update(rendered.overlayRegions)
             publishDetectionStatus(detections, rendered.blurredCount)

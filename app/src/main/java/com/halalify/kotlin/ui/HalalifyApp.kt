@@ -31,6 +31,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -190,6 +192,23 @@ internal fun HalalifyApp(
                                 },
                             )
                         }
+                    }
+                }
+
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        SectionHeading(
+                            eyebrow = "APPEARANCE",
+                            title = "Censor density",
+                            description = "Drag the control to make protected detections lighter or denser.",
+                        )
+                        BlurIntensitySelector(
+                            intensity = settings.intensity,
+                            enabled = !captureState.isCapturing,
+                            onIntensityChange = { intensity ->
+                                settings = settings.copy(intensity = intensity)
+                            },
+                        )
                     }
                 }
 
@@ -527,6 +546,81 @@ private fun PreferenceToggle(
                 uncheckedBorderColor = Outline,
             ),
         )
+    }
+}
+
+@Composable
+private fun BlurIntensitySelector(
+    intensity: Float,
+    enabled: Boolean,
+    onIntensityChange: (Float) -> Unit,
+) {
+    val displayedIntensity = intensity.coerceIn(0f, 1f)
+    val percentage = (displayedIntensity * 100).toInt()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.55f)
+            .clip(RoundedCornerShape(22.dp))
+            .background(AppSurface)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Blur strength",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (percentage >= 70) "Dense protection" else if (percentage <= 30) "Light protection" else "Balanced protection",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Text(
+                text = "$percentage%",
+                style = MaterialTheme.typography.titleMedium,
+                color = Accent,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Slider(
+            value = displayedIntensity,
+            onValueChange = onIntensityChange,
+            enabled = enabled,
+            valueRange = 0f..1f,
+            steps = 9,
+            colors = SliderDefaults.colors(
+                thumbColor = Accent,
+                activeTrackColor = Accent,
+                inactiveTrackColor = AppSurfaceHigh,
+                disabledThumbColor = TextSecondary,
+                disabledActiveTrackColor = TextSecondary.copy(alpha = 0.45f),
+                disabledInactiveTrackColor = AppSurfaceHigh,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "Light",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "Dense",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+            )
+        }
     }
 }
 

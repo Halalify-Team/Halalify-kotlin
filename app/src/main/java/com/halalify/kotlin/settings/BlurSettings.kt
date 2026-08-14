@@ -18,6 +18,10 @@ internal data class BlurSettings(
     val blurVideos: Boolean = true,
     val style: BlurStyle = BlurStyle.PIXELATED,
     val isolateMusic: Boolean = false,
+        /** Intensity of the blur effect.
+         * 0f = no blur (lightest), 1f = maximum blur (heaviest).
+         */
+        val intensity: Float = 0.5f
 ) {
     val hasVisualProtection: Boolean
         get() = blurImages || blurVideos
@@ -39,6 +43,7 @@ internal class BlurSettingsRepository(context: Context) {
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
             ?: BlurStyle.PIXELATED,
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
+        intensity = preferences.getFloat(KEY_BLUR_INTENSITY, 0.5f),
     )
 
     fun save(settings: BlurSettings) {
@@ -48,6 +53,7 @@ internal class BlurSettingsRepository(context: Context) {
             putBoolean(KEY_BLUR_VIDEOS, settings.blurVideos)
             putString(KEY_BLUR_STYLE, settings.style.name)
             putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
+            putFloat(KEY_BLUR_INTENSITY, settings.intensity)
         }
     }
 
@@ -58,5 +64,6 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_BLUR_VIDEOS = "blur_videos"
         const val KEY_BLUR_STYLE = "blur_style"
         const val KEY_ISOLATE_MUSIC = "isolate_music"
+        const val KEY_BLUR_INTENSITY = "blur_intensity"
     }
 }

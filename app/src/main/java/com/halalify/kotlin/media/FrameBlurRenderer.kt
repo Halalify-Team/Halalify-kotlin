@@ -29,6 +29,7 @@ internal object FrameBlurRenderer {
         bitmap: Bitmap,
         detections: List<Detection>,
         style: BlurStyle,
+        intensity: Float,
     ): FrameBlurResult {
         val selected = detections.filter(Detection::shouldBlur)
         if (selected.isEmpty()) return FrameBlurResult(0, emptyList())
@@ -50,6 +51,7 @@ internal object FrameBlurRenderer {
                     rect = rect,
                     style = style,
                     protectedPaint = protectedPaint,
+                    intensity = intensity,
                 )
                 blurredCount += 1
             }
@@ -75,6 +77,7 @@ internal object FrameBlurRenderer {
         rect: Rect,
         style: BlurStyle,
         protectedPaint: Paint,
+        intensity: Float,
     ): OverlayRegion {
         val patch = Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height()).apply {
             setHasAlpha(false)
@@ -82,7 +85,10 @@ internal object FrameBlurRenderer {
         var tiny: Bitmap? = null
         var protectedPatch: Bitmap? = null
         try {
-            val sampleSize = CENSOR_SAMPLE_SIZE
+            // Intensity controls the block size: higher intensity => larger blocks
+            val sampleSize = (
+                (intensity.coerceIn(0f, 1f) * CENSOR_SAMPLE_SIZE.toFloat()).toInt()
+            ).coerceAtLeast(1)
             val tinyWidth = ceil(rect.width().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             val tinyHeight = ceil(rect.height().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             tiny = patch.scale(tinyWidth, tinyHeight)

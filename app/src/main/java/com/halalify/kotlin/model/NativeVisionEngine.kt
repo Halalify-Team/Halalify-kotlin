@@ -117,7 +117,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
     private external fun nativeDestroy(handle: Long)
 
     private companion object {
-        const val MODEL_ASSET = "halalify_gender_v3_float32.tflite"
+        const val MODEL_ASSET = "halalify_gender_v3_full_int8.tflite"
 
         val BlurTarget.nativeId: Int
             get() = when (this) {

@@ -1,20 +1,25 @@
 {
   "schema_version": 1,
-  "model_id": "halalify-gender-detector-v3-float32",
-  "model_file": "halalify_gender_v3_float32.tflite",
+  "model_id": "halalify-gender-detector-v3-full-int8-split-output",
+  "model_file": "halalify_gender_v3_full_int8.tflite",
   "format": "tflite",
   "version": "3.0.0",
-  "size_bytes": 12132492,
-  "sha256": "8F03A7F817C4604FFB8E29C5E2ECE70F4AE8A1BB2C2D189C11E9DD82DEF7E07A",
+  "size_bytes": 3292400,
+  "sha256": "65E2B0BE46BC7E865EEDD2E084E6FC8CCB4258C81213A3EBE1D8333218A503B0",
   "input": {
     "name": "images",
     "shape": [1, 416, 416, 3],
     "layout": "NHWC",
-    "data_type": "float32",
+    "data_type": "int8",
     "color_space": "RGB",
     "normalization": {
       "formula": "value / 255.0",
       "range": [0.0, 1.0]
+    },
+    "quantization": {
+      "scale": 0.003921568859368563,
+      "zero_point": -128,
+      "source_data_type": "float32"
     },
     "resize": {
       "strategy": "aspect_fit_letterbox",
@@ -26,13 +31,25 @@
     }
   },
   "output": {
-    "name": "Identity",
+    "name": "split_box_and_confidence",
     "shape": [1, 7, 3549],
-    "layout": "channels_first_candidates",
-    "data_type": "float32",
+    "layout": "split_channels_first_candidates",
+    "data_type": "int8",
+    "branches": [
+      {"name": "boxes", "shape": [1, 4, 3549], "channels": ["center_x", "center_y", "width", "height"]},
+      {"name": "scores", "shape": [1, 3, 3549], "channels": ["class_a", "class_b", "class_c"]}
+    ],
+    "dequantized_data_type": "float32",
     "channels": ["center_x", "center_y", "width", "height", "class_a", "class_b", "class_c"],
     "box_encoding": "cxcywh",
     "coordinate_mode": "legacy_auto_normalized_or_pixels"
+  },
+  "quantization": {
+    "method": "post_training_full_integer_internal",
+    "weights": "int8_per_channel",
+    "activations": "int8",
+    "io_boundary": "int8",
+    "output_strategy": "independent_box_and_confidence_dequantization_before_concat"
   },
   "classes": [
     {"id": 0, "label": "a", "meaning": "female", "blur_eligible": true},

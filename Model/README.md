@@ -4,18 +4,33 @@ This package contains the version that was actually deployed in the inspected Ha
 
 ## Approved model file
 
-- Model: `halalify_gender_v3_float32.tflite`
-- Size: `12,132,492` bytes
-- SHA-256: `8F03A7F817C4604FFB8E29C5E2ECE70F4AE8A1BB2C2D189C11E9DD82DEF7E07A`
-- Input: RGB `float32`, shape `[1, 416, 416, 3]`
-- Output: `float32`, shape `[1, 7, 3549]`
+- Model: `halalify_gender_v3_full_int8.tflite`
+- Size: `3,292,400` bytes
+- SHA-256: `65E2B0BE46BC7E865EEDD2E084E6FC8CCB4258C81213A3EBE1D8333218A503B0`
+- Input: RGB `int8`, shape `[1, 416, 416, 3]`
+- Output: two `int8` tensors, shapes `[1, 4, 3549]` and `[1, 3, 3549]`
 - Classes: `a = female`, `b = male`, `c = ignored`
 
 Preprocessing details are defined in `model_manifest.json`. This directory is the canonical model source. Gradle now packages the model directly from this directory as an uncompressed Android asset, without committing a second copy to the repository, and the C++ engine validates its tensor contract when it starts.
 
 ## Quantization status
 
-The deployed artifact is still Float32. The repository does not contain the original SavedModel/Keras graph, so the checked-in TFLite file cannot be safely converted in place. Use `training/quantize_vision_model.py` with the original source model to produce an FP16 or calibrated INT8 artifact. The current native backend intentionally rejects INT8 input/output tensors until the runtime adapter is updated for quantized I/O.
+The approved artifact uses full INT8 quantization for weights, activations,
+input, and output. The detector's four box channels and three confidence
+channels are exposed as separate INT8 output tensors, each with its own scale.
+The native adapter dequantizes those branches into the existing Float32
+`[1,7,3549]` postprocess buffer. This avoids forcing small confidence values
+onto the much coarser coordinate scale.
+
+The approved export was produced with
+`training/quantize_split_output_tflite.py` and the original source graph. The
+large source and experimental artifacts were removed from this package after
+approval; only the deployable INT8 model is retained here.
+
+The old single-output all-INT8 artifact remains research-only because its
+combined detector output cannot represent coordinates and confidence scores
+accurately with one INT8 scale. The production artifact solves that by using
+split INT8 outputs and a native dequantization adapter.
 
 ## What the model does
 

@@ -12,6 +12,8 @@ internal enum class BlurStyle(val title: String, val description: String) {
     PIXELATED("Pixelated", "Small, hard censor blocks focused on the detected subject."),
 }
 
+internal const val MIN_BLUR_INTENSITY = 0.4f
+
 internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
     val blurImages: Boolean = true,
@@ -21,7 +23,7 @@ internal data class BlurSettings(
         /** Intensity of the blur effect.
          * 0f = no blur (lightest), 1f = maximum blur (heaviest).
          */
-        val intensity: Float = 0.5f
+        val intensity: Float = MIN_BLUR_INTENSITY
 ) {
     val hasVisualProtection: Boolean
         get() = blurImages || blurVideos
@@ -43,7 +45,8 @@ internal class BlurSettingsRepository(context: Context) {
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
             ?: BlurStyle.PIXELATED,
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
-        intensity = preferences.getFloat(KEY_BLUR_INTENSITY, 0.5f),
+        intensity = preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY)
+            .coerceIn(MIN_BLUR_INTENSITY, 1f),
     )
 
     fun save(settings: BlurSettings) {

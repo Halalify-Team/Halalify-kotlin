@@ -13,6 +13,10 @@ This package contains the version that was actually deployed in the inspected Ha
 
 Preprocessing details are defined in `model_manifest.json`. This directory is the canonical model source. Gradle now packages the model directly from this directory as an uncompressed Android asset, without committing a second copy to the repository, and the C++ engine validates its tensor contract when it starts.
 
+## Quantization status
+
+The deployed artifact is still Float32. The repository does not contain the original SavedModel/Keras graph, so the checked-in TFLite file cannot be safely converted in place. Use `training/quantize_vision_model.py` with the original source model to produce an FP16 or calibrated INT8 artifact. The current native backend intentionally rejects INT8 input/output tensors until the runtime adapter is updated for quantized I/O.
+
 ## What the model does
 
 The model is a YOLO-family object detector, not a classifier for a single cropped face. For each frame, it returns person bounding boxes with a score for one of three classes. The `female` and `male` labels represent the visual class learned by the model; they are not proof of a person's identity or actual gender.

@@ -248,10 +248,11 @@ internal class ScreenProtectionSession(
     private fun Detection.contains(x: Int, y: Int, width: Int, height: Int): Boolean {
         val normalizedX = x.toFloat() / width
         val normalizedY = y.toFloat() / height
-        val paddingX = (x2 - x1) * OVERLAY_MASK_PADDING_RATIO
-        val paddingY = (y2 - y1) * OVERLAY_MASK_PADDING_RATIO
-        return normalizedX in (x1 - paddingX)..(x2 + paddingX) &&
-            normalizedY in (y1 - paddingY)..(y2 + paddingY)
+        val insetRatio = if (isNsfw || classId == NSFW_CLASS_ID) 0F else GENDER_BOX_INSET_RATIO
+        val insetX = (x2 - x1) * insetRatio
+        val insetY = (y2 - y1) * insetRatio
+        return normalizedX in (x1 + insetX)..(x2 - insetX) &&
+            normalizedY in (y1 + insetY)..(y2 - insetY)
     }
 
     private fun Detection.coversMostOfFrame(): Boolean =
@@ -264,15 +265,16 @@ internal class ScreenProtectionSession(
         const val MAX_IMAGES = 2
         // Avoid running the detector continuously while keeping protection
         // responsive enough for normal screen changes.
-        const val CHANGE_CHECK_INTERVAL_MS = 350L
+        const val CHANGE_CHECK_INTERVAL_MS = 150L
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
         const val IGNORED_SAMPLE = -1
-        // Match FrameBlurRenderer so change detection ignores only the small
-        // protected subject region, not a large area around it.
-        const val OVERLAY_MASK_PADDING_RATIO = 0.05F
+        // Match FrameBlurRenderer so change detection ignores only the
+        // tightened gender region, not a larger area around it.
+        const val GENDER_BOX_INSET_RATIO = 0.08F
+        const val NSFW_CLASS_ID = 3
         const val FULL_FRAME_AREA_THRESHOLD = 0.85F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1

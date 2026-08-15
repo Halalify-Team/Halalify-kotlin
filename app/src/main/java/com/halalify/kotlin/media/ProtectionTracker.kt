@@ -33,6 +33,10 @@ internal class ProtectionTracker(
         val availableTracks = tracks.toMutableList()
         val matchedDetections = mutableSetOf<Detection>()
         detections.sortedByDescending(Detection::confidence).forEach { detection ->
+            // On a real content change, an unprotected detection represents
+            // the new subject. Do not attach it to the previous protected
+            // track, otherwise the old blur can remain over the new page.
+            if (contentChanged && !detection.shouldBlur) return@forEach
             val track = availableTracks.maxByOrNull { candidate ->
                 intersectionOverUnion(candidate.detection, detection)
             } ?: return@forEach
@@ -97,6 +101,8 @@ internal class ProtectionTracker(
     private companion object {
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 1
         const val DEFAULT_MATCHING_IOU = 0.20F
-        const val DEFAULT_SMOOTHING_ALPHA = 0.55F
+        // Follow the latest detector box immediately so a page flip cannot
+        // leave part of the previous location covered.
+        const val DEFAULT_SMOOTHING_ALPHA = 1F
     }
 }

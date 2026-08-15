@@ -133,22 +133,15 @@ internal fun HalalifyApp(
     }
 
     MaterialTheme(colorScheme = HalalifyColorScheme) {
-        Scaffold(
-            containerColor = AppBackground,
-            topBar = { AppHeader(isCapturing = captureState.isCapturing) },
-            bottomBar = {
-                PrimaryActionBar(
-                    isCapturing = captureState.isCapturing,
-                    settings = settings,
-                    onStartCapture = onStartCapture,
-                    onStopCapture = onStopCapture,
-                )
-            },
-        ) { scaffoldPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AppBackground),
+        ) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(scaffoldPadding),
+                    .padding(bottom = 160.dp),
                 contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
@@ -181,7 +174,6 @@ internal fun HalalifyApp(
                         )
                     }
                 }
-
 
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -257,6 +249,19 @@ internal fun HalalifyApp(
                 }
 
                 item { PrivacyNote() }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+            ) {
+                PrimaryActionBar(
+                    isCapturing = captureState.isCapturing,
+                    settings = settings,
+                    onStartCapture = onStartCapture,
+                    onStopCapture = onStopCapture,
+                )
             }
         }
     }
@@ -862,7 +867,15 @@ private fun PrimaryActionBar(
 ) {
     Surface(
         color = AppBackground.copy(alpha = 0.98f),
-        shadowElevation = 14.dp,
+        shadowElevation = 18.dp,
+        tonalElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = Outline.copy(alpha = 0.35f),
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+            ),
     ) {
         Column(
             modifier = Modifier

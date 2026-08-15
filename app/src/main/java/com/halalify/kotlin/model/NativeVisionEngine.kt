@@ -13,16 +13,18 @@ internal data class Detection(
     val confidence: Float,
     val classId: Int,
     val shouldBlur: Boolean,
+    val isNsfw: Boolean = false,
 ) {
     val label: String
         get() = when (classId) {
             0 -> "female"
             1 -> "male"
+            3 -> "nsfw"
             else -> "ignored"
     }
 }
 
-private const val DETECTION_FIELDS = 7
+private const val DETECTION_FIELDS = 8
 
 internal interface VisionProcessor : Closeable {
     fun process(
@@ -48,6 +50,7 @@ internal fun FloatArray.asListOfDetections(): List<Detection> {
                     confidence = this@asListOfDetections[base + 4],
                     classId = this@asListOfDetections[base + 5].toInt(),
                     shouldBlur = this@asListOfDetections[base + 6] > 0.5F,
+                    isNsfw = this@asListOfDetections[base + 7] > 0.5F,
                 ),
             )
         }
@@ -58,6 +61,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
     private var nativeHandle = nativeCreate(
         context.assets,
         MODEL_ASSET,
+        NSFW_MODEL_ASSET,
         target.nativeId,
     )
 
@@ -100,6 +104,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
     private external fun nativeCreate(
         assetManager: android.content.res.AssetManager,
         assetName: String,
+        nsfwAssetName: String,
         target: Int,
     ): Long
 
@@ -118,6 +123,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
 
     private companion object {
         const val MODEL_ASSET = "halalify_gender_v3_full_int8.tflite"
+        const val NSFW_MODEL_ASSET = "nsfw2.tflite"
 
         val BlurTarget.nativeId: Int
             get() = when (this) {

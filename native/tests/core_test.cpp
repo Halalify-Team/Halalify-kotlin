@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "core/audio_signal.h"
+#include "core/frame_sampling.h"
 #include "core/nms.h"
 #include "core/postprocess.h"
 #include "core/preprocess.h"
@@ -82,6 +83,24 @@ void TestAudioSignalConversionAndResidualScore() {
     assert(round_trip[2] == -32768);
 }
 
+void TestNsfwPreprocessUsesBgrVggMeans() {
+    const std::vector<uint8_t> rgba = {
+            255, 0, 0, 255,
+            255, 0, 0, 255,
+            255, 0, 0, 255,
+            255, 0, 0, 255,
+    };
+    const hb_frame frame{rgba.data(), 2, 2, 8, 0, 0, HB_PIXEL_FORMAT_RGBA8888};
+    std::vector<float> output;
+    std::string error;
+    assert(halalify::PreprocessNsfwRegion(
+            frame, halalify::NormalizedRect{}, &output, &error));
+    assert(output.size() == 224U * 224U * 3U);
+    assert(std::fabs(output[0] - (-103.939F)) < 1e-3F);
+    assert(std::fabs(output[1] - (-116.779F)) < 1e-3F);
+    assert(std::fabs(output[2] - 131.32F) < 1e-2F);
+}
+
 void TestSiteFilterReadsExternalRules() {
     const char rules[] =
             "# comments are ignored\n"
@@ -102,6 +121,7 @@ void TestSiteFilterReadsExternalRules() {
 int main() {
     TestPolicy();
     TestPreprocessLetterboxAndRgb();
+    TestNsfwPreprocessUsesBgrVggMeans();
     TestDecodeAndNms();
     TestAudioSignalConversionAndResidualScore();
     TestSiteFilterReadsExternalRules();

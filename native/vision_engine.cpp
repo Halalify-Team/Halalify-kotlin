@@ -5,7 +5,9 @@
 #include <new>
 #include <utility>
 
+#include "ai_engine.h"
 #include "backends/litert_backend.h"
+#include "backends/litert_nsfw_backend.h"
 #include "core/postprocess.h"
 #include "core/preprocess.h"
 
@@ -84,7 +86,7 @@ std::string VisionEngine::LastError() const {
 }  // namespace halalify
 
 struct hb_engine {
-    std::unique_ptr<halalify::VisionEngine> impl;
+    std::unique_ptr<halalify::AiEngine> impl;
     mutable std::string error_snapshot;
 };
 
@@ -101,6 +103,8 @@ hb_config hb_default_config(void) {
     // One thread reduces sustained CPU wakeups and battery drain on phones.
     // The capture loop is intentionally rate-limited on the Kotlin side.
     config.num_threads = 1;
+    config.nsfw_confidence_threshold = 0.70F;
+    config.max_nsfw_regions = 8;
     return config;
 }
 
@@ -115,9 +119,39 @@ hb_status hb_engine_create_from_buffer(
     *out_engine = nullptr;
     std::unique_ptr<hb_engine> engine(new (std::nothrow) hb_engine{});
     if (!engine) return HB_STATUS_MODEL_ERROR;
-    engine->impl = std::make_unique<halalify::VisionEngine>(
-            std::make_unique<halalify::LiteRtBackend>());
-    if (!engine->impl->Initialize(model_data, model_size, *config)) {
+    engine->impl = std::make_unique<halalify::AiEngine>(
+            std::make_unique<halalify::LiteRtBackend>(), nullptr);
+    if (!engine->impl->Initialize(model_data, model_size, nullptr, 0, *config)) {
+        return HB_STATUS_MODEL_ERROR;
+    }
+    *out_engine = engine.release();
+    return HB_STATUS_OK;
+}
+
+hb_status hb_engine_create_from_buffers(
+        const uint8_t* gender_model_data,
+        size_t gender_model_size,
+        const uint8_t* nsfw_model_data,
+        size_t nsfw_model_size,
+        const hb_config* config,
+        hb_engine** out_engine) {
+    if (gender_model_data == nullptr || gender_model_size == 0 ||
+        nsfw_model_data == nullptr || nsfw_model_size == 0 || config == nullptr ||
+        out_engine == nullptr) {
+        return HB_STATUS_INVALID_ARGUMENT;
+    }
+    *out_engine = nullptr;
+    std::unique_ptr<hb_engine> engine(new (std::nothrow) hb_engine{});
+    if (!engine) return HB_STATUS_MODEL_ERROR;
+    engine->impl = std::make_unique<halalify::AiEngine>(
+            std::make_unique<halalify::LiteRtBackend>(),
+            std::make_unique<halalify::LiteRtNsfwBackend>());
+    if (!engine->impl->Initialize(
+                gender_model_data,
+                gender_model_size,
+                nsfw_model_data,
+                nsfw_model_size,
+                *config)) {
         return HB_STATUS_MODEL_ERROR;
     }
     *out_engine = engine.release();

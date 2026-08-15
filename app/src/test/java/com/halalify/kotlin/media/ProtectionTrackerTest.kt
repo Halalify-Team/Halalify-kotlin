@@ -33,6 +33,19 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `new unprotected subject replaces old protected subject after content change`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val protected = tracker.update(
+            listOf(detection(classId = 1, shouldBlur = false)),
+            contentChanged = true,
+        )
+
+        assertTrue(protected.isEmpty())
+    }
+
+    @Test
     fun `static region never expires with time or safety refreshes`() {
         val tracker = ProtectionTracker(maxMissedContentChanges = 2)
         tracker.update(listOf(detection(shouldBlur = true)))
@@ -74,6 +87,19 @@ class ProtectionTrackerTest {
 
         assertEquals(0.155F, protected.x1, 0.0001F)
         assertEquals(0.655F, protected.x2, 0.0001F)
+    }
+
+    @Test
+    fun `default tracker follows the latest box without stale location padding`() {
+        val tracker = ProtectionTracker()
+        val first = detection(shouldBlur = true)
+        tracker.update(listOf(first))
+
+        val moved = first.copy(x1 = 0.20F, x2 = 0.70F)
+        val protected = tracker.update(listOf(moved)).single()
+
+        assertEquals(moved.x1, protected.x1, 0.0001F)
+        assertEquals(moved.x2, protected.x2, 0.0001F)
     }
 
     private fun detection(

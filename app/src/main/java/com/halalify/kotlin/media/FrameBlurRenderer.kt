@@ -45,7 +45,7 @@ internal object FrameBlurRenderer {
         val overlayRegions = mutableListOf<OverlayRegion>()
         try {
             selected.forEach { detection ->
-                val rect = detection.toExpandedRect(bitmap.width, bitmap.height) ?: return@forEach
+                val rect = detection.toTightRect(bitmap.width, bitmap.height) ?: return@forEach
                 overlayRegions += createOverlayRegion(
                     source = bitmap,
                     rect = rect,
@@ -116,24 +116,27 @@ internal object FrameBlurRenderer {
         }
     }
 
-    private fun Detection.toExpandedRect(width: Int, height: Int): Rect? {
+    private fun Detection.toTightRect(width: Int, height: Int): Rect? {
         val rawLeft = x1 * width
         val rawTop = y1 * height
         val rawRight = x2 * width
         val rawBottom = y2 * height
-        val paddingX = (rawRight - rawLeft) * BOX_PADDING_RATIO
-        val paddingY = (rawBottom - rawTop) * BOX_PADDING_RATIO
-        val left = floor(rawLeft - paddingX).toInt().coerceIn(0, width)
-        val top = floor(rawTop - paddingY).toInt().coerceIn(0, height)
-        val right = ceil(rawRight + paddingX).toInt().coerceIn(0, width)
-        val bottom = ceil(rawBottom + paddingY).toInt().coerceIn(0, height)
+        // The gender detector returns a person box, which usually includes a
+        // small amount of surrounding artwork. Tighten only gender boxes;
+        // NSFW boxes retain their full protected area for privacy.
+        val insetRatio = if (isNsfw || classId == NSFW_CLASS_ID) 0F else GENDER_BOX_INSET_RATIO
+        val insetX = (rawRight - rawLeft) * insetRatio
+        val insetY = (rawBottom - rawTop) * insetRatio
+        val left = ceil(rawLeft + insetX).toInt().coerceIn(0, width)
+        val top = ceil(rawTop + insetY).toInt().coerceIn(0, height)
+        val right = floor(rawRight - insetX).toInt().coerceIn(0, width)
+        val bottom = floor(rawBottom - insetY).toInt().coerceIn(0, height)
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
     // Keep the mosaic detailed enough to follow the detected subject without
     // turning the protected region into a handful of oversized blocks.
     private const val CENSOR_SAMPLE_SIZE = 8
-    // Keep the overlay close to the detector box so nearby background content
-    // is not covered. A small safety margin prevents edge clipping.
-    private const val BOX_PADDING_RATIO = 0.05F
+    private const val GENDER_BOX_INSET_RATIO = 0.08F
+    private const val NSFW_CLASS_ID = 3
 }

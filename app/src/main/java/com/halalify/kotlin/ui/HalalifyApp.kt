@@ -100,7 +100,7 @@ internal fun HalalifyApp(
     onSave: (BlurSettings) -> Unit,
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
-    onStartIsolation: () -> Unit = {},
+    onStartIsolation: (BlurSettings) -> Unit = {},
     websiteFilterEnabled: Boolean = initialSettings.blockAdultSites,
 ) {
     var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
@@ -109,6 +109,12 @@ internal fun HalalifyApp(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
             val displayName = runCatching {
                 val cursor = context.contentResolver.query(
                     uri,
@@ -244,11 +250,12 @@ internal fun HalalifyApp(
                     MusicIsolationSourceCard(
                         settings = settings,
                         enabled = !captureState.isCapturing,
+                        isolationStatus = captureState.audioStatus,
                         onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
                         onOpenFilePicker = {
                             filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
                         },
-                        onStartIsolation = onStartIsolation,
+                        onStartIsolation = { onStartIsolation(settings) },
                     )
                 }
 
@@ -610,6 +617,7 @@ private fun PreferenceToggle(
 private fun MusicIsolationSourceCard(
     settings: BlurSettings,
     enabled: Boolean,
+    isolationStatus: String?,
     onUrlChange: (String) -> Unit,
     onOpenFilePicker: () -> Unit,
     onStartIsolation: () -> Unit,
@@ -636,7 +644,7 @@ private fun MusicIsolationSourceCard(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = "Prepare a link or media file for future speech/music separation.",
+                    text = "Choose a media file or direct MP4/M4A link to create a copy without music.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     modifier = Modifier.padding(top = 2.dp),
@@ -657,7 +665,7 @@ private fun MusicIsolationSourceCard(
             onValueChange = onUrlChange,
             enabled = enabled && settings.isolateMusic,
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("https://youtu.be/... or video URL") },
+            placeholder = { Text("https://example.com/video.mp4 or audio.m4a") },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = Accent,
@@ -717,6 +725,15 @@ private fun MusicIsolationSourceCard(
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
+            )
+        }
+
+        isolationStatus?.let { status ->
+            Text(
+                text = status,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }

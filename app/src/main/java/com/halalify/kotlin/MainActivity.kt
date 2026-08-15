@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import com.google.android.gms.tflite.java.TfLiteNative
+import com.halalify.kotlin.capture.AudioIsolationService
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.capture.ProtectionCaptureService
 import com.halalify.kotlin.network.AdultSiteVpnService
@@ -123,6 +124,7 @@ class MainActivity : ComponentActivity() {
                 captureState = captureState,
                 onSave = settingsRepository::save,
                 onStartCapture = ::startCapture,
+                onStartIsolation = ::startIsolation,
                 onStopCapture = {
                     stopProtection()
                 },
@@ -164,6 +166,68 @@ class MainActivity : ComponentActivity() {
             return
         }
         continueStartingCapture(settings)
+    }
+
+    private fun startIsolation(settings: BlurSettings) {
+        settingsRepository.save(settings)
+        val remoteUrl = settings.musicSourceUrl.trim().takeIf { it.isNotEmpty() }
+        val localUri = settings.musicSourceUri.trim().takeIf {
+            it.isNotEmpty() && remoteUrl == null
+        }
+        if (remoteUrl == null && localUri == null) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(audioStatus = "Choose a media file or enter a direct media URL first.")
+            }
+            return
+        }
+        CaptureSessionStore.updateState { current ->
+            current.copy(
+                message = "Loading the on-device audio model...",
+                audioStatus = "Isolation is preparing...",
+            )
+        }
+        TfLiteNative.initialize(applicationContext)
+            .addOnSuccessListener {
+                startIsolationService(settings, localUri, remoteUrl)
+            }
+            .addOnFailureListener { error ->
+                CaptureSessionStore.updateState { current ->
+                    current.copy(
+                        message = "Could not initialize the audio model.",
+                        audioStatus = error.message ?: error.javaClass.simpleName,
+                    )
+                }
+            }
+    }
+
+    private fun startIsolationService(
+        settings: BlurSettings,
+        localUri: String?,
+        remoteUrl: String?,
+    ) {
+        val intent = Intent(this, AudioIsolationService::class.java).apply {
+            action = AudioIsolationService.ACTION_START
+            putExtra(AudioIsolationService.EXTRA_LOCAL_URI, localUri)
+            putExtra(AudioIsolationService.EXTRA_REMOTE_URL, remoteUrl)
+            putExtra(
+                AudioIsolationService.EXTRA_DISPLAY_NAME,
+                settings.musicSourceFileName.ifBlank { "media" },
+            )
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (error: Exception) {
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Could not start media isolation.",
+                    audioStatus = error.message ?: error.javaClass.simpleName,
+                )
+            }
+        }
     }
 
     private fun setWebsiteBlocking(enabled: Boolean) {

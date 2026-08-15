@@ -273,7 +273,7 @@ internal class ScreenProtectionSession(
         const val IGNORED_SAMPLE = -1
         // Match FrameBlurRenderer so change detection ignores only the
         // tightened gender region, not a larger area around it.
-        const val GENDER_BOX_INSET_RATIO = 0.08F
+        const val GENDER_BOX_INSET_RATIO = 0.05F
         const val NSFW_CLASS_ID = 3
         const val FULL_FRAME_AREA_THRESHOLD = 0.85F
         const val FEMALE_CLASS_ID = 0

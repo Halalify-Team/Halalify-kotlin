@@ -1,7 +1,10 @@
 package com.halalify.kotlin.ui
 
 import android.graphics.BitmapFactory
+import android.provider.OpenableColumns
 import android.widget.ImageView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -99,6 +102,30 @@ internal fun HalalifyApp(
     onStopCapture: () -> Unit,
 ) {
     var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val displayName = runCatching {
+                val cursor = context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )
+                cursor?.use {
+                    val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0 && it.moveToFirst()) it.getString(index) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment ?: "selected_media"
+            settings = settings.copy(
+                musicSourceUri = uri.toString(),
+                musicSourceFileName = displayName,
+            )
+        },
+    )
 
     LaunchedEffect(settings) {
         onSave(settings)
@@ -204,7 +231,9 @@ internal fun HalalifyApp(
                         settings = settings,
                         enabled = !captureState.isCapturing,
                         onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
-                        onFileNameChange = { fileName -> settings = settings.copy(musicSourceFileName = fileName) },
+                        onOpenFilePicker = {
+                            filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
+                        },
                     )
                 }
 
@@ -567,7 +596,7 @@ private fun MusicIsolationSourceCard(
     settings: BlurSettings,
     enabled: Boolean,
     onUrlChange: (String) -> Unit,
-    onFileNameChange: (String) -> Unit,
+    onOpenFilePicker: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -631,7 +660,7 @@ private fun MusicIsolationSourceCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(
-                onClick = { onFileNameChange("selected_audio.mp3") },
+                onClick = onOpenFilePicker,
                 enabled = enabled && settings.isolateMusic,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(

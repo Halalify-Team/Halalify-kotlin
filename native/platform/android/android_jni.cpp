@@ -7,6 +7,7 @@
 
 #include "asset_model_loader.h"
 #include "halalify_audio.h"
+#include "halalify_site_filter.h"
 #include "halalify_vision.h"
 
 namespace {
@@ -22,6 +23,14 @@ hb_engine* FromHandle(jlong handle) {
     return reinterpret_cast<hb_engine*>(static_cast<intptr_t>(handle));
 }
 
+hb_site_filter* SiteFilterFromHandle(jlong handle) {
+    return reinterpret_cast<hb_site_filter*>(static_cast<intptr_t>(handle));
+}
+
+jlong ToSiteFilterHandle(hb_site_filter* filter) {
+    return static_cast<jlong>(reinterpret_cast<intptr_t>(filter));
+}
+
 jlong ToHandle(hb_engine* engine) {
     return static_cast<jlong>(reinterpret_cast<intptr_t>(engine));
 }
@@ -35,6 +44,58 @@ jlong ToAudioHandle(ha_audio_engine* engine) {
 }
 
 }  // namespace
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_halalify_kotlin_network_NativeSiteFilterEngine_nativeCreate(
+        JNIEnv* env,
+        jobject /* instance */,
+        jbyteArray java_blocklist) {
+    if (java_blocklist == nullptr) {
+        Throw(env, "java/lang/IllegalArgumentException", "Site blocklist bytes are required.");
+        return 0;
+    }
+    const jsize size = env->GetArrayLength(java_blocklist);
+    jbyte* bytes = env->GetByteArrayElements(java_blocklist, nullptr);
+    if (bytes == nullptr) return 0;
+    const char* error = nullptr;
+    hb_site_filter* filter = hb_site_filter_create_from_buffer(
+            reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(size), &error);
+    env->ReleaseByteArrayElements(java_blocklist, bytes, JNI_ABORT);
+    if (filter == nullptr) {
+        Throw(
+                env,
+                "java/lang/IllegalStateException",
+                error == nullptr ? "Could not load the site blocklist." : error);
+        return 0;
+    }
+    return ToSiteFilterHandle(filter);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_halalify_kotlin_network_NativeSiteFilterEngine_nativeIsBlocked(
+        JNIEnv* env,
+        jobject /* instance */,
+        jlong handle,
+        jstring java_domain) {
+    hb_site_filter* filter = SiteFilterFromHandle(handle);
+    if (filter == nullptr || java_domain == nullptr) {
+        Throw(env, "java/lang/IllegalArgumentException", "Site filter handle or domain is invalid.");
+        return JNI_FALSE;
+    }
+    const char* domain = env->GetStringUTFChars(java_domain, nullptr);
+    if (domain == nullptr) return JNI_FALSE;
+    const bool blocked = hb_site_filter_is_blocked(filter, domain) != 0;
+    env->ReleaseStringUTFChars(java_domain, domain);
+    return blocked ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_halalify_kotlin_network_NativeSiteFilterEngine_nativeDestroy(
+        JNIEnv* /* env */,
+        jobject /* instance */,
+        jlong handle) {
+    hb_site_filter_destroy(SiteFilterFromHandle(handle));
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_halalify_kotlin_model_NativeVisionEngine_nativeCreate(

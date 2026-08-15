@@ -133,16 +133,22 @@ internal fun HalalifyApp(
     }
 
     MaterialTheme(colorScheme = HalalifyColorScheme) {
-        Box(
+        Scaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppBackground),
-        ) {
+            containerColor = AppBackground,
+        ) { innerPadding ->
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = 160.dp),
-                contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp),
+                    .padding(innerPadding),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    top = 12.dp,
+                    end = 20.dp,
+                    bottom = 28.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 item {
@@ -182,7 +188,7 @@ internal fun HalalifyApp(
                             title = "Protection coverage",
                             description = "Fine-tune which media Halalify monitors locally.",
                         )
-                        PreferenceCard(enabled = !captureState.isCapturing) {
+                        PreferenceCard(enabled = true) {
                             PreferenceToggle(
                                 shortLabel = "IMG",
                                 title = "Images",
@@ -215,6 +221,20 @@ internal fun HalalifyApp(
                                     settings = settings.copy(isolateMusic = enabled)
                                 },
                             )
+                            HorizontalDivider(color = Outline)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(AppSurfaceHigh.copy(alpha = 0.45f))
+                                    .padding(16.dp),
+                            ) {
+                                PrimaryActionBar(
+                                    isCapturing = captureState.isCapturing,
+                                    settings = settings,
+                                    onStartCapture = onStartCapture,
+                                    onStopCapture = onStopCapture,
+                                )
+                            }
                         }
                     }
                 }
@@ -249,19 +269,6 @@ internal fun HalalifyApp(
                 }
 
                 item { PrivacyNote() }
-            }
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-            ) {
-                PrimaryActionBar(
-                    isCapturing = captureState.isCapturing,
-                    settings = settings,
-                    onStartCapture = onStartCapture,
-                    onStopCapture = onStopCapture,
-                )
             }
         }
     }
@@ -864,54 +871,39 @@ private fun PrimaryActionBar(
     settings: BlurSettings,
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = AppBackground.copy(alpha = 0.98f),
-        shadowElevation = 18.dp,
-        tonalElevation = 0.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                width = 1.dp,
-                color = Outline.copy(alpha = 0.35f),
-                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            ),
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Button(
+            onClick = {
+                if (isCapturing) onStopCapture() else onStartCapture(settings)
+            },
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isCapturing) DangerContainer else Accent,
+                contentColor = if (isCapturing) Danger else AppBackground,
+            ),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Button(
-                onClick = {
-                    if (isCapturing) onStopCapture() else onStartCapture(settings)
-                },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isCapturing) DangerContainer else Accent,
-                    contentColor = if (isCapturing) Danger else AppBackground,
-                ),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = if (isCapturing) "Stop protection" else "Start protection",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
             Text(
-                text = if (isCapturing) {
-                    "Protection is running in the background"
-                } else {
-                    "Android will ask for overlay and screen-sharing access"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary,
-                modifier = Modifier.padding(top = 7.dp),
+                text = if (isCapturing) "Stop protection" else "Start protection",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
             )
         }
+        Text(
+            text = if (isCapturing) {
+                "Protection is running in the background"
+            } else {
+                "Android will ask for overlay and screen-sharing access"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = TextSecondary,
+            modifier = Modifier.padding(top = 7.dp),
+        )
     }
 }

@@ -8,6 +8,7 @@
 #include "core/postprocess.h"
 #include "core/preprocess.h"
 #include "core/protection_policy.h"
+#include "core/site_filter.h"
 
 namespace {
 
@@ -81,6 +82,21 @@ void TestAudioSignalConversionAndResidualScore() {
     assert(round_trip[2] == -32768);
 }
 
+void TestSiteFilterReadsExternalRules() {
+    const char rules[] =
+            "# comments are ignored\n"
+            "0.0.0.0 Porn.Example\n"
+            "||adult.example^\n";
+    halalify::SiteFilterEngine filter;
+    std::string error;
+    assert(filter.Load(
+            reinterpret_cast<const uint8_t*>(rules), sizeof(rules) - 1, &error));
+    assert(filter.IsBlocked("porn.example"));
+    assert(filter.IsBlocked("cdn.porn.example."));
+    assert(filter.IsBlocked("adult.example"));
+    assert(!filter.IsBlocked("notporn.example"));
+}
+
 }  // namespace
 
 int main() {
@@ -88,5 +104,6 @@ int main() {
     TestPreprocessLetterboxAndRgb();
     TestDecodeAndNms();
     TestAudioSignalConversionAndResidualScore();
+    TestSiteFilterReadsExternalRules();
     return 0;
 }

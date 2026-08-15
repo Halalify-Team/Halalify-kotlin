@@ -1,0 +1,17 @@
+# One domain or hosts/adblock-style rule per line.
+# The application first checks files/site_blocklist.txt for an updated copy.
+# If that file is absent, this packaged file is used.
+#
+# Example rules:
+# 0.0.0.0 example.test
+# ||sub.example.test^
+
+pornhub.com
+xvideos.com
+xnxx.com
+xhamster.com
+redtube.com
+youporn.com
+spankbang.com
+rule34.xxx
+nhentai.net

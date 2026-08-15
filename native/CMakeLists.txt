@@ -10,7 +10,9 @@ add_library(halalify_vision_core STATIC
         core/preprocess.cpp
         core/postprocess.cpp
         core/nms.cpp
-        core/protection_policy.cpp)
+        core/protection_policy.cpp
+        core/site_filter.cpp
+        site_filter_engine.cpp)
 target_include_directories(halalify_vision_core PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/include")

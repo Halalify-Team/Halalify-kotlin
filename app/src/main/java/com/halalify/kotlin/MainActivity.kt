@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
+import android.net.VpnService
 import android.os.Bundle
 import android.os.Build
 import android.provider.Settings
@@ -15,10 +16,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import com.google.android.gms.tflite.java.TfLiteNative
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.capture.ProtectionCaptureService
+import com.halalify.kotlin.network.AdultSiteVpnService
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
 import com.halalify.kotlin.ui.HalalifyApp
@@ -29,6 +33,9 @@ import com.halalify.kotlin.ui.HalalifyApp
 class MainActivity : ComponentActivity() {
     private lateinit var settingsRepository: BlurSettingsRepository
     private var pendingCaptureSettings: BlurSettings? = null
+    private var pendingWebsiteFilterEnable = false
+    private var pendingWebsiteProtectionSettings: BlurSettings? = null
+    private var websiteFilterEnabled by mutableStateOf(false)
     private val audioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -84,10 +91,31 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (pendingWebsiteFilterEnable && result.resultCode == Activity.RESULT_OK) {
+            startWebsiteFilterService()
+        } else if (pendingWebsiteFilterEnable) {
+            val pendingProtectionSettings = pendingWebsiteProtectionSettings
+            pendingWebsiteProtectionSettings = null
+            websiteFilterEnabled = false
+            settingsRepository.save(settingsRepository.load().copy(blockAdultSites = false))
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = if (pendingProtectionSettings != null) {
+                        "VPN permission is required for the complete image/video protection profile."
+                    } else {
+                        "VPN permission was not granted; website blocking is off."
+                    },
+                )
+            }
+        }
+        pendingWebsiteFilterEnable = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsRepository = BlurSettingsRepository(applicationContext)
+        websiteFilterEnabled = settingsRepository.load().blockAdultSites
         setContent {
             val captureState by CaptureSessionStore.state.collectAsState()
             HalalifyApp(
@@ -96,11 +124,9 @@ class MainActivity : ComponentActivity() {
                 onSave = settingsRepository::save,
                 onStartCapture = ::startCapture,
                 onStopCapture = {
-                    startService(
-                        Intent(this, ProtectionCaptureService::class.java)
-                            .setAction(ProtectionCaptureService.ACTION_STOP),
-                    )
+                    stopProtection()
                 },
+                websiteFilterEnabled = websiteFilterEnabled,
             )
         }
     }
@@ -108,6 +134,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         CaptureSessionStore.setPreviewRequested(true)
+        if (websiteFilterEnabled && !pendingWebsiteFilterEnable) setWebsiteBlocking(true)
     }
 
     override fun onStop() {
@@ -139,7 +166,64 @@ class MainActivity : ComponentActivity() {
         continueStartingCapture(settings)
     }
 
+    private fun setWebsiteBlocking(enabled: Boolean) {
+        if (!enabled) {
+            websiteFilterEnabled = false
+            settingsRepository.save(settingsRepository.load().copy(blockAdultSites = false))
+            startService(
+                Intent(this, AdultSiteVpnService::class.java)
+                    .setAction(AdultSiteVpnService.ACTION_STOP),
+            )
+            return
+        }
+
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent != null) {
+            pendingWebsiteFilterEnable = true
+            vpnPermissionLauncher.launch(prepareIntent)
+        } else {
+            startWebsiteFilterService()
+        }
+    }
+
+    private fun startWebsiteFilterService() {
+        websiteFilterEnabled = true
+        settingsRepository.save(settingsRepository.load().copy(blockAdultSites = true))
+        val intent = Intent(this, AdultSiteVpnService::class.java)
+            .setAction(AdultSiteVpnService.ACTION_START)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        val pendingProtectionSettings = pendingWebsiteProtectionSettings
+        pendingWebsiteProtectionSettings = null
+        if (pendingProtectionSettings != null) {
+            continueStartingCaptureAfterWebsiteFilter(pendingProtectionSettings)
+        }
+    }
+
+    private fun stopProtection() {
+        startService(
+            Intent(this, ProtectionCaptureService::class.java)
+                .setAction(ProtectionCaptureService.ACTION_STOP),
+        )
+        if (websiteFilterEnabled) setWebsiteBlocking(false)
+    }
+
     private fun continueStartingCapture(settings: BlurSettings) {
+        settingsRepository.save(settings)
+        if (settings.hasVisualProtection && !websiteFilterEnabled) {
+            val protectedSettings = settings.copy(blockAdultSites = true)
+            settingsRepository.save(protectedSettings)
+            pendingWebsiteProtectionSettings = protectedSettings
+            setWebsiteBlocking(true)
+            return
+        }
+        continueStartingCaptureAfterWebsiteFilter(settings)
+    }
+
+    private fun continueStartingCaptureAfterWebsiteFilter(settings: BlurSettings) {
         settingsRepository.save(settings)
         if (settings.hasVisualProtection && !Settings.canDrawOverlays(this)) {
             CaptureSessionStore.updateState { current ->

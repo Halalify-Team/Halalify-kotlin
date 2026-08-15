@@ -101,6 +101,7 @@ internal fun HalalifyApp(
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
     onStartIsolation: () -> Unit = {},
+    websiteFilterEnabled: Boolean = initialSettings.blockAdultSites,
 ) {
     var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -128,8 +129,8 @@ internal fun HalalifyApp(
         },
     )
 
-    LaunchedEffect(settings) {
-        onSave(settings)
+    LaunchedEffect(settings, websiteFilterEnabled) {
+        onSave(settings.copy(blockAdultSites = websiteFilterEnabled))
     }
 
     MaterialTheme(colorScheme = HalalifyColorScheme) {

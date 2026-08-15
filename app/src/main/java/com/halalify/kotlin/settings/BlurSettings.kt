@@ -20,16 +20,29 @@ internal data class BlurSettings(
     val blurVideos: Boolean = true,
     val style: BlurStyle = BlurStyle.PIXELATED,
     val isolateMusic: Boolean = false,
-        /** Intensity of the blur effect.
-         * 0f = no blur (lightest), 1f = maximum blur (heaviest).
-         */
-        val intensity: Float = MIN_BLUR_INTENSITY
+    val musicSourceUrl: String = "",
+    val musicSourceFileName: String = "",
+    /** Intensity of the blur effect.
+     * 0f = no blur (lightest), 1f = maximum blur (heaviest).
+     */
+    val intensity: Float = MIN_BLUR_INTENSITY,
 ) {
     val hasVisualProtection: Boolean
         get() = blurImages || blurVideos
 
+    val hasMusicIsolationSource: Boolean
+        get() = musicSourceUrl.isNotBlank() || musicSourceFileName.isNotBlank()
+
     val hasEnabledProtection: Boolean
         get() = hasVisualProtection || isolateMusic
+
+    fun shouldBlurLabel(label: String): Boolean {
+        val normalized = label.trim().lowercase()
+        return when (target) {
+            BlurTarget.FEMALE -> normalized == "female" || normalized == "a" || normalized.contains("female")
+            BlurTarget.MALE -> normalized == "male" || normalized == "b" || normalized.contains("male")
+        }
+    }
 }
 
 internal class BlurSettingsRepository(context: Context) {
@@ -45,6 +58,8 @@ internal class BlurSettingsRepository(context: Context) {
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
             ?: BlurStyle.PIXELATED,
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
+        musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
+        musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
         intensity = preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY)
             .coerceIn(MIN_BLUR_INTENSITY, 1f),
     )
@@ -56,6 +71,8 @@ internal class BlurSettingsRepository(context: Context) {
             putBoolean(KEY_BLUR_VIDEOS, settings.blurVideos)
             putString(KEY_BLUR_STYLE, settings.style.name)
             putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
+            putString(KEY_MUSIC_SOURCE_URL, settings.musicSourceUrl)
+            putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putFloat(KEY_BLUR_INTENSITY, settings.intensity)
         }
     }
@@ -67,6 +84,8 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_BLUR_VIDEOS = "blur_videos"
         const val KEY_BLUR_STYLE = "blur_style"
         const val KEY_ISOLATE_MUSIC = "isolate_music"
+        const val KEY_MUSIC_SOURCE_URL = "music_source_url"
+        const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
         const val KEY_BLUR_INTENSITY = "blur_intensity"
     }
 }

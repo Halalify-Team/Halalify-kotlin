@@ -30,6 +30,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -195,6 +197,15 @@ internal fun HalalifyApp(
                             )
                         }
                     }
+                }
+
+                item {
+                    MusicIsolationSourceCard(
+                        settings = settings,
+                        enabled = !captureState.isCapturing,
+                        onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
+                        onFileNameChange = { fileName -> settings = settings.copy(musicSourceFileName = fileName) },
+                    )
                 }
 
                 item {
@@ -548,6 +559,98 @@ private fun PreferenceToggle(
                 uncheckedBorderColor = Outline,
             ),
         )
+    }
+}
+
+@Composable
+private fun MusicIsolationSourceCard(
+    settings: BlurSettings,
+    enabled: Boolean,
+    onUrlChange: (String) -> Unit,
+    onFileNameChange: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.55f)
+            .clip(RoundedCornerShape(22.dp))
+            .background(AppSurface)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Music isolation source",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Prepare a link or media file for future speech/music separation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (settings.hasMusicIsolationSource) {
+                Text(
+                    text = "Ready",
+                    color = Accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+
+        OutlinedTextField(
+            value = settings.musicSourceUrl,
+            onValueChange = onUrlChange,
+            enabled = enabled && settings.isolateMusic,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("https://youtu.be/... or video URL") },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Accent,
+                unfocusedBorderColor = Outline,
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary,
+                cursorColor = Accent,
+                focusedPlaceholderColor = TextSecondary,
+                unfocusedPlaceholderColor = TextSecondary,
+            ),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(
+                onClick = { onFileNameChange("selected_audio.mp3") },
+                enabled = enabled && settings.isolateMusic,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AppSurfaceHigh,
+                    contentColor = TextPrimary,
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Choose file")
+            }
+            Text(
+                text = settings.musicSourceFileName.ifBlank { "No file selected" },
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

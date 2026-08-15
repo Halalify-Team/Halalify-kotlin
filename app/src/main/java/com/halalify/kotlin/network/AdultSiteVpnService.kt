@@ -61,6 +61,17 @@ internal class AdultSiteVpnService : VpnService() {
     private fun startVpn() {
         if (running) return
         stopVpn()
+        try {
+            startVpnInternal()
+        } catch (error: Exception) {
+            Log.e(TAG, "Could not start the website-protection VPN.", error)
+            stopVpn()
+            publishMessage("Website protection could not start: ${error.message ?: error.javaClass.simpleName}")
+            stopSelf()
+        }
+    }
+
+    private fun startVpnInternal() {
         if (VpnService.prepare(this) != null) {
             publishMessage("VPN permission is missing. Approve it before starting protection.")
             stopSelf()
@@ -142,10 +153,17 @@ internal class AdultSiteVpnService : VpnService() {
                 }
 
                 resolverExecutor.execute {
-                    val response = forwardToFamilyDns(request.query, activeSockets)
-                    if (response != null && running) {
-                        dnsCache.put(request.query, response)
-                        writeDnsResponse(tunnelOutput, request, response)
+                    try {
+                        val response = forwardToFamilyDns(request.query, activeSockets)
+                        if (response != null && running) {
+                            dnsCache.put(request.query, response)
+                            writeDnsResponse(tunnelOutput, request, response)
+                        }
+                    } catch (error: Exception) {
+                        // A resolver failure must only drop this DNS request; an
+                        // uncaught exception in an executor thread can terminate
+                        // the whole Android process on some devices.
+                        Log.w(TAG, "DNS request failed; keeping website protection alive.", error)
                     }
                 }
             }

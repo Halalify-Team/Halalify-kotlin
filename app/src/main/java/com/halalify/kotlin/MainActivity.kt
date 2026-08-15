@@ -191,10 +191,22 @@ class MainActivity : ComponentActivity() {
         settingsRepository.save(settingsRepository.load().copy(blockAdultSites = true))
         val intent = Intent(this, AdultSiteVpnService::class.java)
             .setAction(AdultSiteVpnService.ACTION_START)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (error: Exception) {
+            websiteFilterEnabled = false
+            settingsRepository.save(settingsRepository.load().copy(blockAdultSites = false))
+            pendingWebsiteProtectionSettings = null
+            CaptureSessionStore.updateState { current ->
+                current.copy(
+                    message = "Website protection could not start: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
+            return
         }
         val pendingProtectionSettings = pendingWebsiteProtectionSettings
         pendingWebsiteProtectionSettings = null

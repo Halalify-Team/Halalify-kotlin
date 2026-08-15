@@ -22,6 +22,7 @@ internal data class BlurSettings(
     val isolateMusic: Boolean = false,
     val musicSourceUrl: String = "",
     val musicSourceFileName: String = "",
+    val musicSourceUri: String = "",
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
@@ -31,7 +32,7 @@ internal data class BlurSettings(
         get() = blurImages || blurVideos
 
     val hasMusicIsolationSource: Boolean
-        get() = musicSourceUrl.isNotBlank() || musicSourceFileName.isNotBlank()
+        get() = musicSourceUrl.isNotBlank() || musicSourceFileName.isNotBlank() || musicSourceUri.isNotBlank()
 
     val hasEnabledProtection: Boolean
         get() = hasVisualProtection || isolateMusic
@@ -60,6 +61,7 @@ internal class BlurSettingsRepository(context: Context) {
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
         musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
+        musicSourceUri = preferences.getString(KEY_MUSIC_SOURCE_URI, "") ?: "",
         intensity = preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY)
             .coerceIn(MIN_BLUR_INTENSITY, 1f),
     )
@@ -73,6 +75,7 @@ internal class BlurSettingsRepository(context: Context) {
             putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
             putString(KEY_MUSIC_SOURCE_URL, settings.musicSourceUrl)
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
+            putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
             putFloat(KEY_BLUR_INTENSITY, settings.intensity)
         }
     }
@@ -86,6 +89,7 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_ISOLATE_MUSIC = "isolate_music"
         const val KEY_MUSIC_SOURCE_URL = "music_source_url"
         const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
+        const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
         const val KEY_BLUR_INTENSITY = "blur_intensity"
     }
 }

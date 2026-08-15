@@ -100,6 +100,7 @@ internal fun HalalifyApp(
     onSave: (BlurSettings) -> Unit,
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
+    onStartIsolation: () -> Unit = {},
 ) {
     var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -234,6 +235,7 @@ internal fun HalalifyApp(
                         onOpenFilePicker = {
                             filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
                         },
+                        onStartIsolation = onStartIsolation,
                     )
                 }
 
@@ -597,6 +599,7 @@ private fun MusicIsolationSourceCard(
     enabled: Boolean,
     onUrlChange: (String) -> Unit,
     onOpenFilePicker: () -> Unit,
+    onStartIsolation: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -678,6 +681,29 @@ private fun MusicIsolationSourceCard(
                 modifier = Modifier.weight(1f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Button(
+            onClick = onStartIsolation,
+            enabled = enabled && settings.isolateMusic && settings.hasMusicIsolationSource,
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Accent,
+                contentColor = AppBackground,
+                disabledContainerColor = AppSurfaceHigh,
+                disabledContentColor = TextSecondary,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = if (settings.isolateMusic && settings.hasMusicIsolationSource) {
+                    "Start isolation"
+                } else {
+                    "Add source to start"
+                },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
             )
         }
     }

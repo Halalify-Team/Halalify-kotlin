@@ -10,7 +10,7 @@ An Android prototype for on-device content blur. Users select one visual model c
 - Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
 - Detected regions are also scored locally with the bundled `nsfw2.tflite` Open-NSFW Android classifier. Regions at or above the 0.70 NSFW threshold are added to the same blur pipeline, regardless of the selected male/female target. If no region is detected but the full frame is NSFW, the whole frame is protected.
 - Adult-site protection includes a DNS-only local `VpnService`. It routes DNS queries to the local TUN endpoint, asks the shared native site-policy engine about each domain, and forwards other queries to a family-filtering DNS resolver.
-- The optional Android playback-audio monitor now runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. After two consecutive music-positive frames it mutes the device media stream, requests a transient audio focus so a cooperative media player pauses, and shows the action in the app and foreground notification.
+- The Android playback-audio monitor runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. The Music isolation source action also decodes a selected local audio/video file or a direct HTTP(S) MP4/M4A URL, writes the DTLN speech stem as AAC, and saves a new file under Movies/Music > Halalify. Video samples are retained while only the audio track is replaced.
 - The model stays on device. Captured preview frames are not persisted or uploaded.
 
 ## Current limitation
@@ -18,6 +18,8 @@ An Android prototype for on-device content blur. Users select one visual model c
 Device-level blur requires the explicit Android display-over-other-apps permission. Application overlays remain below critical system windows such as the status bar and keyboard, and Android protected surfaces may also be absent from MediaProjection captures. Coordinate, rotation, and OEM behavior still require broader device testing.
 
 Playback capture is limited to apps and players that allow it. Android gives a normal app a copy of eligible playback; it does not guarantee that Halalify can close another app or replace its device output with the processed speech stem. The pause request is best-effort and player-dependent.
+
+The source action accepts direct media URLs. A YouTube watch/share URL is a web page, not a stable media file, and is intentionally not scraped by the app; download the clip with a permitted tool and choose the resulting file, or provide a permitted direct MP4/M4A URL.
 
 The gender detector remains a separate v3 model; NSFW is intentionally a second, small classifier because the existing YOLO output contract is unchanged. The NSFW model is a classifier, so localized protection depends on a detected region; when no region is available, a positive whole-frame result protects the complete captured frame. Thresholds and accuracy still require validation on representative app screenshots.
 

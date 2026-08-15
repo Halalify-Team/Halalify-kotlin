@@ -137,6 +137,6 @@ internal object FrameBlurRenderer {
     // Keep the mosaic detailed enough to follow the detected subject without
     // turning the protected region into a handful of oversized blocks.
     private const val CENSOR_SAMPLE_SIZE = 8
-    private const val GENDER_BOX_INSET_RATIO = 0.08F
+    private const val GENDER_BOX_INSET_RATIO = 0.05F
     private const val NSFW_CLASS_ID = 3
 }

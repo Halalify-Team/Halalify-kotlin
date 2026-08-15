@@ -59,6 +59,16 @@ android {
     androidResources {
         noCompress += "tflite"
     }
+
+    buildTypes {
+        debug {
+            isDebuggable = true
+        }
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }
 
 kotlin {

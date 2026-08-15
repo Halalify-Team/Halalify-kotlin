@@ -61,4 +61,18 @@ class BlurSettingsTest {
 
         assertFalse(settings.hasEnabledProtection)
     }
+
+    @Test
+    fun `music isolation source supports url and file placeholders`() {
+        val settings = BlurSettings(
+            isolateMusic = true,
+            musicSourceUrl = "https://youtu.be/example",
+            musicSourceFileName = "demo_audio.mp3",
+        )
+
+        assertTrue(settings.isolateMusic)
+        assertTrue(settings.musicSourceUrl.isNotBlank())
+        assertTrue(settings.musicSourceFileName.isNotBlank())
+        assertTrue(settings.hasMusicIsolationSource)
+    }
 }

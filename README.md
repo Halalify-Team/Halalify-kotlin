@@ -8,6 +8,7 @@ An Android prototype for on-device content blur. Users select one visual model c
 - Settings persist locally across app launches.
 - A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
 - Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
+- Detected regions are also scored locally with the bundled `nsfw2.tflite` Open-NSFW Android classifier. Regions at or above the 0.70 NSFW threshold are added to the same blur pipeline, regardless of the selected male/female target. If no region is detected but the full frame is NSFW, the whole frame is protected.
 - Adult-site protection includes a DNS-only local `VpnService`. It routes DNS queries to the local TUN endpoint, asks the shared native site-policy engine about each domain, and forwards other queries to a family-filtering DNS resolver.
 - The optional Android playback-audio monitor now runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. After two consecutive music-positive frames it mutes the device media stream, requests a transient audio focus so a cooperative media player pauses, and shows the action in the app and foreground notification.
 - The model stays on device. Captured preview frames are not persisted or uploaded.
@@ -18,7 +19,11 @@ Device-level blur requires the explicit Android display-over-other-apps permissi
 
 Playback capture is limited to apps and players that allow it. Android gives a normal app a copy of eligible playback; it does not guarantee that Halalify can close another app or replace its device output with the processed speech stem. The pause request is best-effort and player-dependent.
 
-The checked-in vision model is still the gender-only v3 artifact. Adding a second label in Kotlin or C++ cannot make it detect NSFW content. To meet the single-model requirement, provide a retrained v4 detector whose classes encode both properties (for example `female_safe`, `male_safe`, `female_nsfw`, `male_nsfw`) and update the model manifest and native output contract together. Until that artifact is supplied, the app must not claim that its visual model detects NSFW content.
+The gender detector remains a separate v3 model; NSFW is intentionally a second, small classifier because the existing YOLO output contract is unchanged. The NSFW model is a classifier, so localized protection depends on a detected region; when no region is available, a positive whole-frame result protects the complete captured frame. Thresholds and accuracy still require validation on representative app screenshots.
+
+## Native AI Engine layout
+
+`native/ai_engine.*` is the platform-neutral orchestrator. It combines the gender detector and the NSFW classifier, while `native/backends/*` contains runtime-specific inference adapters. Android exposes this through a small JNI adapter; a future iOS target can reuse the orchestration and provide Core ML or LiteRT backends without moving model or blur policy into Swift/Kotlin.
 
 The DNS VPN is a filtering layer rather than a full traffic-forwarding VPN. It does not inspect HTTPS page contents and cannot reliably stop DNS-over-HTTPS, DNS-over-TLS, direct-IP access, or an app that bypasses the system resolver. Device-managed lockdown or a full VPN forwarder is required for stronger enforcement.
 

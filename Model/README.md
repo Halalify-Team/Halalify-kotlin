@@ -11,6 +11,17 @@ This package contains the version that was actually deployed in the inspected Ha
 - Output: two `int8` tensors, shapes `[1, 4, 3549]` and `[1, 3, 3549]`
 - Classes: `a = female`, `b = male`, `c = ignored`
 
+## NSFW classifier
+
+The package also contains `nsfw2.tflite`, a 5,958,568-byte float32 classifier exported by the archived [Open-NSFW Android project](https://github.com/devzwy/open_nsfw_android). Its SHA-256 is `EB3B446A6A8C1A73998A76011B97CFC67BC01084C63EE195C774E71344A66442`.
+
+- Input: float32 tensor `[1, 224, 224, 3]`; the native adapter follows the source model's centered 224 crop from a 256x256 resize and BGR VGG-mean preprocessing.
+- Output: float32 `[1, 2]`, interpreted as `[sfw, nsfw]`.
+- Runtime threshold: `0.70` NSFW probability.
+- The classifier is run over up to eight highest-confidence detector regions. A positive result marks that region for the existing blur renderer; if no detector region exists, a positive full-frame result protects the entire frame.
+
+The upstream repository documents the model as Apache 2.0, but its README also notes that the project is archived and may be inaccurate on some images. Revalidate the model and review upstream/model provenance before commercial distribution. The classifier is orchestrated by the native `AiEngine`; Kotlin does not load or invoke this model directly.
+
 Preprocessing details are defined in `model_manifest.json`. This directory is the canonical model source. Gradle now packages the model directly from this directory as an uncompressed Android asset, without committing a second copy to the repository, and the C++ engine validates its tensor contract when it starts.
 
 ## Quantization status

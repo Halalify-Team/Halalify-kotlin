@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "model_id": "open-nsfw-android-nsfw2",
+  "model_file": "nsfw2.tflite",
+  "format": "tflite",
+  "size_bytes": 5958568,
+  "sha256": "EB3B446A6A8C1A73998A76011B97CFC67BC01084C63EE195C774E71344A66442",
+  "source": "https://github.com/devzwy/open_nsfw_android",
+  "license": "Apache-2.0",
+  "input": {
+    "shape": [1, 224, 224, 3],
+    "data_type": "float32",
+    "layout": "NHWC",
+    "channel_order": "BGR",
+    "preprocessing": {
+      "resize": [256, 256],
+      "center_crop": [224, 224],
+      "mean": [103.939, 116.779, 123.68]
+    }
+  },
+  "output": {
+    "shape": [1, 2],
+    "data_type": "float32",
+    "classes": ["sfw", "nsfw"]
+  },
+  "runtime": {
+    "threshold": 0.7,
+    "max_regions_per_frame": 8,
+    "fallback": "full_frame_when_no_detector_region_exists"
+  }
+}

@@ -112,12 +112,17 @@ internal class ScreenProtectionSession(
             )
             if (!running) return
 
-            val protectedDetections = protectionTracker.update(
-                detections,
-                contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
-            )
-            lastProtectedDetections = protectedDetections
-            renderFrame(image, plane, detections, protectedDetections)
+            val frameBitmap = plane.toCroppedBitmap(image.width, image.height)
+            try {
+                val protectedDetections = protectionTracker.update(
+                    detections,
+                    contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
+                )
+                lastProtectedDetections = protectedDetections
+                renderFrame(frameBitmap, detections, protectedDetections)
+            } finally {
+                frameBitmap.recycle()
+            }
         } catch (error: Exception) {
             if (running) {
                 statePublisher.updateState { current ->
@@ -132,54 +137,34 @@ internal class ScreenProtectionSession(
     }
 
     private fun renderFrame(
-        image: Image,
-        plane: Image.Plane,
+        croppedBitmap: Bitmap,
         detections: List<Detection>,
         protectedDetections: List<Detection>,
     ) {
-        plane.buffer.rewind()
-        val paddedBitmap = plane.toBitmap(image.width, image.height)
-        val croppedBitmap = try {
-            Bitmap.createBitmap(
-                paddedBitmap,
-                0,
-                0,
-                image.width,
-                image.height,
-            )
-        } catch (error: Exception) {
-            paddedBitmap.recycle()
-            throw error
-        }
-        if (croppedBitmap !== paddedBitmap) paddedBitmap.recycle()
-
-        try {
-            val rendered = FrameBlurRenderer.renderSelectedDetections(
-                croppedBitmap,
-                protectedDetections,
-                settings.style,
-                settings.intensity,
-            )
-            overlay.update(rendered.overlayRegions)
-            publishDetectionStatus(detections, rendered.blurredCount)
-            if (statePublisher.isPreviewRequested) {
-                val preview = ByteArrayOutputStream().also { stream ->
-                    croppedBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
-                }.toByteArray()
-                statePublisher.updateState { current -> current.copy(previewJpeg = preview) }
-            }
-        } finally {
-            croppedBitmap.recycle()
+        val rendered = FrameBlurRenderer.renderSelectedDetections(
+            croppedBitmap,
+            protectedDetections,
+            settings.style,
+            settings.intensity,
+        )
+        overlay.update(rendered.overlayRegions)
+        publishDetectionStatus(detections, rendered.blurredCount)
+        if (statePublisher.isPreviewRequested) {
+            val preview = ByteArrayOutputStream().also { stream ->
+                croppedBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
+            }.toByteArray()
+            statePublisher.updateState { current -> current.copy(previewJpeg = preview) }
         }
     }
 
     private fun publishDetectionStatus(detections: List<Detection>, blurredCount: Int) {
         val femaleCount = detections.count { it.classId == FEMALE_CLASS_ID }
         val maleCount = detections.count { it.classId == MALE_CLASS_ID }
-        Log.d(TAG, "detections female=$femaleCount male=$maleCount blurred=$blurredCount")
+        val nsfwCount = detections.count(Detection::isNsfw)
+        Log.d(TAG, "detections female=$femaleCount male=$maleCount nsfw=$nsfwCount blurred=$blurredCount")
         statePublisher.updateState { current ->
             current.copy(
-                message = "Detected: $femaleCount female, $maleCount male - blurred: $blurredCount",
+                message = "Detected: $femaleCount female, $maleCount male, $nsfwCount NSFW - blurred: $blurredCount",
             )
         }
     }
@@ -218,6 +203,19 @@ internal class ScreenProtectionSession(
         }
     }
 
+    private fun Image.Plane.toCroppedBitmap(width: Int, height: Int): Bitmap {
+        buffer.rewind()
+        val paddedBitmap = toBitmap(width, height)
+        return try {
+            Bitmap.createBitmap(paddedBitmap, 0, 0, width, height)
+        } catch (error: Exception) {
+            paddedBitmap.recycle()
+            throw error
+        }.also {
+            if (it !== paddedBitmap) paddedBitmap.recycle()
+        }
+    }
+
     private fun Image.Plane.sampleGrid(
         width: Int,
         height: Int,
@@ -231,7 +229,9 @@ internal class ScreenProtectionSession(
             val y = (((row + 0.5F) * height) / rows).toInt().coerceIn(0, height - 1)
             for (column in 0 until columns) {
                 val x = (((column + 0.5F) * width) / columns).toInt().coerceIn(0, width - 1)
-                if (ignoredRegions.any { detection -> detection.contains(x, y, width, height) }) {
+                if (ignoredRegions.any { detection ->
+                        !detection.coversMostOfFrame() && detection.contains(x, y, width, height)
+                    }) {
                     sample[outputIndex++] = IGNORED_SAMPLE
                     continue
                 }
@@ -254,6 +254,9 @@ internal class ScreenProtectionSession(
             normalizedY in (y1 - paddingY)..(y2 + paddingY)
     }
 
+    private fun Detection.coversMostOfFrame(): Boolean =
+        (x2 - x1) * (y2 - y1) >= FULL_FRAME_AREA_THRESHOLD
+
     private companion object {
         const val DISPLAY_NAME = "HalalifyPreview"
         const val VISION_THREAD_NAME = "halalify-vision"
@@ -270,6 +273,7 @@ internal class ScreenProtectionSession(
         // Match FrameBlurRenderer so change detection ignores only the small
         // protected subject region, not a large area around it.
         const val OVERLAY_MASK_PADDING_RATIO = 0.05F
+        const val FULL_FRAME_AREA_THRESHOLD = 0.85F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1
         const val TAG = "HalalifyVision"

@@ -95,8 +95,10 @@ internal class AdultSiteVpnService : VpnService() {
             .setSession("Halalify adult-site protection")
             .setMtu(1500)
             .addAddress(VPN_ADDRESS, 24)
-            // Only the private DNS endpoint is routed into the TUN interface.
-            .addRoute(DNS_NETWORK, 24)
+            // Route only the private DNS endpoint into the TUN interface. A
+            // /24 can overlap with a real Wi-Fi/mobile LAN and hijack its
+            // traffic on some networks.
+            .addRoute(DNS_ADDRESS, 32)
             .addDnsServer(DNS_ADDRESS)
             .establish()
 
@@ -125,7 +127,10 @@ internal class AdultSiteVpnService : VpnService() {
             0L,
             TimeUnit.MILLISECONDS,
             ArrayBlockingQueue(DNS_QUEUE_CAPACITY),
-            ThreadPoolExecutor.DiscardPolicy(),
+            // DNS retries are much more expensive than briefly applying
+            // back-pressure. Silently dropping a request makes Android wait
+            // for its resolver timeout and makes every page feel slow.
+            ThreadPoolExecutor.CallerRunsPolicy(),
         )
         try {
             input = FileInputStream(interfaceDescriptor.fileDescriptor)
@@ -400,11 +405,14 @@ internal class AdultSiteVpnService : VpnService() {
         const val NOTIFICATION_ID = 42
         const val VPN_ADDRESS = "10.67.0.2"
         const val DNS_ADDRESS = "10.67.0.1"
-        const val DNS_NETWORK = "10.67.0.0"
         val DNS_ADDRESS_BYTES = byteArrayOf(10, 67, 0, 1)
         val FAMILY_DNS_SERVERS = listOf(
             InetSocketAddress("1.1.1.3", 53),
             InetSocketAddress("1.0.0.3", 53),
+            // Keep multiple family-filtering providers available. Some
+            // mobile networks block or severely delay one DNS provider.
+            InetSocketAddress("94.140.14.15", 53),
+            InetSocketAddress("94.140.15.16", 53),
         )
         const val DNS_PORT = 53
         const val UDP_PROTOCOL = 17

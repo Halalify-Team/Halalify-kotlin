@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(halalify_vision_core STATIC
         core/audio_signal.cpp
+        core/frame_sampling.cpp
         core/preprocess.cpp
         core/postprocess.cpp
         core/nms.cpp
@@ -41,7 +42,10 @@ if(ANDROID)
     add_library(halalify_litert_backend STATIC
             backends/audio_litert_backend.cpp
             backends/litert_backend.cpp
+            backends/litert_nsfw_backend.cpp
             audio_engine.cpp
+            ai_engine.cpp
+            nsfw_classifier.cpp
             vision_engine.cpp)
     target_include_directories(halalify_litert_backend PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}"

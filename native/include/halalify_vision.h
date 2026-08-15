@@ -47,6 +47,7 @@ typedef struct hb_detection {
     int32_t class_id;
     int64_t track_id;
     uint8_t should_blur;
+    uint8_t is_nsfw;
 } hb_detection;
 
 typedef struct hb_config {
@@ -57,6 +58,8 @@ typedef struct hb_config {
     float iou_threshold;
     int32_t max_detections;
     int32_t num_threads;
+    float nsfw_confidence_threshold;
+    int32_t max_nsfw_regions;
 } hb_config;
 
 typedef struct hb_model_info {
@@ -74,6 +77,16 @@ hb_config hb_default_config(void);
 hb_status hb_engine_create_from_buffer(
         const uint8_t* model_data,
         size_t model_size,
+        const hb_config* config,
+        hb_engine** out_engine);
+
+// Creates the unified native AI Engine. The gender detector and NSFW classifier
+// are loaded together so platform adapters only pass model bytes and frames.
+hb_status hb_engine_create_from_buffers(
+        const uint8_t* gender_model_data,
+        size_t gender_model_size,
+        const uint8_t* nsfw_model_data,
+        size_t nsfw_model_size,
         const hb_config* config,
         hb_engine** out_engine);
 

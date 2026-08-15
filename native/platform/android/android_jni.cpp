@@ -12,7 +12,7 @@
 
 namespace {
 
-constexpr int kDetectionFields = 7;
+constexpr int kDetectionFields = 8;
 
 void Throw(JNIEnv* env, const char* class_name, const std::string& message) {
     jclass exception_class = env->FindClass(class_name);
@@ -103,20 +103,39 @@ Java_com_halalify_kotlin_model_NativeVisionEngine_nativeCreate(
         jobject /* instance */,
         jobject java_asset_manager,
         jstring java_asset_name,
+        jstring java_nsfw_asset_name,
         jint target) {
-    if (java_asset_manager == nullptr || java_asset_name == nullptr) {
-        Throw(env, "java/lang/IllegalArgumentException", "Asset manager and model name are required.");
+    if (java_asset_manager == nullptr || java_asset_name == nullptr ||
+        java_nsfw_asset_name == nullptr) {
+        Throw(env, "java/lang/IllegalArgumentException", "Asset manager and both model names are required.");
         return 0;
     }
     AAssetManager* asset_manager = AAssetManager_fromJava(env, java_asset_manager);
-    const char* asset_name = env->GetStringUTFChars(java_asset_name, nullptr);
-    if (asset_name == nullptr) return 0;
-    std::vector<uint8_t> model_bytes;
+    const char* gender_asset_name = env->GetStringUTFChars(java_asset_name, nullptr);
+    if (gender_asset_name == nullptr) return 0;
+    const char* nsfw_asset_name = env->GetStringUTFChars(java_nsfw_asset_name, nullptr);
+    if (nsfw_asset_name == nullptr) {
+        env->ReleaseStringUTFChars(java_asset_name, gender_asset_name);
+        return 0;
+    }
+    std::vector<uint8_t> gender_model_bytes;
+    std::vector<uint8_t> nsfw_model_bytes;
     std::string error;
-    const bool loaded = halalify::android::ReadAsset(
-            asset_manager, asset_name, &model_bytes, &error);
-    env->ReleaseStringUTFChars(java_asset_name, asset_name);
-    if (!loaded) {
+    const bool gender_loaded = halalify::android::ReadAsset(
+            asset_manager, gender_asset_name, &gender_model_bytes, &error);
+    if (gender_loaded) {
+        const bool nsfw_loaded = halalify::android::ReadAsset(
+                asset_manager, nsfw_asset_name, &nsfw_model_bytes, &error);
+        if (!nsfw_loaded) {
+            env->ReleaseStringUTFChars(java_asset_name, gender_asset_name);
+            env->ReleaseStringUTFChars(java_nsfw_asset_name, nsfw_asset_name);
+            Throw(env, "java/lang/IllegalStateException", error);
+            return 0;
+        }
+    }
+    env->ReleaseStringUTFChars(java_asset_name, gender_asset_name);
+    env->ReleaseStringUTFChars(java_nsfw_asset_name, nsfw_asset_name);
+    if (!gender_loaded) {
         Throw(env, "java/lang/IllegalStateException", error);
         return 0;
     }
@@ -124,8 +143,13 @@ Java_com_halalify_kotlin_model_NativeVisionEngine_nativeCreate(
     hb_config config = hb_default_config();
     config.target = target == 1 ? HB_BLUR_TARGET_MALE : HB_BLUR_TARGET_FEMALE;
     hb_engine* engine = nullptr;
-    const hb_status status = hb_engine_create_from_buffer(
-            model_bytes.data(), model_bytes.size(), &config, &engine);
+    const hb_status status = hb_engine_create_from_buffers(
+            gender_model_bytes.data(),
+            gender_model_bytes.size(),
+            nsfw_model_bytes.data(),
+            nsfw_model_bytes.size(),
+            &config,
+            &engine);
     if (status != HB_STATUS_OK || engine == nullptr) {
         const std::string model_error = engine == nullptr
                 ? "LiteRT could not initialize the Halalify model."
@@ -189,6 +213,7 @@ Java_com_halalify_kotlin_model_NativeVisionEngine_nativeProcess(
         flattened[base + 4] = detection.confidence;
         flattened[base + 5] = static_cast<float>(detection.class_id);
         flattened[base + 6] = detection.should_blur ? 1.0F : 0.0F;
+        flattened[base + 7] = detection.is_nsfw ? 1.0F : 0.0F;
     }
     env->SetFloatArrayRegion(
             result, 0, static_cast<jsize>(flattened.size()), flattened.data());

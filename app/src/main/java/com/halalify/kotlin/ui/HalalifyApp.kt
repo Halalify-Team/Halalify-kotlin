@@ -747,7 +747,7 @@ private fun BlurIntensitySelector(
     onIntensityChange: (Float) -> Unit,
 ) {
     val displayedIntensity = normalizeBlurIntensity(intensity)
-    val level = (((displayedIntensity - MIN_BLUR_INTENSITY) / (1f - MIN_BLUR_INTENSITY)) * 4f)
+    val level = (displayedIntensity * 4f)
         .roundToInt() + 1
 
     Column(

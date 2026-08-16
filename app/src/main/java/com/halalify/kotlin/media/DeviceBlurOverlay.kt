@@ -39,7 +39,8 @@ internal class DeviceBlurOverlay(
     private val updateLock = Any()
     private var pendingRegions: List<OverlayRegion>? = null
     private var updatePosted = false
-    @Volatile private var closed = false
+    @Volatile
+    private var closed = false
 
     /** Takes ownership of every bitmap in [regions]. */
     override fun update(regions: List<OverlayRegion>) {
@@ -155,22 +156,19 @@ internal class DeviceBlurOverlay(
 
     private fun createLayoutParams(bounds: Rect, index: Int): WindowManager.LayoutParams {
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         return WindowManager.LayoutParams(
             bounds.width().coerceAtLeast(1),
             bounds.height().coerceAtLeast(1),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
-            // Every protected region is fully opaque. The windows are already
-            // limited to detection bounds, so transparency is neither needed
-            // nor desirable here.
-            PixelFormat.OPAQUE,
+            PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            alpha = 1F
+            alpha = 1.0F
             x = bounds.left
             y = bounds.top
             title = "Halalify protected region $index"
@@ -190,9 +188,9 @@ internal class DeviceBlurOverlay(
 
     private fun WindowManager.LayoutParams.hasBounds(bounds: Rect): Boolean =
         width == bounds.width().coerceAtLeast(1) &&
-            height == bounds.height().coerceAtLeast(1) &&
-            x == bounds.left &&
-            y == bounds.top
+                height == bounds.height().coerceAtLeast(1) &&
+                x == bounds.left &&
+                y == bounds.top
 
     private fun currentDisplayBounds(): Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         Rect(windowManager.currentWindowMetrics.bounds)
@@ -268,6 +266,7 @@ internal class DeviceBlurOverlay(
             super.onDraw(canvas)
             val frame = bitmap ?: return
             destination.set(0, 0, width, height)
+            canvas.drawColor(android.graphics.Color.BLACK)
             canvas.drawBitmap(frame, null, destination, paint)
         }
     }

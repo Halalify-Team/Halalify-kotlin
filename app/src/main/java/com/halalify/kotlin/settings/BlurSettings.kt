@@ -12,12 +12,13 @@ internal enum class BlurStyle(val title: String, val description: String) {
     PIXELATED("Pixelated", "Small, hard censor blocks focused on the detected subject."),
 }
 
-// Start with a deliberately strong privacy-preserving effect. Existing saved
-// values below this floor are also raised when settings are loaded.
-internal const val MIN_BLUR_INTENSITY = 0.99f
+// Allow the full intensity range so each of the five slider levels
+// produces a meaningfully different mosaic density (16 columns at 0f
+// down to 4 columns at 1f).
+internal const val MIN_BLUR_INTENSITY = 0f
 
 internal fun normalizeBlurIntensity(value: Float): Float =
-    if (value.isFinite()) value.coerceIn(MIN_BLUR_INTENSITY, 1f) else MIN_BLUR_INTENSITY
+    if (value.isFinite()) value.coerceIn(MIN_BLUR_INTENSITY, 1f) else 1f
 
 internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
@@ -32,7 +33,7 @@ internal data class BlurSettings(
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
-    val intensity: Float = MIN_BLUR_INTENSITY,
+    val intensity: Float = 1f,
 ) {
     val hasVisualProtection: Boolean
         get() = blurImages || blurVideos

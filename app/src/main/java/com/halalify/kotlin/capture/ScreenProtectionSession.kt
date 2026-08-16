@@ -248,7 +248,18 @@ internal class ScreenProtectionSession(
     private fun Detection.contains(x: Int, y: Int, width: Int, height: Int): Boolean {
         val normalizedX = x.toFloat() / width
         val normalizedY = y.toFloat() / height
-        return normalizedX in x1..x2 && normalizedY in y1..y2
+        val boxWidth = x2 - x1
+        val boxHeight = y2 - y1
+        // Match the expanded padding used by FrameBlurRenderer.toTightRect
+        // so the overlay mosaic pixels are completely excluded from activity detection.
+        val padX = boxWidth * 0.12f
+        val padYTop = boxHeight * 0.22f
+        val padYBottom = boxHeight * 0.12f
+        val left = x1 - padX
+        val right = x2 + padX
+        val top = y1 - padYTop
+        val bottom = y2 + padYBottom
+        return normalizedX in left..right && normalizedY in top..bottom
     }
 
     private fun Detection.coversMostOfFrame(): Boolean =

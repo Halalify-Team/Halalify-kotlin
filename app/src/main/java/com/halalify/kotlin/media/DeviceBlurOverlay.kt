@@ -27,20 +27,23 @@ internal class DeviceBlurOverlay(
     context: Context,
     private val onError: (String) -> Unit,
 ) : ProtectionOverlay {
-    private data class OverlayWindow(
-        val view: BlurOverlayView,
-        val params: WindowManager.LayoutParams,
+
+    private class ActiveRenderRegion(
+        val bitmap: Bitmap,
+        val displayBounds: Rect,
     )
 
     private val appContext = context.applicationContext
     private val windowManager = appContext.getSystemService(WindowManager::class.java)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val windows = mutableListOf<OverlayWindow>()
     private val updateLock = Any()
     private var pendingRegions: List<OverlayRegion>? = null
     private var updatePosted = false
     @Volatile
     private var closed = false
+
+    private var overlayView: FullDeviceBlurOverlayView? = null
+    private var isViewAttached = false
 
     /** Takes ownership of every bitmap in [regions]. */
     override fun update(regions: List<OverlayRegion>) {
@@ -82,7 +85,7 @@ internal class DeviceBlurOverlay(
                 clearOnMainThread()
                 onError("Display-over-other-apps permission was revoked.")
             } else {
-                replaceRegions(regions)
+                renderRegions(regions)
             }
         } catch (error: Throwable) {
             clearOnMainThread()
@@ -115,82 +118,64 @@ internal class DeviceBlurOverlay(
         mainHandler.post { clearOnMainThread() }
     }
 
-    private fun replaceRegions(regions: List<OverlayRegion>) {
+    private fun ensureOverlayView(): FullDeviceBlurOverlayView {
+        val existing = overlayView
+        if (existing != null && isViewAttached) return existing
+
+        val view = existing ?: FullDeviceBlurOverlayView(appContext).also { overlayView = it }
+        if (!isViewAttached) {
+            val params = createFullScreenLayoutParams()
+            windowManager.addView(view, params)
+            isViewAttached = true
+        }
+        return view
+    }
+
+    private fun renderRegions(regions: List<OverlayRegion>) {
         if (regions.isEmpty()) {
-            clearOnMainThread()
+            overlayView?.setRegions(emptyList())
             return
         }
         val displayBounds = currentDisplayBounds()
-        regions.forEachIndexed { index, region ->
-            val overlayBitmap = region.takeBitmapForOverlay()
+        val renderList = ArrayList<ActiveRenderRegion>(regions.size)
+        regions.forEach { region ->
             val scaledBounds = region.bounds.scaleToDisplay(
                 sourceWidth = region.sourceWidth,
                 sourceHeight = region.sourceHeight,
                 displayBounds = displayBounds,
             )
-            val existing = windows.getOrNull(index)
-            if (existing == null) {
-                val view = BlurOverlayView(
-                    context = appContext,
-                    smoothScaling = false,
-                ).apply { replaceBitmap(overlayBitmap) }
-                val params = createLayoutParams(scaledBounds, index)
-                windowManager.addView(view, params)
-                windows += OverlayWindow(view, params)
-            } else {
-                if (existing.view.hasSameBitmap(overlayBitmap)) {
-                    overlayBitmap.recycle()
-                } else {
-                    existing.view.replaceBitmap(overlayBitmap)
-                }
-                if (!existing.params.hasBounds(scaledBounds)) {
-                    existing.params.setBounds(scaledBounds)
-                    windowManager.updateViewLayout(existing.view, existing.params)
-                }
-            }
+            region.bitmap.prepareToDraw()
+            renderList.add(ActiveRenderRegion(region.bitmap, scaledBounds))
         }
-        while (windows.size > regions.size) {
-            removeWindow(windows.removeAt(windows.lastIndex))
-        }
+
+        val view = ensureOverlayView()
+        view.setRegions(renderList)
     }
 
-    private fun createLayoutParams(bounds: Rect, index: Int): WindowManager.LayoutParams {
+    private fun createFullScreenLayoutParams(): WindowManager.LayoutParams {
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         return WindowManager.LayoutParams(
-            bounds.width().coerceAtLeast(1),
-            bounds.height().coerceAtLeast(1),
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             alpha = 1.0F
-            x = bounds.left
-            y = bounds.top
-            title = "Halalify protected region $index"
+            x = 0
+            y = 0
+            title = "Halalify Protected Overlay"
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
         }
     }
-
-    private fun WindowManager.LayoutParams.setBounds(bounds: Rect) {
-        width = bounds.width().coerceAtLeast(1)
-        height = bounds.height().coerceAtLeast(1)
-        x = bounds.left
-        y = bounds.top
-    }
-
-    private fun WindowManager.LayoutParams.hasBounds(bounds: Rect): Boolean =
-        width == bounds.width().coerceAtLeast(1) &&
-                height == bounds.height().coerceAtLeast(1) &&
-                x == bounds.left &&
-                y == bounds.top
 
     private fun currentDisplayBounds(): Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         Rect(windowManager.currentWindowMetrics.bounds)
@@ -215,14 +200,14 @@ internal class DeviceBlurOverlay(
     }
 
     private fun clearOnMainThread() {
-        while (windows.isNotEmpty()) {
-            removeWindow(windows.removeAt(windows.lastIndex))
+        overlayView?.let { view ->
+            view.setRegions(emptyList())
+            if (isViewAttached) {
+                runCatching { windowManager.removeViewImmediate(view) }
+                isViewAttached = false
+            }
         }
-    }
-
-    private fun removeWindow(window: OverlayWindow) {
-        window.view.replaceBitmap(null)
-        runCatching { windowManager.removeViewImmediate(window.view) }
+        overlayView = null
     }
 
     private fun List<OverlayRegion>.recycleBitmaps() {
@@ -231,43 +216,38 @@ internal class DeviceBlurOverlay(
         }
     }
 
-    private fun OverlayRegion.takeBitmapForOverlay(): Bitmap {
-        bitmap.prepareToDraw()
-        return bitmap
-    }
-
-    private class BlurOverlayView(
+    private class FullDeviceBlurOverlayView(
         context: Context,
-        smoothScaling: Boolean,
     ) : View(context) {
         private val paint = Paint().apply {
-            isAntiAlias = smoothScaling
-            isFilterBitmap = smoothScaling
+            isAntiAlias = false
+            isFilterBitmap = false
             isDither = false
         }
-        private val destination = Rect()
-        private var bitmap: Bitmap? = null
+        private var currentRegions: List<ActiveRenderRegion> = emptyList()
 
-        fun replaceBitmap(next: Bitmap?) {
-            if (next === bitmap) return
-            bitmap?.let { previous ->
-                if (!previous.isRecycled) previous.recycle()
+        fun setRegions(newRegions: List<ActiveRenderRegion>) {
+            val oldRegions = currentRegions
+            currentRegions = newRegions
+            // Recycle old bitmaps that are not reused
+            oldRegions.forEach { old ->
+                if (!old.bitmap.isRecycled && newRegions.none { it.bitmap === old.bitmap }) {
+                    old.bitmap.recycle()
+                }
             }
-            bitmap = next
             invalidate()
         }
 
-        fun hasSameBitmap(other: Bitmap): Boolean =
-            bitmap?.let { current ->
-                !current.isRecycled && !other.isRecycled && current.sameAs(other)
-            } == true
-
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val frame = bitmap ?: return
-            destination.set(0, 0, width, height)
-            canvas.drawColor(android.graphics.Color.BLACK)
-            canvas.drawBitmap(frame, null, destination, paint)
+            val regions = currentRegions
+            if (regions.isEmpty()) return
+            for (i in regions.indices) {
+                val region = regions[i]
+                if (!region.bitmap.isRecycled) {
+                    canvas.drawBitmap(region.bitmap, null, region.displayBounds, paint)
+                }
+            }
         }
     }
 }

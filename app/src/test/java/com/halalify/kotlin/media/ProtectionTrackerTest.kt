@@ -8,11 +8,11 @@ import org.junit.Test
 
 class ProtectionTrackerTest {
     @Test
-    fun `protected detection survives a missed frame`() {
+    fun `protected detection survives a missed frame when content has not changed`() {
         val tracker = ProtectionTracker()
 
         tracker.update(listOf(detection(shouldBlur = true)))
-        val protected = tracker.update(emptyList())
+        val protected = tracker.update(emptyList(), contentChanged = false)
 
         assertEquals(1, protected.size)
         assertTrue(protected.single().shouldBlur)
@@ -30,13 +30,24 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `stale detection expires after two content changes`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        tracker.update(emptyList(), contentChanged = true)
+        val protected = tracker.update(emptyList(), contentChanged = true)
+
+        assertTrue(protected.isEmpty())
+    }
+
+    @Test
     fun `changed classification at same location stays protected and refreshes track`() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
 
         val changedClass = detection(classId = 1, shouldBlur = false)
-        val protected = tracker.update(listOf(changedClass))
-        val stillProtected = tracker.update(emptyList())
+        val protected = tracker.update(listOf(changedClass), contentChanged = false)
+        val stillProtected = tracker.update(emptyList(), contentChanged = false)
 
         assertEquals(1, protected.size)
         assertTrue(protected.single().shouldBlur)
@@ -63,11 +74,11 @@ class ProtectionTrackerTest {
 
         repeat(100) { tracker.update(emptyList(), contentChanged = false) }
 
-        assertEquals(1, tracker.update(emptyList()).size)
+        assertEquals(1, tracker.update(emptyList(), contentChanged = false).size)
     }
 
     @Test
-    fun `stale region expires on the first real content change`() {
+    fun `stale region expires on the first real content change with tolerance of 1`() {
         val tracker = ProtectionTracker(maxMissedContentChanges = 1)
         tracker.update(listOf(detection(shouldBlur = true)))
 

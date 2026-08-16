@@ -86,8 +86,13 @@ internal object FrameBlurRenderer {
         var protectedPatch: Bitmap? = null
         try {
             // Intensity controls the block size: higher intensity => larger blocks
+            val safeIntensity = if (intensity.isFinite()) {
+                intensity.coerceIn(0f, 1f)
+            } else {
+                1f
+            }
             val sampleSize = (
-                (intensity.coerceIn(0f, 1f) * CENSOR_SAMPLE_SIZE.toFloat()).toInt()
+                (safeIntensity * CENSOR_SAMPLE_SIZE.toFloat()).toInt()
             ).coerceAtLeast(1)
             val tinyWidth = ceil(rect.width().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             val tinyHeight = ceil(rect.height().toFloat() / sampleSize).toInt().coerceAtLeast(1)
@@ -134,9 +139,9 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    // Keep the mosaic detailed enough to follow the detected subject without
-    // turning the protected region into a handful of oversized blocks.
-    private const val CENSOR_SAMPLE_SIZE = 8
-    private const val GENDER_BOX_INSET_RATIO = 0.05F
+    // Use large nearest-neighbour blocks so facial/body details are difficult
+    // to recover, even at the lowest selectable intensity.
+    private const val CENSOR_SAMPLE_SIZE = 24
+    private const val GENDER_BOX_INSET_RATIO = 0.08F
     private const val NSFW_CLASS_ID = 3
 }

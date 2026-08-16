@@ -36,6 +36,9 @@ internal class DeviceBlurOverlay(
     private val windowManager = appContext.getSystemService(WindowManager::class.java)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val windows = mutableListOf<OverlayWindow>()
+    private val updateLock = Any()
+    private var pendingRegions: List<OverlayRegion>? = null
+    private var updatePosted = false
     @Volatile private var closed = false
 
     /** Takes ownership of every bitmap in [regions]. */
@@ -44,31 +47,70 @@ internal class DeviceBlurOverlay(
             regions.recycleBitmaps()
             return
         }
-        mainHandler.post {
+        val superseded: List<OverlayRegion>?
+        val shouldPost: Boolean
+        synchronized(updateLock) {
             if (closed) {
                 regions.recycleBitmaps()
-                return@post
+                return
             }
-            try {
-                if (!Settings.canDrawOverlays(appContext)) {
-                    regions.recycleBitmaps()
-                    clearOnMainThread()
-                    onError("Display-over-other-apps permission was revoked.")
-                    return@post
-                }
-                replaceRegions(regions)
-            } catch (error: Throwable) {
-                clearOnMainThread()
+            superseded = pendingRegions
+            pendingRegions = regions
+            shouldPost = !updatePosted
+            updatePosted = true
+        }
+        superseded?.recycleBitmaps()
+        if (shouldPost) mainHandler.post { applyPendingUpdate() }
+    }
+
+    private fun applyPendingUpdate() {
+        val regions = synchronized(updateLock) {
+            val next = pendingRegions
+            pendingRegions = null
+            updatePosted = false
+            next
+        } ?: return
+
+        if (closed) {
+            regions.recycleBitmaps()
+            return
+        }
+        try {
+            if (!Settings.canDrawOverlays(appContext)) {
                 regions.recycleBitmaps()
-                onError(error.message ?: error.javaClass.simpleName)
+                clearOnMainThread()
+                onError("Display-over-other-apps permission was revoked.")
+            } else {
+                replaceRegions(regions)
+            }
+        } catch (error: Throwable) {
+            clearOnMainThread()
+            regions.recycleBitmaps()
+            onError(error.message ?: error.javaClass.simpleName)
+        }
+
+        val shouldPost = synchronized(updateLock) {
+            if (pendingRegions != null && !updatePosted) {
+                updatePosted = true
+                true
+            } else {
+                false
             }
         }
+        if (shouldPost) mainHandler.post { applyPendingUpdate() }
     }
 
     fun clear() = update(emptyList())
 
     override fun close() {
         closed = true
+        val pending = synchronized(updateLock) {
+            val next = pendingRegions
+            pendingRegions = null
+            updatePosted = false
+            next
+        }
+        pending?.recycleBitmaps()
         mainHandler.post { clearOnMainThread() }
     }
 
@@ -95,9 +137,15 @@ internal class DeviceBlurOverlay(
                 windowManager.addView(view, params)
                 windows += OverlayWindow(view, params)
             } else {
-                existing.view.replaceBitmap(overlayBitmap)
-                existing.params.setBounds(scaledBounds)
-                windowManager.updateViewLayout(existing.view, existing.params)
+                if (existing.view.hasSameBitmap(overlayBitmap)) {
+                    overlayBitmap.recycle()
+                } else {
+                    existing.view.replaceBitmap(overlayBitmap)
+                }
+                if (!existing.params.hasBounds(scaledBounds)) {
+                    existing.params.setBounds(scaledBounds)
+                    windowManager.updateViewLayout(existing.view, existing.params)
+                }
             }
         }
         while (windows.size > regions.size) {
@@ -139,6 +187,12 @@ internal class DeviceBlurOverlay(
         x = bounds.left
         y = bounds.top
     }
+
+    private fun WindowManager.LayoutParams.hasBounds(bounds: Rect): Boolean =
+        width == bounds.width().coerceAtLeast(1) &&
+            height == bounds.height().coerceAtLeast(1) &&
+            x == bounds.left &&
+            y == bounds.top
 
     private fun currentDisplayBounds(): Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         Rect(windowManager.currentWindowMetrics.bounds)
@@ -204,6 +258,11 @@ internal class DeviceBlurOverlay(
             bitmap = next
             invalidate()
         }
+
+        fun hasSameBitmap(other: Bitmap): Boolean =
+            bitmap?.let { current ->
+                !current.isRecycled && !other.isRecycled && current.sameAs(other)
+            } == true
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)

@@ -65,6 +65,7 @@ import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurTarget
 import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
+import com.halalify.kotlin.settings.normalizeBlurIntensity
 
 private val AppBackground = Color(0xFF071A1D)
 private val AppSurface = Color(0xFF0D2529)
@@ -745,7 +746,7 @@ private fun BlurIntensitySelector(
     enabled: Boolean,
     onIntensityChange: (Float) -> Unit,
 ) {
-    val displayedIntensity = intensity.coerceIn(MIN_BLUR_INTENSITY, 1f)
+    val displayedIntensity = normalizeBlurIntensity(intensity)
     val level = (((displayedIntensity - MIN_BLUR_INTENSITY) / (1f - MIN_BLUR_INTENSITY)) * 4f)
         .roundToInt() + 1
 

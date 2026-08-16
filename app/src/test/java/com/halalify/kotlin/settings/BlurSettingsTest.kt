@@ -1,10 +1,17 @@
 package com.halalify.kotlin.settings
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BlurSettingsTest {
+
+    @Test
+    fun `invalid blur intensity is replaced with a safe value`() {
+        assertEquals(MIN_BLUR_INTENSITY, normalizeBlurIntensity(Float.NaN), 0f)
+        assertEquals(1f, normalizeBlurIntensity(2f), 0f)
+    }
 
     @Test
     fun `female target blurs only the female model label`() {

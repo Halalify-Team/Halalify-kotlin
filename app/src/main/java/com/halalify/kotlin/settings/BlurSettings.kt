@@ -12,7 +12,12 @@ internal enum class BlurStyle(val title: String, val description: String) {
     PIXELATED("Pixelated", "Small, hard censor blocks focused on the detected subject."),
 }
 
-internal const val MIN_BLUR_INTENSITY = 0.4f
+// Start with a deliberately strong privacy-preserving effect. Existing saved
+// values below this floor are also raised when settings are loaded.
+internal const val MIN_BLUR_INTENSITY = 0.7f
+
+internal fun normalizeBlurIntensity(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(MIN_BLUR_INTENSITY, 1f) else MIN_BLUR_INTENSITY
 
 internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
@@ -64,8 +69,9 @@ internal class BlurSettingsRepository(context: Context) {
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
         musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
         musicSourceUri = preferences.getString(KEY_MUSIC_SOURCE_URI, "") ?: "",
-        intensity = preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY)
-            .coerceIn(MIN_BLUR_INTENSITY, 1f),
+        intensity = normalizeBlurIntensity(
+            preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY),
+        ),
     )
 
     fun save(settings: BlurSettings) {
@@ -79,7 +85,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_URL, settings.musicSourceUrl)
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
-            putFloat(KEY_BLUR_INTENSITY, settings.intensity)
+            putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
         }
     }
 

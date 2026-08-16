@@ -14,7 +14,7 @@ internal enum class BlurStyle(val title: String, val description: String) {
 
 // Start with a deliberately strong privacy-preserving effect. Existing saved
 // values below this floor are also raised when settings are loaded.
-internal const val MIN_BLUR_INTENSITY = 0.7f
+internal const val MIN_BLUR_INTENSITY = 0.99f
 
 internal fun normalizeBlurIntensity(value: Float): Float =
     if (value.isFinite()) value.coerceIn(MIN_BLUR_INTENSITY, 1f) else MIN_BLUR_INTENSITY

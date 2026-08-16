@@ -85,22 +85,19 @@ internal object FrameBlurRenderer {
         var tiny: Bitmap? = null
         var protectedPatch: Bitmap? = null
         try {
-            // Intensity controls the block size: higher intensity => larger blocks
+            // Higher intensity uses larger nearest-neighbour blocks.
             val safeIntensity = if (intensity.isFinite()) {
                 intensity.coerceIn(0f, 1f)
             } else {
                 1f
             }
             val sampleSize = (
-                (safeIntensity * CENSOR_SAMPLE_SIZE.toFloat()).toInt()
-            ).coerceAtLeast(1)
+                safeIntensity * CENSOR_SAMPLE_SIZE.toFloat()
+            ).toInt().coerceAtLeast(1)
             val tinyWidth = ceil(rect.width().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             val tinyHeight = ceil(rect.height().toFloat() / sampleSize).toInt().coerceAtLeast(1)
             tiny = patch.scale(tinyWidth, tinyHeight)
-            protectedPatch = createBitmap(
-                rect.width(),
-                rect.height(),
-            )
+            protectedPatch = createBitmap(rect.width(), rect.height())
             val patchCanvas = Canvas(protectedPatch)
             val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
             patchCanvas.drawBitmap(tiny, null, patchBounds, protectedPaint)
@@ -126,22 +123,17 @@ internal object FrameBlurRenderer {
         val rawTop = y1 * height
         val rawRight = x2 * width
         val rawBottom = y2 * height
-        // The gender detector returns a person box, which usually includes a
-        // small amount of surrounding artwork. Tighten only gender boxes;
-        // NSFW boxes retain their full protected area for privacy.
-        val insetRatio = if (isNsfw || classId == NSFW_CLASS_ID) 0F else GENDER_BOX_INSET_RATIO
-        val insetX = (rawRight - rawLeft) * insetRatio
-        val insetY = (rawBottom - rawTop) * insetRatio
-        val left = ceil(rawLeft + insetX).toInt().coerceIn(0, width)
-        val top = ceil(rawTop + insetY).toInt().coerceIn(0, height)
-        val right = floor(rawRight - insetX).toInt().coerceIn(0, width)
-        val bottom = floor(rawBottom - insetY).toInt().coerceIn(0, height)
+        // Keep the complete detector box for gender detections so the blur
+        // covers the subject's full body, including hair, arms, and clothing.
+        // NSFW boxes already retain their complete protected area as well.
+        val left = ceil(rawLeft).toInt().coerceIn(0, width)
+        val top = ceil(rawTop).toInt().coerceIn(0, height)
+        val right = floor(rawRight).toInt().coerceIn(0, width)
+        val bottom = floor(rawBottom).toInt().coerceIn(0, height)
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
     // Use large nearest-neighbour blocks so facial/body details are difficult
     // to recover, even at the lowest selectable intensity.
-    private const val CENSOR_SAMPLE_SIZE = 24
-    private const val GENDER_BOX_INSET_RATIO = 0.08F
-    private const val NSFW_CLASS_ID = 3
+    private const val CENSOR_SAMPLE_SIZE = 32
 }

@@ -7,19 +7,19 @@ import org.junit.Test
 
 class VisualAnalysisPolicyTest {
     @Test
-    fun `image-only coverage skips video stabilization`() {
+    fun `image-only coverage includes stabilization bursts and safety refresh`() {
         val policy = VisualAnalysisPolicy(
             BlurSettings(blurImages = true, blurVideos = false),
         )
 
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.INITIAL))
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.CONTENT_CHANGED))
+        assertTrue(policy.shouldAnalyze(FrameAnalysisReason.STABILIZATION))
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.SAFETY_REFRESH))
-        assertFalse(policy.shouldAnalyze(FrameAnalysisReason.STABILIZATION))
     }
 
     @Test
-    fun `video-only coverage skips static safety refresh`() {
+    fun `video-only coverage includes stabilization bursts and skips static safety refresh`() {
         val policy = VisualAnalysisPolicy(
             BlurSettings(blurImages = false, blurVideos = true),
         )

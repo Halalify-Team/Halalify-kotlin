@@ -99,6 +99,9 @@ internal class ProtectionTracker(
     }
 
     private companion object {
+        // Allow one grace frame so the overlay itself does not trigger
+        // immediate track expiry (feedback loop). At 33ms check intervals
+        // stale regions still clear in ~66ms instead of the old ~300ms.
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 2
         const val DEFAULT_MATCHING_IOU = 0.20F
         // Follow the latest detector box immediately so a page flip cannot

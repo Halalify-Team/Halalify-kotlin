@@ -9,8 +9,8 @@ internal class VisualAnalysisPolicy(
     fun shouldAnalyze(reason: FrameAnalysisReason): Boolean = when (reason) {
         FrameAnalysisReason.INITIAL,
         FrameAnalysisReason.CONTENT_CHANGED,
+        FrameAnalysisReason.STABILIZATION,
         -> settings.hasVisualProtection
-        FrameAnalysisReason.STABILIZATION -> settings.blurVideos
         FrameAnalysisReason.SAFETY_REFRESH -> settings.blurImages
     }
 }

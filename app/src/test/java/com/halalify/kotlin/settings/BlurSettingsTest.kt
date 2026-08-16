@@ -9,8 +9,9 @@ class BlurSettingsTest {
 
     @Test
     fun `invalid blur intensity is replaced with a safe value`() {
-        assertEquals(MIN_BLUR_INTENSITY, normalizeBlurIntensity(Float.NaN), 0f)
+        assertEquals(1f, normalizeBlurIntensity(Float.NaN), 0f)
         assertEquals(1f, normalizeBlurIntensity(2f), 0f)
+        assertEquals(0f, normalizeBlurIntensity(-1f), 0f)
     }
 
     @Test

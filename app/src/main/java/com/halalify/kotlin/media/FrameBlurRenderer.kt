@@ -10,6 +10,7 @@ import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.settings.BlurStyle
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 internal data class FrameBlurResult(
     val blurredCount: Int,
@@ -85,23 +86,37 @@ internal object FrameBlurRenderer {
         var tiny: Bitmap? = null
         var protectedPatch: Bitmap? = null
         try {
-            // Higher intensity uses larger nearest-neighbour blocks.
+            // Scale based on the larger dimension so tall or wide regions
+            // don't accumulate dozens of small vertical/horizontal blocks.
+            // At maximum intensity (1.0), the major dimension has at most 5 blocks,
+            // producing a 4x4 or 3x5 macro-mosaic matching the reference.
             val safeIntensity = if (intensity.isFinite()) {
                 intensity.coerceIn(0f, 1f)
             } else {
                 1f
             }
-            val sampleSize = (
-                safeIntensity * CENSOR_SAMPLE_SIZE.toFloat()
-            ).toInt().coerceAtLeast(1)
-            val tinyWidth = ceil(rect.width().toFloat() / sampleSize).toInt().coerceAtLeast(1)
-            val tinyHeight = ceil(rect.height().toFloat() / sampleSize).toInt().coerceAtLeast(1)
-            tiny = patch.scale(tinyWidth, tinyHeight)
-            protectedPatch = createBitmap(rect.width(), rect.height())
+            val maxGridDim = (MAX_GRID_MAJOR -
+                safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
+                .roundToInt()
+                .coerceIn(MIN_GRID_MAJOR.roundToInt(), MAX_GRID_MAJOR.roundToInt())
+
+            val (tinyWidth, tinyHeight) = if (rect.width() >= rect.height()) {
+                val w = maxGridDim
+                val h = (maxGridDim * (rect.height().toFloat() / rect.width().coerceAtLeast(1).toFloat()))
+                    .roundToInt().coerceIn(2, maxGridDim)
+                w to h
+            } else {
+                val h = maxGridDim
+                val w = (maxGridDim * (rect.width().toFloat() / rect.height().coerceAtLeast(1).toFloat()))
+                    .roundToInt().coerceIn(2, maxGridDim)
+                w to h
+            }
+
+            tiny = patch.scale(tinyWidth.coerceAtLeast(1), tinyHeight.coerceAtLeast(1))
+            protectedPatch = Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.RGB_565)
             val patchCanvas = Canvas(protectedPatch)
             val patchBounds = Rect(0, 0, protectedPatch.width, protectedPatch.height)
             patchCanvas.drawBitmap(tiny, null, patchBounds, protectedPaint)
-            protectedPatch.setHasAlpha(false)
             return OverlayRegion(
                 bitmap = protectedPatch,
                 bounds = Rect(rect),
@@ -119,13 +134,22 @@ internal object FrameBlurRenderer {
     }
 
     private fun Detection.toTightRect(width: Int, height: Int): Rect? {
-        val rawLeft = x1 * width
-        val rawTop = y1 * height
-        val rawRight = x2 * width
-        val rawBottom = y2 * height
-        // Keep the complete detector box for gender detections so the blur
-        // covers the subject's full body, including hair, arms, and clothing.
-        // NSFW boxes already retain their complete protected area as well.
+        val boxWidth = (x2 - x1)
+        val boxHeight = (y2 - y1)
+
+        // Expand the detection box with generous padding:
+        // - Expand upward by 20% so hair, head, and face are completely covered
+        //   even if the detector only fired on the torso or neckline.
+        // - Expand horizontally and downward by 10% for full edge coverage.
+        val padX = boxWidth * 0.10f
+        val padYTop = boxHeight * 0.20f
+        val padYBottom = boxHeight * 0.10f
+
+        val rawLeft = (x1 - padX) * width
+        val rawTop = (y1 - padYTop) * height
+        val rawRight = (x2 + padX) * width
+        val rawBottom = (y2 + padYBottom) * height
+
         val left = ceil(rawLeft).toInt().coerceIn(0, width)
         val top = ceil(rawTop).toInt().coerceIn(0, height)
         val right = floor(rawRight).toInt().coerceIn(0, width)
@@ -133,7 +157,9 @@ internal object FrameBlurRenderer {
         return if (right > left && bottom > top) Rect(left, top, right, bottom) else null
     }
 
-    // Use large nearest-neighbour blocks so facial/body details are difficult
-    // to recover, even at the lowest selectable intensity.
-    private const val CENSOR_SAMPLE_SIZE = 32
+    // At maximum intensity the mosaic grid has at most 5 blocks on the major dimension,
+    // producing giant abstract color blocks identical to the reference image.
+    // At minimum intensity, up to 18 blocks allow lighter censoring.
+    private const val MIN_GRID_MAJOR = 5f
+    private const val MAX_GRID_MAJOR = 18f
 }

@@ -19,6 +19,17 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `protected detection survives one noisy content change`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val protected = tracker.update(emptyList(), contentChanged = true)
+
+        assertEquals(1, protected.size)
+        assertTrue(protected.single().shouldBlur)
+    }
+
+    @Test
     fun `changed classification at same location stays protected and refreshes track`() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
@@ -34,7 +45,7 @@ class ProtectionTrackerTest {
 
     @Test
     fun `new unprotected subject replaces old protected subject after content change`() {
-        val tracker = ProtectionTracker()
+        val tracker = ProtectionTracker(maxMissedContentChanges = 1)
         tracker.update(listOf(detection(shouldBlur = true)))
 
         val protected = tracker.update(

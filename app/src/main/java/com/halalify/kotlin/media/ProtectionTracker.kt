@@ -99,7 +99,7 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 1
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 2
         const val DEFAULT_MATCHING_IOU = 0.20F
         // Follow the latest detector box immediately so a page flip cannot
         // leave part of the previous location covered.

@@ -134,21 +134,18 @@ internal object FrameBlurRenderer {
     }
 
     private fun Detection.toTightRect(width: Int, height: Int): Rect? {
+        // Use a tight, accurate bounding box around the detected subject
+        // with minimal padding (2%) to cleanly cover edges without spilling
+        // into surrounding UI elements, buttons, or text.
         val boxWidth = (x2 - x1)
         val boxHeight = (y2 - y1)
-
-        // Expand the detection box with generous padding:
-        // - Expand upward by 20% so hair, head, and face are completely covered
-        //   even if the detector only fired on the torso or neckline.
-        // - Expand horizontally and downward by 10% for full edge coverage.
-        val padX = boxWidth * 0.10f
-        val padYTop = boxHeight * 0.20f
-        val padYBottom = boxHeight * 0.10f
+        val padX = boxWidth * 0.02f
+        val padY = boxHeight * 0.02f
 
         val rawLeft = (x1 - padX) * width
-        val rawTop = (y1 - padYTop) * height
+        val rawTop = (y1 - padY) * height
         val rawRight = (x2 + padX) * width
-        val rawBottom = (y2 + padYBottom) * height
+        val rawBottom = (y2 + padY) * height
 
         val left = ceil(rawLeft).toInt().coerceIn(0, width)
         val top = ceil(rawTop).toInt().coerceIn(0, height)

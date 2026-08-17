@@ -151,6 +151,8 @@ internal class ScreenProtectionSession(
             settings.style,
             settings.intensity,
         )
+        // The renderer creates independent region bitmaps before the source
+        // frame is recycled. The overlay owns those bitmaps from this point.
         overlay.update(rendered.overlayRegions)
         publishDetectionStatus(detections, rendered.blurredCount)
         if (statePublisher.isPreviewRequested) {
@@ -178,9 +180,7 @@ internal class ScreenProtectionSession(
         if (closed) return
         closed = true
         running = false
-        closeResource("image listener") {
-            imageReader?.setOnImageAvailableListener(null, null)
-        }
+        closeResource("image listener") { imageReader?.setOnImageAvailableListener(null, null) }
         closeResource("virtual display") { display?.release() }
         display = null
         closeResource("image reader") { imageReader?.close() }
@@ -202,9 +202,7 @@ internal class ScreenProtectionSession(
 
     private fun Image.Plane.toBitmap(width: Int, height: Int): Bitmap {
         val paddedWidth = width + (rowStride - pixelStride * width) / pixelStride
-        return createBitmap(paddedWidth, height).also { bitmap ->
-            bitmap.copyPixelsFromBuffer(buffer)
-        }
+        return createBitmap(paddedWidth, height).also { bitmap -> bitmap.copyPixelsFromBuffer(buffer) }
     }
 
     private fun Image.Plane.toCroppedBitmap(width: Int, height: Int): Bitmap {
@@ -256,11 +254,8 @@ internal class ScreenProtectionSession(
         val boxHeight = y2 - y1
         val padX = boxWidth * 0.04f
         val padY = boxHeight * 0.04f
-        val left = x1 - padX
-        val right = x2 + padX
-        val top = y1 - padY
-        val bottom = y2 + padY
-        return normalizedX in left..right && normalizedY in top..bottom
+        return normalizedX in (x1 - padX)..(x2 + padX) &&
+                normalizedY in (y1 - padY)..(y2 + padY)
     }
 
     private fun Detection.coversMostOfFrame(): Boolean =
@@ -271,18 +266,12 @@ internal class ScreenProtectionSession(
         const val VISION_THREAD_NAME = "halalify-vision"
         const val CAPTURE_WIDTH = 416
         const val MAX_IMAGES = 2
-
-        // Check frames at ~30 FPS so scrolling and page flips update immediately.
         const val CHANGE_CHECK_INTERVAL_MS = 33L
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
         const val IGNORED_SAMPLE = -1
-
-        // Match FrameBlurRenderer and ignore the complete protected subject
-        // box while checking whether the underlying page changed.
-        const val NSFW_CLASS_ID = 3
         const val FULL_FRAME_AREA_THRESHOLD = 0.85F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1

@@ -80,9 +80,9 @@ internal class ProtectionTracker(
         if (intersection <= 0F) return 0F
 
         val firstArea = (first.x2 - first.x1).coerceAtLeast(0F) *
-            (first.y2 - first.y1).coerceAtLeast(0F)
+                (first.y2 - first.y1).coerceAtLeast(0F)
         val secondArea = (second.x2 - second.x1).coerceAtLeast(0F) *
-            (second.y2 - second.y1).coerceAtLeast(0F)
+                (second.y2 - second.y1).coerceAtLeast(0F)
         val union = firstArea + secondArea - intersection
         return if (union > 0F) intersection / union else 0F
     }
@@ -104,6 +104,7 @@ internal class ProtectionTracker(
         // stale regions still clear in ~66ms instead of the old ~300ms.
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 2
         const val DEFAULT_MATCHING_IOU = 0.20F
+
         // Follow the latest detector box immediately so a page flip cannot
         // leave part of the previous location covered.
         const val DEFAULT_SMOOTHING_ALPHA = 1F

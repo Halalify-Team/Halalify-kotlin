@@ -52,6 +52,14 @@ internal class AdultSiteVpnService : VpnService() {
         super.onDestroy()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Defensive cleanup for task-removal paths where Android delivers this
+        // callback before stopping the service.
+        stopVpn()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onRevoke() {
         stopVpn()
         publishMessage("Android revoked the VPN permission. Website blocking is off.")

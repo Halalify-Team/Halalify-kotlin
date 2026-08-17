@@ -16,6 +16,7 @@ internal enum class BlurStyle(val title: String, val description: String) {
 // produces a meaningfully different mosaic density (16 columns at 0f
 // down to 4 columns at 1f).
 internal const val MIN_BLUR_INTENSITY = 0f
+internal const val DEFAULT_BLUR_INTENSITY = 1f
 
 internal fun normalizeBlurIntensity(value: Float): Float =
     if (value.isFinite()) value.coerceIn(MIN_BLUR_INTENSITY, 1f) else 1f
@@ -33,7 +34,7 @@ internal data class BlurSettings(
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
-    val intensity: Float = 1f,
+    val intensity: Float = DEFAULT_BLUR_INTENSITY,
 ) {
     val hasVisualProtection: Boolean
         get() = blurImages || blurVideos
@@ -70,10 +71,16 @@ internal class BlurSettingsRepository(context: Context) {
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
         musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
         musicSourceUri = preferences.getString(KEY_MUSIC_SOURCE_URI, "") ?: "",
-        intensity = normalizeBlurIntensity(
-            preferences.getFloat(KEY_BLUR_INTENSITY, MIN_BLUR_INTENSITY),
-        ),
+        intensity = loadIntensity(),
     )
+
+    private fun loadIntensity(): Float {
+        val revision = preferences.getInt(KEY_BLUR_INTENSITY_REVISION, 0)
+        if (revision < CURRENT_BLUR_INTENSITY_REVISION) return DEFAULT_BLUR_INTENSITY
+        return normalizeBlurIntensity(
+            preferences.getFloat(KEY_BLUR_INTENSITY, DEFAULT_BLUR_INTENSITY),
+        )
+    }
 
     fun save(settings: BlurSettings) {
         preferences.edit {
@@ -87,6 +94,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
             putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
+            putInt(KEY_BLUR_INTENSITY_REVISION, CURRENT_BLUR_INTENSITY_REVISION)
         }
     }
 
@@ -102,5 +110,7 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
         const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
         const val KEY_BLUR_INTENSITY = "blur_intensity"
+        const val KEY_BLUR_INTENSITY_REVISION = "blur_intensity_revision"
+        const val CURRENT_BLUR_INTENSITY_REVISION = 1
     }
 }

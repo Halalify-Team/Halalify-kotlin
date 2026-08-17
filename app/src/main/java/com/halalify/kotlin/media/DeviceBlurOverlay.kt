@@ -3,6 +3,7 @@ package com.halalify.kotlin.media
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -39,6 +40,7 @@ internal class DeviceBlurOverlay(
     private val updateLock = Any()
     private var pendingRegions: List<OverlayRegion>? = null
     private var updatePosted = false
+
     @Volatile
     private var closed = false
 
@@ -219,10 +221,16 @@ internal class DeviceBlurOverlay(
     private class FullDeviceBlurOverlayView(
         context: Context,
     ) : View(context) {
+        private val opaqueRegionPaint = Paint().apply {
+            color = Color.BLACK
+            style = Paint.Style.FILL
+            alpha = 255
+        }
         private val paint = Paint().apply {
             isAntiAlias = false
             isFilterBitmap = false
             isDither = false
+            alpha = 255
         }
         private var currentRegions: List<ActiveRenderRegion> = emptyList()
 
@@ -245,6 +253,10 @@ internal class DeviceBlurOverlay(
             for (i in regions.indices) {
                 val region = regions[i]
                 if (!region.bitmap.isRecycled) {
+                    // The window itself must stay translucent outside protected
+                    // regions. Fill only this region with opaque pixels first so
+                    // OEM compositors cannot blend the source app through it.
+                    canvas.drawRect(region.displayBounds, opaqueRegionPaint)
                     canvas.drawBitmap(region.bitmap, null, region.displayBounds, paint)
                 }
             }

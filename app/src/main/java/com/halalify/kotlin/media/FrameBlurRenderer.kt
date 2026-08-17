@@ -96,7 +96,7 @@ internal object FrameBlurRenderer {
                 1f
             }
             val maxGridDim = (MAX_GRID_MAJOR -
-                safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
+                    safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
                 .roundToInt()
                 .coerceIn(MIN_GRID_MAJOR.roundToInt(), MAX_GRID_MAJOR.roundToInt())
 

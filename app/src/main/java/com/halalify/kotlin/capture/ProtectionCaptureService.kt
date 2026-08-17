@@ -47,6 +47,7 @@ internal class ProtectionCaptureService : Service() {
             ACTION_PREPARE -> publishMessage(
                 "Choose the app or screen to protect in Android's sharing dialog.",
             )
+
             ACTION_START -> startCapture(intent)
             ACTION_STOP -> {
                 stopCapture("Capture stopped.")
@@ -64,6 +65,7 @@ internal class ProtectionCaptureService : Service() {
             return
         }
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, INVALID_RESULT_CODE)
+
         @Suppress("DEPRECATION")
         val projectionData = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
         if (resultCode == INVALID_RESULT_CODE || projectionData == null) {
@@ -158,6 +160,7 @@ internal class ProtectionCaptureService : Service() {
     private fun BlurSettings.startedMessage(): String = when {
         hasVisualProtection && isolateMusic ->
             "Device-level blur and music protection are active over the shared screen."
+
         hasVisualProtection -> "Device-level blur is active over the shared screen."
         else -> "Music protection is active for eligible playback."
     }

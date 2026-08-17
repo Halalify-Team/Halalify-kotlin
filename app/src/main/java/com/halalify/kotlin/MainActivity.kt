@@ -144,6 +144,16 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        // Stop the VPN when the root activity is explicitly closed (for example
+        // with Back). Configuration changes do not satisfy isFinishing, so they
+        // do not interrupt website protection.
+        if (isFinishing && isTaskRoot) {
+            stopService(Intent(this, AdultSiteVpnService::class.java))
+        }
+        super.onDestroy()
+    }
+
     private fun startCapture(settings: BlurSettings) {
         settingsRepository.save(settings)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {

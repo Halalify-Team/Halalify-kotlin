@@ -49,6 +49,9 @@ internal class ScreenProtectionSession(
     private var display: VirtualDisplay? = null
     private var visionThread: HandlerThread? = null
     private var lastProtectedDetections: List<Detection> = emptyList()
+    private var lastRenderedDetections: List<Detection> = emptyList()
+    private var lastRenderedStyle: BlurStyle? = null
+    private var lastRenderedIntensity = Float.NaN
     private var lastChangeCheckAt = 0L
 
     @Volatile
@@ -156,6 +159,7 @@ internal class ScreenProtectionSession(
                     protectedDetections = protectedDetections,
                     visualSettings = currentVisualSettings,
                     visualSettingsVersion = currentVisualSettingsVersion,
+                    contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
             } finally {
                 frameBitmap.recycle()
@@ -179,7 +183,18 @@ internal class ScreenProtectionSession(
         protectedDetections: List<Detection>,
         visualSettings: VisualSettings,
         visualSettingsVersion: Long,
+        contentChanged: Boolean,
     ) {
+        val settingsChanged = visualSettingsVersion != renderedVisualSettingsVersion ||
+                lastRenderedStyle != visualSettings.style ||
+                lastRenderedIntensity != visualSettings.intensity
+        val protectionChanged = !sameDetections(lastRenderedDetections, protectedDetections)
+        val needsOverlayRender = contentChanged || settingsChanged || protectionChanged ||
+                statePublisher.isPreviewRequested
+        if (!needsOverlayRender) {
+            publishDetectionStatus(detections, protectedDetections.size)
+            return
+        }
         val rendered = FrameBlurRenderer.renderSelectedDetections(
             croppedBitmap,
             protectedDetections,
@@ -192,12 +207,28 @@ internal class ScreenProtectionSession(
         if (this.visualSettingsVersion == visualSettingsVersion) {
             renderedVisualSettingsVersion = visualSettingsVersion
         }
+        lastRenderedDetections = protectedDetections
+        lastRenderedStyle = visualSettings.style
+        lastRenderedIntensity = visualSettings.intensity
         publishDetectionStatus(detections, rendered.blurredCount)
         if (statePublisher.isPreviewRequested) {
             val preview = ByteArrayOutputStream().also { stream ->
                 croppedBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
             }.toByteArray()
             statePublisher.updateState { current -> current.copy(previewJpeg = preview) }
+        }
+    }
+
+    private fun sameDetections(first: List<Detection>, second: List<Detection>): Boolean {
+        if (first.size != second.size) return false
+        return first.indices.all { index ->
+            val left = first[index]
+            val right = second[index]
+            left.classId == right.classId &&
+                    left.shouldBlur == right.shouldBlur &&
+                    left.isNsfw == right.isNsfw &&
+                    left.x1 == right.x1 && left.y1 == right.y1 &&
+                    left.x2 == right.x2 && left.y2 == right.y2
         }
     }
 
@@ -228,6 +259,7 @@ internal class ScreenProtectionSession(
         closeResource("vision processor") { visionProcessor.close() }
         closeResource("protection overlay") { overlay.close() }
         lastProtectedDetections = emptyList()
+        lastRenderedDetections = emptyList()
     }
 
     private inline fun closeResource(name: String, close: () -> Unit) {

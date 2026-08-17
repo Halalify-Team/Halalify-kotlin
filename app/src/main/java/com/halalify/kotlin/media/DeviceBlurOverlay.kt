@@ -251,6 +251,7 @@ internal class DeviceBlurOverlay(
                 used[index] = true
                 val existing = old[index]
                 existing.target.set(candidate.target)
+                existing.current.set(candidate.target)
                 val oldBitmap = existing.bitmap
                 existing.bitmap = candidate.bitmap
                 if (oldBitmap !== candidate.bitmap) FrameBlurRenderer.releaseOverlayBitmap(oldBitmap)
@@ -260,38 +261,17 @@ internal class DeviceBlurOverlay(
                 if (!used[i]) FrameBlurRenderer.releaseOverlayBitmap(region.bitmap)
             }
             regions = next
-            postInvalidateOnAnimation()
+            invalidate()
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            var moving = false
             regions.forEach { region ->
                 if (region.bitmap.isRecycled) return@forEach
-                moving = moveTowards(region) || moving
                 if (region.current.width() <= 0 || region.current.height() <= 0) return@forEach
                 canvas.drawRect(region.current, opaquePaint)
                 canvas.drawBitmap(region.bitmap, null, region.current, bitmapPaint)
             }
-            if (moving) postInvalidateOnAnimation()
-        }
-
-        private fun moveTowards(region: ActiveRegion): Boolean {
-            var changed = false
-            Edge.values().forEach { edge ->
-                val from = edge.get(region.current)
-                val to = edge.get(region.target)
-                if (from == to) return@forEach
-                val distance = to - from
-                val step = if (distance > 0) {
-                    (distance * ANIMATION_ALPHA).roundToInt().coerceIn(1, distance)
-                } else {
-                    (distance * ANIMATION_ALPHA).roundToInt().coerceIn(distance, -1)
-                }
-                edge.set(region.current, from + step)
-                changed = true
-            }
-            return changed
         }
 
         private fun isSameRegion(first: Rect, second: Rect): Boolean {
@@ -309,28 +289,7 @@ internal class DeviceBlurOverlay(
             return distanceX <= maxDistance && distanceY <= maxDistance
         }
 
-        private enum class Edge {
-            LEFT, TOP, RIGHT, BOTTOM;
-
-            fun get(rect: Rect): Int = when (this) {
-                LEFT -> rect.left
-                TOP -> rect.top
-                RIGHT -> rect.right
-                BOTTOM -> rect.bottom
-            }
-
-            fun set(rect: Rect, value: Int) {
-                when (this) {
-                    LEFT -> rect.left = value
-                    TOP -> rect.top = value
-                    RIGHT -> rect.right = value
-                    BOTTOM -> rect.bottom = value
-                }
-            }
-        }
-
         private companion object {
-            const val ANIMATION_ALPHA = 0.55F
             const val IOU_THRESHOLD = 0.08F
             const val CENTER_DISTANCE_FACTOR = 0.9F
         }

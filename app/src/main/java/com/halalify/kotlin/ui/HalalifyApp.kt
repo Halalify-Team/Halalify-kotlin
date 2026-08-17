@@ -267,18 +267,22 @@ internal fun HalalifyApp(
                         SectionHeading(
                             eyebrow = "APPEARANCE",
                             title = "Choose a coverage pattern",
-                            description = "Select how protected detections should appear on screen.",
+                            description = if (captureState.isCapturing) {
+                                "Changes apply immediately while protection is running."
+                            } else {
+                                "Select how protected detections should appear on screen."
+                            },
                         )
                         BlurStyleSelector(
                             selected = settings.style,
-                            enabled = !captureState.isCapturing,
+                            enabled = true,
                             onSelect = { style ->
                                 settings = settings.copy(style = style)
                             },
                         )
                         BlurIntensitySelector(
                             intensity = settings.intensity,
-                            enabled = !captureState.isCapturing,
+                            enabled = true,
                             onIntensityChange = { intensity ->
                                 settings = settings.copy(intensity = intensity)
                             },

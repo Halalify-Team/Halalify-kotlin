@@ -18,6 +18,7 @@ import com.halalify.kotlin.audio.PlaybackAudioFocusController
 import com.halalify.kotlin.audio.PlaybackAudioMonitor
 import com.halalify.kotlin.media.DeviceBlurOverlay
 import com.halalify.kotlin.model.NativeVisionEngine
+import com.halalify.kotlin.network.AdultSiteVpnService
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
 
@@ -49,12 +50,18 @@ internal class ProtectionCaptureService : Service() {
             )
 
             ACTION_START -> startCapture(intent)
+            ACTION_UPDATE_VISUAL_SETTINGS -> updateVisualSettings()
             ACTION_STOP -> {
                 stopCapture("Capture stopped.")
                 stopSelf()
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun updateVisualSettings() {
+        val settings = BlurSettingsRepository(applicationContext).load()
+        screenSession?.updateVisualSettings(settings.style, settings.intensity)
     }
 
     private fun startCapture(intent: Intent) {
@@ -185,6 +192,11 @@ internal class ProtectionCaptureService : Service() {
             }
             closeResource("media projection") { activeProjection?.stop() }
 
+            // The VPN is part of the same protection session. This also
+            // covers projection revocation and startup failures, where the
+            // coordinator may not receive a separate stop-button event.
+            stopService(Intent(applicationContext, AdultSiteVpnService::class.java))
+
             CaptureSessionStore.updateState { current ->
                 current.copy(
                     isCapturing = false,
@@ -217,6 +229,7 @@ internal class ProtectionCaptureService : Service() {
     companion object {
         const val ACTION_PREPARE = "com.halalify.kotlin.PREPARE_CAPTURE"
         const val ACTION_START = "com.halalify.kotlin.START_CAPTURE"
+        const val ACTION_UPDATE_VISUAL_SETTINGS = "com.halalify.kotlin.UPDATE_VISUAL_SETTINGS"
         const val ACTION_STOP = "com.halalify.kotlin.STOP_CAPTURE"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_PROJECTION_DATA = "projection_data"

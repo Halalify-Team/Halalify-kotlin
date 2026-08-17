@@ -141,6 +141,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         CaptureSessionStore.setPreviewRequested(false)
+        // Website protection is intentionally tied to the visible app session.
+        // onStart() starts it again when the user returns to Halalify.
+        if (websiteFilterEnabled) {
+            stopService(Intent(this, AdultSiteVpnService::class.java))
+        }
         super.onStop()
     }
 

@@ -31,8 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +72,8 @@ import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurTarget
 import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
 import com.halalify.kotlin.settings.normalizeBlurIntensity
+
+private val StopRed = Color(0xFFC62828)
 
 private val HalalifyDarkColorScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFF57D59A),
@@ -184,7 +184,7 @@ internal fun HalalifyApp(
                 .background(AppBackground),
             containerColor = AppBackground,
             topBar = {
-                AppHeader(isCapturing = captureState.isCapturing)
+                AppHeader()
             },
         ) { innerPadding ->
             LazyColumn(
@@ -203,7 +203,6 @@ internal fun HalalifyApp(
                 item {
                     CaptureStatusCard(
                         captureState = captureState,
-                        target = settings.target,
                         onToggleProtection = {
                             if (captureState.isCapturing) onStopCapture() else onStartCapture(settings)
                         },
@@ -220,9 +219,9 @@ internal fun HalalifyApp(
                             eyebrow = "PROTECTION PROFILE",
                             title = "Choose who to blur",
                             description = if (captureState.isCapturing) {
-                                "Stop protection before changing these preferences."
+                                "Stop to edit."
                             } else {
-                                "Explicit content is protected automatically. Choose the people to blur."
+                                "Select who to blur."
                             },
                         )
                         TargetSelector(
@@ -331,7 +330,7 @@ internal fun HalalifyApp(
 }
 
 @Composable
-private fun AppHeader(isCapturing: Boolean) {
+private fun AppHeader() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -355,22 +354,11 @@ private fun AppHeader(isCapturing: Boolean) {
             )
         }
         Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Halalify",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
-            )
-            Text(
-                text = "Private, on-device protection",
-                style = MaterialTheme.typography.labelMedium,
-                color = TextSecondary,
-            )
-        }
-        StatusPill(
-            label = if (isCapturing) "LIVE" else "READY",
-            isActive = isCapturing,
+        Text(
+            text = "Halalify",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary,
         )
     }
 }
@@ -378,110 +366,44 @@ private fun AppHeader(isCapturing: Boolean) {
 @Composable
 private fun CaptureStatusCard(
     captureState: CaptureUiState,
-    target: BlurTarget,
     onToggleProtection: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (captureState.isCapturing) AccentSoft else AppSurface,
-        ),
-        border = CardDefaults.outlinedCardBorder().copy(
-            width = 1.dp,
-            brush = androidx.compose.ui.graphics.SolidColor(
-                if (captureState.isCapturing) Accent.copy(alpha = 0.45f) else Outline,
-            ),
-        ),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.size(56.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Button(
-                        onClick = onToggleProtection,
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (captureState.isCapturing) Accent else AppSurfaceHigh,
-                            contentColor = if (captureState.isCapturing) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                TextSecondary
-                            },
-                        ),
-                        contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(56.dp),
-                    ) {
-                        Text(
-                            text = if (captureState.isCapturing) "ON" else "OFF",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (captureState.isCapturing) "Protection is active" else "Ready to protect",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                    )
-                    Text(
-                        text = if (captureState.isCapturing) {
-                            captureState.targetLabel ?: "Blur target: ${target.title}"
-                        } else {
-                            "Current target: ${target.title}"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (captureState.isCapturing) Accent else TextSecondary,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = captureState.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-            )
-            captureState.audioStatus?.let { status ->
+        val buttonColor = if (captureState.isCapturing) Accent else StopRed
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(buttonColor.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Button(
+                onClick = onToggleProtection,
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = buttonColor,
+                    contentColor = Color.White,
+                ),
+                elevation = ButtonDefaults.buttonElevation(
+                    defaultElevation = 6.dp,
+                    pressedElevation = 10.dp,
+                ),
+                border = null,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.size(72.dp),
+            ) {
                 Text(
-                    text = status,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(top = 6.dp),
+                    text = if (captureState.isCapturing) "ON" else "OFF",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold,
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun StatusPill(label: String, isActive: Boolean) {
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(if (isActive) AccentSoft else AppSurfaceHigh)
-            .padding(horizontal = 11.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(if (isActive) Accent else TextSecondary),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = label,
-            color = if (isActive) Accent else TextSecondary,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.7.sp,
-        )
     }
 }
 

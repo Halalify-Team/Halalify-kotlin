@@ -8,6 +8,12 @@ import org.junit.Test
 class BlurSettingsTest {
 
     @Test
+    fun `new installations default to maximum blur strength`() {
+        assertEquals(DEFAULT_BLUR_INTENSITY, BlurSettings().intensity, 0f)
+        assertEquals(1f, BlurSettings().intensity, 0f)
+    }
+
+    @Test
     fun `invalid blur intensity is replaced with a safe value`() {
         assertEquals(1f, normalizeBlurIntensity(Float.NaN), 0f)
         assertEquals(1f, normalizeBlurIntensity(2f), 0f)

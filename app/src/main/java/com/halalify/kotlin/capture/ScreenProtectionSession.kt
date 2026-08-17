@@ -40,8 +40,12 @@ internal class ScreenProtectionSession(
     private var visionThread: HandlerThread? = null
     private var lastProtectedDetections: List<Detection> = emptyList()
     private var lastChangeCheckAt = 0L
-    @Volatile private var running = false
-    @Volatile private var closed = false
+
+    @Volatile
+    private var running = false
+
+    @Volatile
+    private var closed = false
 
     @Synchronized
     fun start() {
@@ -267,6 +271,7 @@ internal class ScreenProtectionSession(
         const val VISION_THREAD_NAME = "halalify-vision"
         const val CAPTURE_WIDTH = 416
         const val MAX_IMAGES = 2
+
         // Check frames at ~30 FPS so scrolling and page flips update immediately.
         const val CHANGE_CHECK_INTERVAL_MS = 33L
         const val JPEG_QUALITY = 70
@@ -274,6 +279,7 @@ internal class ScreenProtectionSession(
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
         const val IGNORED_SAMPLE = -1
+
         // Match FrameBlurRenderer and ignore the complete protected subject
         // box while checking whether the underlying page changed.
         const val NSFW_CLASS_ID = 3

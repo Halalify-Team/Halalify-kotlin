@@ -9,7 +9,9 @@ internal enum class BlurTarget(val title: String, val description: String) {
 }
 
 internal enum class BlurStyle(val title: String, val description: String) {
+    SOFT_BLUR("Soft blur", "A smooth, low-detail blur that blends the protected area."),
     PIXELATED("Pixelated", "Small, hard censor blocks focused on the detected subject."),
+    SOLID("Solid", "A fully opaque black cover for maximum privacy."),
 }
 
 // Allow the full intensity range so each of the five slider levels

@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +64,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.BlurSettings
+import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurTarget
 import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
 import com.halalify.kotlin.settings.normalizeBlurIntensity
@@ -264,8 +266,15 @@ internal fun HalalifyApp(
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         SectionHeading(
                             eyebrow = "APPEARANCE",
-                            title = "Censor density",
-                            description = "Drag the control to make protected detections lighter or denser.",
+                            title = "Choose a coverage pattern",
+                            description = "Select how protected detections should appear on screen.",
+                        )
+                        BlurStyleSelector(
+                            selected = settings.style,
+                            enabled = !captureState.isCapturing,
+                            onSelect = { style ->
+                                settings = settings.copy(style = style)
+                            },
                         )
                         BlurIntensitySelector(
                             intensity = settings.intensity,
@@ -738,6 +747,158 @@ private fun MusicIsolationSourceCard(
             )
         }
     }
+}
+
+@Composable
+private fun BlurStyleSelector(
+    selected: BlurStyle,
+    enabled: Boolean,
+    onSelect: (BlurStyle) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.55f),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            BlurStyle.entries.forEach { option ->
+                BlurStyleTile(
+                    style = option,
+                    selected = selected == option,
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSelect(option) },
+                )
+            }
+        }
+        Text(
+            text = selected.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun BlurStyleTile(
+    style: BlurStyle,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) AccentSoft else AppSurface)
+            .border(
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) Accent else Outline,
+                shape = RoundedCornerShape(18.dp),
+            )
+            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.3f),
+        ) {
+            BlurStylePreview(style = style)
+            Box(modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)) {
+                SelectionIndicator(selected = selected)
+            }
+        }
+        Text(
+            text = style.title,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) Accent else TextPrimary,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun BlurStylePreview(style: BlurStyle) {
+    val previewShape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(previewShape)
+            .background(AppSurfaceHigh),
+    ) {
+        when (style) {
+            BlurStyle.SOFT_BLUR -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFFB7C7C5),
+                                    Color(0xFFE29B62),
+                                    Color(0xFF365D78),
+                                ),
+                            ),
+                        ),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.18f)),
+                )
+            }
+
+            BlurStyle.PIXELATED -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(6.dp),
+                ) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        PreviewBlock(Color(0xFF8A664D), Modifier.weight(1f))
+                        PreviewBlock(Color(0xFFC88255), Modifier.weight(1f))
+                        PreviewBlock(Color(0xFF6A89A8), Modifier.weight(1f))
+                    }
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        PreviewBlock(Color(0xFF5C6C76), Modifier.weight(1f))
+                        PreviewBlock(Color(0xFFB36D49), Modifier.weight(1f))
+                        PreviewBlock(Color(0xFF315A82), Modifier.weight(1f))
+                    }
+                }
+            }
+
+            BlurStyle.SOLID -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewBlock(color: Color, modifier: Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(color),
+    )
 }
 
 @Composable

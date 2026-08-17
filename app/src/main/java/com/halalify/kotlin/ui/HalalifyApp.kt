@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -38,11 +41,11 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,6 +59,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,39 +68,61 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 import com.halalify.kotlin.capture.CaptureUiState
+import com.halalify.kotlin.settings.AppThemeMode
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.BlurTarget
 import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
 import com.halalify.kotlin.settings.normalizeBlurIntensity
 
-private val AppBackground = Color(0xFF071A1D)
-private val AppSurface = Color(0xFF0D2529)
-private val AppSurfaceHigh = Color(0xFF133137)
-private val Accent = Color(0xFF72E4AE)
-private val AccentSoft = Color(0xFF163D32)
-private val TextPrimary = Color(0xFFF2FAF7)
-private val TextSecondary = Color(0xFFA9BFBA)
-private val Outline = Color(0xFF26464B)
-private val Danger = Color(0xFFFFB4AB)
-private val DangerContainer = Color(0xFF5F2024)
-
-private val HalalifyColorScheme: ColorScheme = darkColorScheme(
-    primary = Accent,
-    onPrimary = AppBackground,
-    primaryContainer = AccentSoft,
-    onPrimaryContainer = TextPrimary,
-    background = AppBackground,
-    onBackground = TextPrimary,
-    surface = AppSurface,
-    onSurface = TextPrimary,
-    surfaceVariant = AppSurfaceHigh,
-    onSurfaceVariant = TextSecondary,
-    outline = Outline,
-    error = Danger,
-    errorContainer = DangerContainer,
+private val HalalifyDarkColorScheme: ColorScheme = darkColorScheme(
+    primary = Color(0xFF57D59A),
+    onPrimary = Color(0xFF003822),
+    primaryContainer = Color(0xFF104B34),
+    onPrimaryContainer = Color(0xFFD1F7E2),
+    background = Color(0xFF06140E),
+    onBackground = Color(0xFFF0F8F3),
+    surface = Color(0xFF0B2017),
+    onSurface = Color(0xFFF0F8F3),
+    surfaceVariant = Color(0xFF143326),
+    onSurfaceVariant = Color(0xFFB5C9BD),
+    outline = Color(0xFF526F60),
+    error = Color(0xFFFFB4AB),
+    errorContainer = Color(0xFF5F2024),
 )
 
+private val HalalifyLightColorScheme: ColorScheme = lightColorScheme(
+    primary = Color(0xFF0F5D3E),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD1F3DF),
+    onPrimaryContainer = Color(0xFF073B27),
+    background = Color(0xFFF4F8F4),
+    onBackground = Color(0xFF142019),
+    surface = Color.White,
+    onSurface = Color(0xFF142019),
+    surfaceVariant = Color(0xFFE2EDE5),
+    onSurfaceVariant = Color(0xFF4B6154),
+    outline = Color(0xFF73877B),
+    error = Color(0xFFBA1A1A),
+    errorContainer = Color(0xFFFFDAD6),
+)
+
+private val AppBackground: Color
+    @Composable get() = MaterialTheme.colorScheme.background
+private val AppSurface: Color
+    @Composable get() = MaterialTheme.colorScheme.surface
+private val AppSurfaceHigh: Color
+    @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+private val Accent: Color
+    @Composable get() = MaterialTheme.colorScheme.primary
+private val AccentSoft: Color
+    @Composable get() = MaterialTheme.colorScheme.primaryContainer
+private val TextPrimary: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurface
+private val TextSecondary: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+private val Outline: Color
+    @Composable get() = MaterialTheme.colorScheme.outline
 @Composable
 internal fun HalalifyApp(
     initialSettings: BlurSettings,
@@ -142,17 +169,29 @@ internal fun HalalifyApp(
         onSave(settings.copy(blockAdultSites = websiteFilterEnabled))
     }
 
-    MaterialTheme(colorScheme = HalalifyColorScheme) {
+    val useDarkTheme = when (settings.themeMode) {
+        AppThemeMode.NORMAL -> isSystemInDarkTheme()
+        AppThemeMode.DARK -> true
+        AppThemeMode.LIGHT -> false
+    }
+
+    MaterialTheme(
+        colorScheme = if (useDarkTheme) HalalifyDarkColorScheme else HalalifyLightColorScheme,
+    ) {
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppBackground),
             containerColor = AppBackground,
+            topBar = {
+                AppHeader(isCapturing = captureState.isCapturing)
+            },
         ) { innerPadding ->
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .navigationBarsPadding(),
                 contentPadding = PaddingValues(
                     start = 20.dp,
                     top = 12.dp,
@@ -165,6 +204,9 @@ internal fun HalalifyApp(
                     CaptureStatusCard(
                         captureState = captureState,
                         target = settings.target,
+                        onToggleProtection = {
+                            if (captureState.isCapturing) onStopCapture() else onStartCapture(settings)
+                        },
                     )
                 }
 
@@ -176,11 +218,11 @@ internal fun HalalifyApp(
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         SectionHeading(
                             eyebrow = "PROTECTION PROFILE",
-                            title = "Choose what to protect",
+                            title = "Choose who to blur",
                             description = if (captureState.isCapturing) {
                                 "Stop protection before changing these preferences."
                             } else {
-                                "These preferences are saved automatically on this device."
+                                "Explicit content is protected automatically. Choose the people to blur."
                             },
                         )
                         TargetSelector(
@@ -224,54 +266,46 @@ internal fun HalalifyApp(
                             PreferenceToggle(
                                 shortLabel = "AUD",
                                 title = "Music isolation",
-                                description = "Detect music locally, mute media sound, and run speech isolation.",
+                                description = "Mute detected music during protected playback.",
                                 checked = settings.isolateMusic,
                                 enabled = !captureState.isCapturing,
                                 onCheckedChange = { enabled ->
                                     settings = settings.copy(isolateMusic = enabled)
                                 },
                             )
-                            HorizontalDivider(color = Outline)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(AppSurfaceHigh.copy(alpha = 0.45f))
-                                    .padding(16.dp),
-                            ) {
-                                PrimaryActionBar(
-                                    isCapturing = captureState.isCapturing,
-                                    settings = settings,
-                                    onStartCapture = onStartCapture,
-                                    onStopCapture = onStopCapture,
-                                )
-                            }
                         }
                     }
                 }
 
-                item {
-                    MusicIsolationSourceCard(
-                        settings = settings,
-                        enabled = !captureState.isCapturing,
-                        isolationStatus = captureState.audioStatus,
-                        onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
-                        onOpenFilePicker = {
-                            filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
-                        },
-                        onStartIsolation = { onStartIsolation(settings) },
-                    )
+                if (settings.isolateMusic) {
+                    item {
+                        MusicIsolationSourceCard(
+                            settings = settings,
+                            enabled = !captureState.isCapturing,
+                            isolationStatus = captureState.audioStatus,
+                            onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
+                            onOpenFilePicker = {
+                                filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
+                            },
+                            onStartIsolation = { onStartIsolation(settings) },
+                        )
+                    }
                 }
 
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         SectionHeading(
                             eyebrow = "APPEARANCE",
-                            title = "Choose a coverage pattern",
+                            title = "Make Halalify yours",
                             description = if (captureState.isCapturing) {
-                                "Changes apply immediately while protection is running."
+                                "Theme and blur changes apply immediately."
                             } else {
-                                "Select how protected detections should appear on screen."
+                                "Choose the app theme and how protected areas appear."
                             },
+                        )
+                        ThemeModeSelector(
+                            selected = settings.themeMode,
+                            onSelect = { mode -> settings = settings.copy(themeMode = mode) },
                         )
                         BlurStyleSelector(
                             selected = settings.style,
@@ -342,10 +376,14 @@ private fun AppHeader(isCapturing: Boolean) {
 }
 
 @Composable
-private fun CaptureStatusCard(captureState: CaptureUiState, target: BlurTarget) {
+private fun CaptureStatusCard(
+    captureState: CaptureUiState,
+    target: BlurTarget,
+    onToggleProtection: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (captureState.isCapturing) AccentSoft else AppSurface,
         ),
@@ -356,27 +394,38 @@ private fun CaptureStatusCard(captureState: CaptureUiState, target: BlurTarget) 
             ),
         ),
     ) {
-        Column(modifier = Modifier.padding(22.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(if (captureState.isCapturing) Accent else AppSurfaceHigh),
+                    modifier = Modifier.size(56.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = if (captureState.isCapturing) "ON" else "OFF",
-                        color = if (captureState.isCapturing) AppBackground else TextSecondary,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
+                    Button(
+                        onClick = onToggleProtection,
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (captureState.isCapturing) Accent else AppSurfaceHigh,
+                            contentColor = if (captureState.isCapturing) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                TextSecondary
+                            },
+                        ),
+                        contentPadding = PaddingValues(0.dp),
+                        modifier = Modifier.size(56.dp),
+                    ) {
+                        Text(
+                            text = if (captureState.isCapturing) "ON" else "OFF",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
                 }
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (captureState.isCapturing) "Protection is active" else "Ready to protect",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary,
                     )
@@ -392,20 +441,18 @@ private fun CaptureStatusCard(captureState: CaptureUiState, target: BlurTarget) 
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = if (captureState.isCapturing) Accent.copy(alpha = 0.20f) else Outline)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
             Text(
                 text = captureState.message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = TextPrimary,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
             )
             captureState.audioStatus?.let { status ->
                 Text(
                     text = status,
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
         }
@@ -473,6 +520,7 @@ private fun TargetSelector(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .selectableGroup()
             .alpha(if (enabled) 1f else 0.55f),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -507,7 +555,15 @@ private fun SelectableTile(
                 color = if (selected) Accent else Outline,
                 shape = RoundedCornerShape(20.dp),
             )
-            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
+            .semantics {
+                stateDescription = if (selected) "Selected" else "Not selected"
+            }
             .padding(16.dp),
     ) {
         Row(
@@ -652,13 +708,13 @@ private fun MusicIsolationSourceCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Music isolation source",
+                    text = "Remove music from a file",
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = "Choose a media file or direct MP4/M4A link to create a copy without music.",
+                    text = "Choose a media file or direct MP4/M4A link to create a speech-focused copy.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     modifier = Modifier.padding(top = 2.dp),
@@ -733,7 +789,7 @@ private fun MusicIsolationSourceCard(
         ) {
             Text(
                 text = if (settings.isolateMusic && settings.hasMusicIsolationSource) {
-                    "Start isolation"
+                    "Create speech-only copy"
                 } else {
                     "Add source to start"
                 },
@@ -754,6 +810,75 @@ private fun MusicIsolationSourceCard(
 }
 
 @Composable
+private fun ThemeModeSelector(
+    selected: AppThemeMode,
+    onSelect: (AppThemeMode) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(AppSurface)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "Color mode",
+            style = MaterialTheme.typography.titleMedium,
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AppThemeMode.entries.forEach { mode ->
+                val isSelected = mode == selected
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (isSelected) AccentSoft else AppSurfaceHigh)
+                        .border(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) Accent else Outline,
+                            shape = RoundedCornerShape(14.dp),
+                        )
+                        .selectable(
+                            selected = isSelected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(mode) },
+                        )
+                        .semantics {
+                            stateDescription = if (isSelected) "Selected" else "Not selected"
+                        }
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SelectionIndicator(selected = isSelected)
+                    Text(
+                        text = mode.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isSelected) Accent else TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        Text(
+            text = selected.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+        )
+    }
+}
+@Composable
 private fun BlurStyleSelector(
     selected: BlurStyle,
     enabled: Boolean,
@@ -766,7 +891,9 @@ private fun BlurStyleSelector(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectableGroup(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             BlurStyle.entries.forEach { option ->
@@ -805,7 +932,15 @@ private fun BlurStyleTile(
                 color = if (selected) Accent else Outline,
                 shape = RoundedCornerShape(18.dp),
             )
-            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
+            .semantics {
+                stateDescription = if (selected) "Selected" else "Not selected"
+            }
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1043,48 +1178,5 @@ private fun PrivacyNote() {
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun PrimaryActionBar(
-    isCapturing: Boolean,
-    settings: BlurSettings,
-    onStartCapture: (BlurSettings) -> Unit,
-    onStopCapture: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Button(
-            onClick = {
-                if (isCapturing) onStopCapture() else onStartCapture(settings)
-            },
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isCapturing) DangerContainer else Accent,
-                contentColor = if (isCapturing) Danger else AppBackground,
-            ),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = if (isCapturing) "Stop protection" else "Start protection",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Text(
-            text = if (isCapturing) {
-                "Protection is running in the background"
-            } else {
-                "Android will ask for overlay and screen-sharing access"
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = TextSecondary,
-            modifier = Modifier.padding(top = 7.dp),
-        )
     }
 }

@@ -3,7 +3,10 @@ package com.halalify.kotlin.network
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -35,6 +38,26 @@ internal class AdultSiteVpnService : VpnService() {
     @Volatile private var running = false
     private val dnsCache = DnsResponseCache()
     private val tunnelOutputLock = Any()
+    private var screenOffReceiverRegistered = false
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                stopVpn()
+                stopSelf()
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        val screenOffFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOffReceiver, screenOffFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(screenOffReceiver, screenOffFilter)
+        }
+        screenOffReceiverRegistered = true
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -48,6 +71,10 @@ internal class AdultSiteVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        if (screenOffReceiverRegistered) {
+            runCatching { unregisterReceiver(screenOffReceiver) }
+            screenOffReceiverRegistered = false
+        }
         stopVpn()
         super.onDestroy()
     }

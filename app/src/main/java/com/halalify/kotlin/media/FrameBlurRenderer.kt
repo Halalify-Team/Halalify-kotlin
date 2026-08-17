@@ -38,11 +38,11 @@ internal object FrameBlurRenderer {
         val selected = detections.filter(Detection::shouldBlur)
         if (selected.isEmpty()) return FrameBlurResult(0, emptyList())
 
-        // Keep the old Halalify look: a hard-edged mosaic made from a small
-        // per-region crop, then scaled by the transparent device overlay.
+        // Build the selected protection style into a small per-region bitmap,
+        // then scale it through the transparent device overlay.
         val protectedPaint = Paint().apply {
-            isAntiAlias = false
-            isFilterBitmap = false
+            isAntiAlias = style == BlurStyle.SOFT_BLUR
+            isFilterBitmap = style == BlurStyle.SOFT_BLUR
             isDither = false
         }
         val overlayRegions = mutableListOf<OverlayRegion>()
@@ -53,6 +53,7 @@ internal object FrameBlurRenderer {
                     source = bitmap,
                     rect = rect,
                     protectedPaint = protectedPaint,
+                    style = style,
                     intensity = intensity,
                 )
             }
@@ -99,35 +100,51 @@ internal object FrameBlurRenderer {
         source: Bitmap,
         rect: Rect,
         protectedPaint: Paint,
+        style: BlurStyle,
         intensity: Float,
     ): OverlayRegion {
         val safeIntensity = if (intensity.isFinite()) intensity.coerceIn(0f, 1f) else 1f
-        val maxGridDim = (MAX_GRID_MAJOR -
-                safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
-            .roundToInt()
-            .coerceIn(MIN_GRID_MAJOR.roundToInt(), MAX_GRID_MAJOR.roundToInt())
-
-        val (tinyWidth, tinyHeight) = if (rect.width() >= rect.height()) {
-            val width = maxGridDim
-            val height = (maxGridDim * rect.height().toFloat() / rect.width().coerceAtLeast(1))
-                .roundToInt().coerceIn(2, maxGridDim)
-            width to height
-        } else {
-            val height = maxGridDim
-            val width = (maxGridDim * rect.width().toFloat() / rect.height().coerceAtLeast(1))
-                .roundToInt().coerceIn(2, maxGridDim)
-            width to height
+        val (tinyWidth, tinyHeight) = when (style) {
+            BlurStyle.SOLID -> 1 to 1
+            BlurStyle.SOFT_BLUR,
+            BlurStyle.PIXELATED -> {
+                val maxGridDim = (MAX_GRID_MAJOR -
+                        safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
+                    .roundToInt()
+                    .coerceIn(MIN_GRID_MAJOR.roundToInt(), MAX_GRID_MAJOR.roundToInt())
+                if (rect.width() >= rect.height()) {
+                    val width = maxGridDim
+                    val height = (maxGridDim * rect.height().toFloat() / rect.width().coerceAtLeast(1))
+                        .roundToInt().coerceIn(2, maxGridDim)
+                    width to height
+                } else {
+                    val height = maxGridDim
+                    val width = (maxGridDim * rect.width().toFloat() / rect.height().coerceAtLeast(1))
+                        .roundToInt().coerceIn(2, maxGridDim)
+                    width to height
+                }
+            }
         }
 
         val patch = acquireBitmap(tinyWidth.coerceAtLeast(1), tinyHeight.coerceAtLeast(1))
         try {
             patch.eraseColor(Color.BLACK)
-            Canvas(patch).drawBitmap(
-                source,
-                rect,
-                Rect(0, 0, patch.width, patch.height),
-                protectedPaint,
-            )
+            if (style != BlurStyle.SOLID) {
+                Canvas(patch).drawBitmap(
+                    source,
+                    rect,
+                    Rect(0, 0, patch.width, patch.height),
+                    protectedPaint,
+                )
+                if (style == BlurStyle.SOFT_BLUR) {
+                    blurPatch(
+                        patch,
+                        radius = (SOFT_BLUR_MIN_RADIUS +
+                                safeIntensity * (SOFT_BLUR_MAX_RADIUS - SOFT_BLUR_MIN_RADIUS))
+                            .roundToInt(),
+                    )
+                }
+            }
             return OverlayRegion(
                 bitmap = patch,
                 bounds = Rect(rect),
@@ -137,6 +154,56 @@ internal object FrameBlurRenderer {
         } catch (error: Throwable) {
             releaseOverlayBitmap(patch)
             throw error
+        }
+    }
+
+    /** Applies two inexpensive box-blur passes to the already tiny patch. */
+    private fun blurPatch(bitmap: Bitmap, radius: Int) {
+        if (radius <= 0 || bitmap.width <= 1 || bitmap.height <= 1) return
+        val size = bitmap.width * bitmap.height
+        val input = IntArray(size)
+        val horizontal = IntArray(size)
+        val output = IntArray(size)
+        bitmap.getPixels(input, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        blurPass(input, horizontal, bitmap.width, bitmap.height, radius, horizontal = true)
+        blurPass(horizontal, output, bitmap.width, bitmap.height, radius, horizontal = false)
+        bitmap.setPixels(output, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    }
+
+    private fun blurPass(
+        input: IntArray,
+        output: IntArray,
+        width: Int,
+        height: Int,
+        radius: Int,
+        horizontal: Boolean,
+    ) {
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val start = if (horizontal) {
+                    (x - radius).coerceAtLeast(0)
+                } else {
+                    (y - radius).coerceAtLeast(0)
+                }
+                val end = if (horizontal) {
+                    (x + radius).coerceAtMost(width - 1)
+                } else {
+                    (y + radius).coerceAtMost(height - 1)
+                }
+                var red = 0
+                var green = 0
+                var blue = 0
+                var count = 0
+                for (coordinate in start..end) {
+                    val index = if (horizontal) y * width + coordinate else coordinate * width + x
+                    val color = input[index]
+                    red += Color.red(color)
+                    green += Color.green(color)
+                    blue += Color.blue(color)
+                    count++
+                }
+                output[y * width + x] = Color.rgb(red / count, green / count, blue / count)
+            }
         }
     }
 
@@ -177,4 +244,6 @@ internal object FrameBlurRenderer {
     private const val MAX_POOLED_BITMAPS = 10
     private const val MIN_GRID_MAJOR = 5f
     private const val MAX_GRID_MAJOR = 18f
+    private const val SOFT_BLUR_MIN_RADIUS = 2f
+    private const val SOFT_BLUR_MAX_RADIUS = 5f
 }

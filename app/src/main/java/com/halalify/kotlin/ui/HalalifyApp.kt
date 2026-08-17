@@ -811,9 +811,6 @@ private fun BlurStyleTile(
                 .aspectRatio(1.3f),
         ) {
             BlurStylePreview(style = style)
-            Box(modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-                SelectionIndicator(selected = selected)
-            }
         }
         Text(
             text = style.title,

@@ -69,11 +69,6 @@ test-data/
 **/.venv/
 **/__pycache__/
 
-# Local audio-model training workspace
+# Local model extraction and training workspaces
+extracted_haramblur_model/
 training/
-!training/
-training/*
-!training/quantize_vision_model.py
-!training/experimental_quantize_tflite_weights.py
-!training/full_int8_quantize_tflite.py
-!training/quantize_split_output_tflite.py

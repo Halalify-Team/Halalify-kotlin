@@ -38,7 +38,12 @@ internal class HalalifyAppCoordinator(
     val captureState: StateFlow<CaptureUiState> = CaptureSessionStore.state
     val initialSettings: BlurSettings = settingsRepository.load()
 
-    var websiteFilterEnabled by mutableStateOf(initialSettings.blockAdultSites)
+    // Website filtering is a runtime part of an active protection session.
+    // The persisted flag can be left behind after a process/service stop, so
+    // it must never be enough on its own to start a VPN.
+    var websiteFilterEnabled by mutableStateOf(
+        initialSettings.blockAdultSites && captureState.value.isCapturing,
+    )
         private set
 
     private var pendingCaptureSettings: BlurSettings? = null
@@ -47,21 +52,26 @@ internal class HalalifyAppCoordinator(
 
     fun saveSettings(settings: BlurSettings) {
         settingsRepository.save(settings)
+        if (captureState.value.isCapturing) {
+            context.startService(
+                Intent(context, ProtectionCaptureService::class.java)
+                    .setAction(ProtectionCaptureService.ACTION_UPDATE_VISUAL_SETTINGS),
+            )
+        }
     }
 
     fun onStart() {
         CaptureSessionStore.setPreviewRequested(true)
-        if (websiteFilterEnabled && !pendingWebsiteFilterEnable) {
+        if (captureState.value.isCapturing && initialSettings.blockAdultSites && !pendingWebsiteFilterEnable) {
             setWebsiteBlocking(enabled = true)
+        } else if (!captureState.value.isCapturing) {
+            // Clean up VPN instances left by an earlier app/service process.
+            setWebsiteBlocking(enabled = false)
         }
     }
 
     fun onStop() {
         CaptureSessionStore.setPreviewRequested(false)
-        // Website protection is intentionally tied to the visible app session.
-        if (websiteFilterEnabled) {
-            context.stopService(Intent(context, AdultSiteVpnService::class.java))
-        }
     }
 
     fun onDestroy(isFinishing: Boolean, isTaskRoot: Boolean) {
@@ -129,9 +139,9 @@ internal class HalalifyAppCoordinator(
             Intent(context, ProtectionCaptureService::class.java)
                 .setAction(ProtectionCaptureService.ACTION_STOP),
         )
-        if (websiteFilterEnabled) {
-            setWebsiteBlocking(enabled = false)
-        }
+        // Protection and the website-filter VPN have one lifecycle. Do not
+        // leave the VPN running when the main protection status becomes OFF.
+        setWebsiteBlocking(enabled = false)
     }
 
     fun onAudioPermissionResult(granted: Boolean) {

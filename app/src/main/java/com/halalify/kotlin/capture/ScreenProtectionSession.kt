@@ -19,6 +19,8 @@ import com.halalify.kotlin.media.ProtectionTracker
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.model.VisionProcessor
 import com.halalify.kotlin.settings.BlurSettings
+import com.halalify.kotlin.settings.BlurStyle
+import com.halalify.kotlin.settings.normalizeBlurIntensity
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 
@@ -35,6 +37,14 @@ internal class ScreenProtectionSession(
     private val protectionTracker = ProtectionTracker()
     private val frameActivityDetector = FrameActivityDetector()
     private val analysisPolicy = VisualAnalysisPolicy(settings)
+    @Volatile
+    private var visualSettings = VisualSettings(
+        style = settings.style,
+        intensity = normalizeBlurIntensity(settings.intensity),
+    )
+    @Volatile
+    private var visualSettingsVersion = 0L
+    private var renderedVisualSettingsVersion = Long.MIN_VALUE
     private var imageReader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var visionThread: HandlerThread? = null
@@ -46,6 +56,15 @@ internal class ScreenProtectionSession(
 
     @Volatile
     private var closed = false
+
+    fun updateVisualSettings(style: BlurStyle, intensity: Float) {
+        if (closed) return
+        visualSettings = VisualSettings(
+            style = style,
+            intensity = normalizeBlurIntensity(intensity),
+        )
+        visualSettingsVersion += 1L
+    }
 
     @Synchronized
     fun start() {
@@ -102,7 +121,15 @@ internal class ScreenProtectionSession(
                 height = image.height,
                 ignoredRegions = lastProtectedDetections,
             )
-            val reason = frameActivityDetector.analysisReason(sample, now) ?: return
+            val currentVisualSettings = visualSettings
+            val currentVisualSettingsVersion = visualSettingsVersion
+            val visualSettingsChanged = currentVisualSettingsVersion != renderedVisualSettingsVersion
+            val reason = if (visualSettingsChanged) {
+                frameActivityDetector.reset()
+                frameActivityDetector.analysisReason(sample, now)
+            } else {
+                frameActivityDetector.analysisReason(sample, now)
+            } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
             plane.buffer.rewind()
@@ -123,7 +150,13 @@ internal class ScreenProtectionSession(
                     contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
                 lastProtectedDetections = protectedDetections
-                renderFrame(frameBitmap, detections, protectedDetections)
+                renderFrame(
+                    croppedBitmap = frameBitmap,
+                    detections = detections,
+                    protectedDetections = protectedDetections,
+                    visualSettings = currentVisualSettings,
+                    visualSettingsVersion = currentVisualSettingsVersion,
+                )
             } finally {
                 frameBitmap.recycle()
             }
@@ -144,16 +177,21 @@ internal class ScreenProtectionSession(
         croppedBitmap: Bitmap,
         detections: List<Detection>,
         protectedDetections: List<Detection>,
+        visualSettings: VisualSettings,
+        visualSettingsVersion: Long,
     ) {
         val rendered = FrameBlurRenderer.renderSelectedDetections(
             croppedBitmap,
             protectedDetections,
-            settings.style,
-            settings.intensity,
+            visualSettings.style,
+            visualSettings.intensity,
         )
         // The renderer creates independent region bitmaps before the source
         // frame is recycled. The overlay owns those bitmaps from this point.
         overlay.update(rendered.overlayRegions)
+        if (this.visualSettingsVersion == visualSettingsVersion) {
+            renderedVisualSettingsVersion = visualSettingsVersion
+        }
         publishDetectionStatus(detections, rendered.blurredCount)
         if (statePublisher.isPreviewRequested) {
             val preview = ByteArrayOutputStream().also { stream ->
@@ -199,6 +237,11 @@ internal class ScreenProtectionSession(
             Log.w(TAG, "Could not close $name.", error)
         }
     }
+
+    private data class VisualSettings(
+        val style: BlurStyle,
+        val intensity: Float,
+    )
 
     private fun Image.Plane.toBitmap(width: Int, height: Int): Bitmap {
         val paddedWidth = width + (rowStride - pixelStride * width) / pixelStride

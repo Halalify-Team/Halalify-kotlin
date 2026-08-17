@@ -8,6 +8,11 @@ import org.junit.Test
 class BlurSettingsTest {
 
     @Test
+    fun `new installations follow the device theme by default`() {
+        assertEquals(AppThemeMode.NORMAL, BlurSettings().themeMode)
+    }
+
+    @Test
     fun `new installations default to maximum blur strength`() {
         assertEquals(DEFAULT_BLUR_INTENSITY, BlurSettings().intensity, 0f)
         assertEquals(1f, BlurSettings().intensity, 0f)

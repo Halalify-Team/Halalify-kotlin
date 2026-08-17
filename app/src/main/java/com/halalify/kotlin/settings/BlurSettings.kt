@@ -14,6 +14,12 @@ internal enum class BlurStyle(val title: String, val description: String) {
     SOLID("Solid", "A fully opaque black cover for maximum privacy."),
 }
 
+internal enum class AppThemeMode(val title: String, val description: String) {
+    NORMAL("Normal", "Follow your phone's light or dark appearance."),
+    DARK("Dark", "Always use the deep forest theme."),
+    LIGHT("Light", "Always use the bright forest theme."),
+}
+
 // Allow the full intensity range so each of the five slider levels
 // produces a meaningfully different mosaic density (16 columns at 0f
 // down to 4 columns at 1f).
@@ -33,6 +39,7 @@ internal data class BlurSettings(
     val musicSourceUrl: String = "",
     val musicSourceFileName: String = "",
     val musicSourceUri: String = "",
+    val themeMode: AppThemeMode = AppThemeMode.NORMAL,
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
@@ -73,6 +80,9 @@ internal class BlurSettingsRepository(context: Context) {
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
         musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
         musicSourceUri = preferences.getString(KEY_MUSIC_SOURCE_URI, "") ?: "",
+        themeMode = preferences.getString(KEY_THEME_MODE, null)
+            ?.let { savedValue -> AppThemeMode.entries.firstOrNull { it.name == savedValue } }
+            ?: AppThemeMode.NORMAL,
         intensity = loadIntensity(),
     )
 
@@ -95,6 +105,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_URL, settings.musicSourceUrl)
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
+            putString(KEY_THEME_MODE, settings.themeMode.name)
             putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
             putInt(KEY_BLUR_INTENSITY_REVISION, CURRENT_BLUR_INTENSITY_REVISION)
         }
@@ -111,6 +122,7 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_MUSIC_SOURCE_URL = "music_source_url"
         const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
         const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
+        const val KEY_THEME_MODE = "theme_mode"
         const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_INTENSITY_REVISION = "blur_intensity_revision"
         const val CURRENT_BLUR_INTENSITY_REVISION = 1

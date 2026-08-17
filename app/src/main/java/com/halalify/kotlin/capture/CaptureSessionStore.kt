@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.update
 internal data class CaptureUiState(
     val isCapturing: Boolean = false,
     val targetLabel: String? = null,
-    val message: String = "Choose your preferences, then start protection.",
+    val message: String = "Tap the circle to start protection.",
     val audioStatus: String? = null,
     val previewJpeg: ByteArray? = null,
 )

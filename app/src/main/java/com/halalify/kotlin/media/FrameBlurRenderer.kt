@@ -46,6 +46,7 @@ internal object FrameBlurRenderer {
         detections: List<Detection>,
         style: BlurStyle,
         intensity: Float,
+        includePreview: Boolean = false,
     ): FrameBlurResult {
         val selected = detections.filter(Detection::shouldBlur)
         if (selected.isEmpty()) {
@@ -67,8 +68,10 @@ internal object FrameBlurRenderer {
                 )
             }
 
-            // Keep the optional in-app preview consistent with the real overlay.
-            Canvas(bitmap).drawRegions(regions)
+            if (includePreview) {
+                // Keep the optional in-app preview consistent with the real overlay.
+                Canvas(bitmap).drawRegions(regions)
+            }
         } catch (error: Throwable) {
             regions.forEach { releaseOverlayBitmap(it.bitmap) }
             throw error

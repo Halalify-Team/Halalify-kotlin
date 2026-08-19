@@ -31,7 +31,7 @@ class ProtectionTrackerTest {
 
     @Test
     fun `stale detection expires after two content changes`() {
-        val tracker = ProtectionTracker()
+        val tracker = ProtectionTracker(maxMissedContentChanges = 2)
         tracker.update(listOf(detection(shouldBlur = true)))
 
         tracker.update(emptyList(), contentChanged = true)

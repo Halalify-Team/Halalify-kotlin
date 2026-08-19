@@ -156,13 +156,20 @@ internal class ScreenProtectionSession(
             }
             if (!running) return
 
-            val frameBitmap = plane.toCroppedBitmap(image.width, image.height)
+            val protectedDetections = protectionTracker.update(
+                detections,
+                contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
+            )
+            lastProtectedDetections = protectedDetections
+
+            val frameBitmap = if (
+                protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
+            ) {
+                plane.toCroppedBitmap(image.width, image.height)
+            } else {
+                null
+            }
             try {
-                val protectedDetections = protectionTracker.update(
-                    detections,
-                    contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
-                )
-                lastProtectedDetections = protectedDetections
                 renderFrame(
                     croppedBitmap = frameBitmap,
                     detections = detections,
@@ -172,7 +179,7 @@ internal class ScreenProtectionSession(
                     contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
             } finally {
-                frameBitmap.recycle()
+                frameBitmap?.recycle()
             }
         } catch (error: Exception) {
             if (running) {
@@ -188,7 +195,7 @@ internal class ScreenProtectionSession(
     }
 
     private fun renderFrame(
-        croppedBitmap: Bitmap,
+        croppedBitmap: Bitmap?,
         detections: List<Detection>,
         protectedDetections: List<Detection>,
         visualSettings: VisualSettings,
@@ -205,11 +212,23 @@ internal class ScreenProtectionSession(
             publishDetectionStatus(detections, protectedDetections.size)
             return
         }
+        if (croppedBitmap == null) {
+            overlay.update(emptyList())
+            if (this.visualSettingsVersion == visualSettingsVersion) {
+                renderedVisualSettingsVersion = visualSettingsVersion
+            }
+            lastRenderedDetections = protectedDetections
+            lastRenderedStyle = visualSettings.style
+            lastRenderedIntensity = visualSettings.intensity
+            publishDetectionStatus(detections, 0)
+            return
+        }
         val rendered = FrameBlurRenderer.renderSelectedDetections(
             croppedBitmap,
             protectedDetections,
             visualSettings.style,
             visualSettings.intensity,
+            includePreview = statePublisher.isPreviewRequested,
         )
         // The renderer creates independent region bitmaps before the source
         // frame is recycled. The overlay owns those bitmaps from this point.

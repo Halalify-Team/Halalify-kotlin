@@ -37,11 +37,13 @@ internal class ScreenProtectionSession(
     private val protectionTracker = ProtectionTracker()
     private val frameActivityDetector = FrameActivityDetector()
     private val analysisPolicy = VisualAnalysisPolicy(settings)
+
     @Volatile
     private var visualSettings = VisualSettings(
         style = settings.style,
         intensity = normalizeBlurIntensity(settings.intensity),
     )
+
     @Volatile
     private var visualSettingsVersion = 0L
     private var renderedVisualSettingsVersion = Long.MIN_VALUE
@@ -143,7 +145,15 @@ internal class ScreenProtectionSession(
                 rowStride = plane.rowStride,
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
-            )
+            ).map { detection ->
+
+                // إجبار أي شيء يصنف Female على الحجب
+                if (detection.classId == FEMALE_CLASS_ID) {
+                    detection.copy(shouldBlur = true)
+                } else {
+                    detection
+                }
+            }
             if (!running) return
 
             val frameBitmap = plane.toCroppedBitmap(image.width, image.height)

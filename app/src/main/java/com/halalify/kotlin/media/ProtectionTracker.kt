@@ -99,10 +99,10 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        // Detection can briefly miss a subject while a video frame changes.
-        // Keep the last protected region for about half a second, then clear
-        // it once the subject has really left the screen.
-        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 15
+        // Keep the protected region for a short window during active page motion
+        // (~200ms) to prevent flicker from temporary detector misses, while
+        // expiring stale regions smoothly when the user scrolls away.
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 6
         const val DEFAULT_MATCHING_IOU = 0.20F
 
         // Follow the latest detector box immediately so a page flip cannot

@@ -33,7 +33,7 @@ internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
     val blurImages: Boolean = true,
     val blurVideos: Boolean = true,
-    val style: BlurStyle = BlurStyle.SOLID,
+    val style: BlurStyle = BlurStyle.SOFT_BLUR,
     val isolateMusic: Boolean = false,
     val blockAdultSites: Boolean = false,
     val musicSourceUrl: String = "",
@@ -94,10 +94,10 @@ internal class BlurSettingsRepository(context: Context) {
 
     private fun loadStyle(): BlurStyle {
         val revision = preferences.getInt(KEY_BLUR_SETTINGS_REVISION, 0)
-        if (revision < CURRENT_BLUR_SETTINGS_REVISION) return BlurStyle.SOLID
+        if (revision < CURRENT_BLUR_SETTINGS_REVISION) return BlurStyle.SOFT_BLUR
         return preferences.getString(KEY_BLUR_STYLE, null)
             ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
-            ?: BlurStyle.SOLID
+            ?: BlurStyle.SOFT_BLUR
     }
 
     fun save(settings: BlurSettings) {
@@ -131,6 +131,6 @@ internal class BlurSettingsRepository(context: Context) {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
-        const val CURRENT_BLUR_SETTINGS_REVISION = 4
+        const val CURRENT_BLUR_SETTINGS_REVISION = 5
     }
 }

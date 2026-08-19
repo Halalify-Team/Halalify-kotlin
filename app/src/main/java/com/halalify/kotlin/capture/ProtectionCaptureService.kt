@@ -130,7 +130,7 @@ internal class ProtectionCaptureService : Service() {
             throw error
         }
         val session = ScreenProtectionSession(
-            resources = resources,
+            context = applicationContext,
             mediaProjection = activeProjection,
             settings = settings,
             visionProcessor = processor,

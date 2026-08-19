@@ -167,7 +167,6 @@ internal class DeviceBlurOverlay(
 
     private fun createFullScreenLayoutParams(): WindowManager.LayoutParams {
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
@@ -228,9 +227,8 @@ internal class DeviceBlurOverlay(
         }
         private val bitmapPaint = Paint().apply {
             isAntiAlias = false
-            // The reference scales a small per-region crop with filtering;
-            // the mosaic itself was already created at low resolution.
-            isFilterBitmap = true
+            // Keep enlarged mosaic cells opaque and block-shaped.
+            isFilterBitmap = false
             isDither = false
             alpha = 255
         }

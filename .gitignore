@@ -72,3 +72,4 @@ test-data/
 # Local model extraction and training workspaces
 extracted_haramblur_model/
 training/
+bancmark/

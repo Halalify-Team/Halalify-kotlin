@@ -33,7 +33,7 @@ internal data class BlurSettings(
     val target: BlurTarget = BlurTarget.FEMALE,
     val blurImages: Boolean = true,
     val blurVideos: Boolean = true,
-    val style: BlurStyle = BlurStyle.PIXELATED,
+    val style: BlurStyle = BlurStyle.SOLID,
     val isolateMusic: Boolean = false,
     val blockAdultSites: Boolean = false,
     val musicSourceUrl: String = "",
@@ -72,9 +72,7 @@ internal class BlurSettingsRepository(context: Context) {
             ?: BlurTarget.FEMALE,
         blurImages = preferences.getBoolean(KEY_BLUR_IMAGES, true),
         blurVideos = preferences.getBoolean(KEY_BLUR_VIDEOS, true),
-        style = preferences.getString(KEY_BLUR_STYLE, null)
-            ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
-            ?: BlurStyle.PIXELATED,
+        style = loadStyle(),
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
         blockAdultSites = preferences.getBoolean(KEY_BLOCK_ADULT_SITES, false),
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
@@ -87,11 +85,19 @@ internal class BlurSettingsRepository(context: Context) {
     )
 
     private fun loadIntensity(): Float {
-        val revision = preferences.getInt(KEY_BLUR_INTENSITY_REVISION, 0)
-        if (revision < CURRENT_BLUR_INTENSITY_REVISION) return DEFAULT_BLUR_INTENSITY
+        val revision = preferences.getInt(KEY_BLUR_SETTINGS_REVISION, 0)
+        if (revision < CURRENT_BLUR_SETTINGS_REVISION) return DEFAULT_BLUR_INTENSITY
         return normalizeBlurIntensity(
             preferences.getFloat(KEY_BLUR_INTENSITY, DEFAULT_BLUR_INTENSITY),
         )
+    }
+
+    private fun loadStyle(): BlurStyle {
+        val revision = preferences.getInt(KEY_BLUR_SETTINGS_REVISION, 0)
+        if (revision < CURRENT_BLUR_SETTINGS_REVISION) return BlurStyle.SOLID
+        return preferences.getString(KEY_BLUR_STYLE, null)
+            ?.let { savedValue -> BlurStyle.entries.firstOrNull { it.name == savedValue } }
+            ?: BlurStyle.SOLID
     }
 
     fun save(settings: BlurSettings) {
@@ -107,7 +113,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
             putString(KEY_THEME_MODE, settings.themeMode.name)
             putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
-            putInt(KEY_BLUR_INTENSITY_REVISION, CURRENT_BLUR_INTENSITY_REVISION)
+            putInt(KEY_BLUR_SETTINGS_REVISION, CURRENT_BLUR_SETTINGS_REVISION)
         }
     }
 
@@ -124,7 +130,7 @@ internal class BlurSettingsRepository(context: Context) {
         const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_BLUR_INTENSITY = "blur_intensity"
-        const val KEY_BLUR_INTENSITY_REVISION = "blur_intensity_revision"
-        const val CURRENT_BLUR_INTENSITY_REVISION = 1
+        const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
+        const val CURRENT_BLUR_SETTINGS_REVISION = 2
     }
 }

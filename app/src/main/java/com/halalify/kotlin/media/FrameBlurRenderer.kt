@@ -105,9 +105,9 @@ internal object FrameBlurRenderer {
     ): OverlayRegion {
         val safeIntensity = if (intensity.isFinite()) intensity.coerceIn(0f, 1f) else 1f
         val (tinyWidth, tinyHeight) = when (style) {
-            BlurStyle.SOLID -> 1 to 1
-            BlurStyle.SOFT_BLUR,
-            BlurStyle.PIXELATED -> {
+            BlurStyle.SOLID,
+            BlurStyle.PIXELATED -> 1 to 1
+            BlurStyle.SOFT_BLUR -> {
                 val maxGridDim = (MAX_GRID_MAJOR -
                         safeIntensity * (MAX_GRID_MAJOR - MIN_GRID_MAJOR))
                     .roundToInt()
@@ -129,7 +129,7 @@ internal object FrameBlurRenderer {
         val patch = acquireBitmap(tinyWidth.coerceAtLeast(1), tinyHeight.coerceAtLeast(1))
         try {
             patch.eraseColor(Color.BLACK)
-            if (style != BlurStyle.SOLID) {
+            if (style == BlurStyle.SOFT_BLUR) {
                 Canvas(patch).drawBitmap(
                     source,
                     rect,

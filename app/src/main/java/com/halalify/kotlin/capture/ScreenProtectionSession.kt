@@ -1,6 +1,6 @@
 package com.halalify.kotlin.capture
 
-import android.content.res.Resources
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -16,6 +16,7 @@ import androidx.core.graphics.createBitmap
 import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionOverlay
 import com.halalify.kotlin.media.ProtectionTracker
+import com.halalify.kotlin.media.getRealDisplayBounds
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.model.VisionProcessor
 import com.halalify.kotlin.settings.BlurSettings
@@ -23,10 +24,11 @@ import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.normalizeBlurIntensity
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import kotlin.math.roundToInt
 
 /** Owns the visual capture pipeline and all resources created for one projection session. */
 internal class ScreenProtectionSession(
-    private val resources: Resources,
+    private val context: Context,
     private val mediaProjection: MediaProjection,
     private val settings: BlurSettings,
     private val visionProcessor: VisionProcessor,
@@ -76,10 +78,12 @@ internal class ScreenProtectionSession(
         check(!closed) { "Screen protection session is closed." }
         check(!running) { "Screen protection session is already running." }
 
-        val metrics = resources.displayMetrics
-        val width = CAPTURE_WIDTH.coerceAtMost(metrics.widthPixels)
-        val height = (metrics.heightPixels.toFloat() * width / metrics.widthPixels)
-            .toInt()
+        val displayBounds = context.getRealDisplayBounds()
+        val realWidth = displayBounds.width().coerceAtLeast(1)
+        val realHeight = displayBounds.height().coerceAtLeast(1)
+        val width = CAPTURE_WIDTH.coerceAtMost(realWidth)
+        val height = ((realHeight.toFloat() * width) / realWidth)
+            .roundToInt()
             .coerceAtLeast(1)
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_IMAGES)
         val handlerThread = HandlerThread(VISION_THREAD_NAME).apply { start() }
@@ -98,7 +102,7 @@ internal class ScreenProtectionSession(
                     DISPLAY_NAME,
                     width,
                     height,
-                    resources.configuration.densityDpi,
+                    context.resources.configuration.densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     reader.surface,
                     null,
@@ -129,11 +133,12 @@ internal class ScreenProtectionSession(
             val currentVisualSettings = visualSettings
             val currentVisualSettingsVersion = visualSettingsVersion
             val visualSettingsChanged = currentVisualSettingsVersion != renderedVisualSettingsVersion
+            val activityReason = frameActivityDetector.analysisReason(sample, now)
             val reason = if (visualSettingsChanged) {
                 frameActivityDetector.reset()
-                frameActivityDetector.analysisReason(sample, now)
+                FrameAnalysisReason.CONTENT_CHANGED
             } else {
-                frameActivityDetector.analysisReason(sample, now)
+                activityReason
             } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
@@ -153,6 +158,8 @@ internal class ScreenProtectionSession(
                 } else {
                     detection
                 }
+            }.filter { detection ->
+                !detection.shouldBlur || detection.isReasonableProtectionRegion()
             }
             if (!running) return
 
@@ -365,6 +372,17 @@ internal class ScreenProtectionSession(
     private fun Detection.coversMostOfFrame(): Boolean =
         (x2 - x1) * (y2 - y1) >= FULL_FRAME_AREA_THRESHOLD
 
+    private fun Detection.isReasonableProtectionRegion(): Boolean {
+        val regionWidth = x2 - x1
+        val regionHeight = y2 - y1
+        val area = regionWidth * regionHeight
+        return x1.isFinite() && y1.isFinite() &&
+                x2.isFinite() && y2.isFinite() &&
+                regionWidth > 0F && regionHeight > 0F &&
+                x1 >= 0F && y1 >= 0F && x2 <= 1F && y2 <= 1F &&
+                area <= MAX_PROTECTION_AREA
+    }
+
     private companion object {
         const val DISPLAY_NAME = "HalalifyPreview"
         const val VISION_THREAD_NAME = "halalify-vision"
@@ -377,6 +395,7 @@ internal class ScreenProtectionSession(
         const val SAMPLE_ROWS = 32
         const val IGNORED_SAMPLE = -1
         const val FULL_FRAME_AREA_THRESHOLD = 0.85F
+        const val MAX_PROTECTION_AREA = 0.60F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1
         const val TAG = "HalalifyVision"

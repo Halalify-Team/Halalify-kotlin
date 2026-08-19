@@ -196,12 +196,11 @@ internal object FrameBlurRenderer {
     }
 
     /**
-     * Real soft privacy blur:
-     * 1) aggressively downsamples the protected patch,
-     * 2) scales it back with bilinear filtering,
-     * 3) adds a dark veil so Level 5 remains difficult to recognize.
-     *
-     * The final bitmap is still fully opaque.
+     * High-quality soft privacy blur:
+     * 1) Downsamples the protected patch according to blur intensity,
+     * 2) Applies a fast in-place box blur for smooth Gaussian-like color diffusion,
+     * 3) Scales back with bilinear filtering to fit the target patch,
+     * 4) Preserves original scene colors and luminosity without darkening or turning black.
      */
     private fun applySoftProtection(
         bitmap: Bitmap,
@@ -211,17 +210,16 @@ internal object FrameBlurRenderer {
 
         val amount = intensity.coerceIn(0F, 1F)
 
-        // Level 1: ~16% of original size.
-        // Level 5: ~3% of original size.
-        val scale = lerp(0.16F, 0.03F, amount)
+        // Downsample factor between 0.15 (lightest) and 0.04 (heaviest)
+        val scale = lerp(0.15F, 0.04F, amount)
 
         val smallWidth = (bitmap.width * scale)
             .roundToInt()
-            .coerceAtLeast(2)
+            .coerceAtLeast(3)
 
         val smallHeight = (bitmap.height * scale)
             .roundToInt()
-            .coerceAtLeast(2)
+            .coerceAtLeast(3)
 
         val tiny = Bitmap.createScaledBitmap(
             bitmap,
@@ -229,6 +227,9 @@ internal object FrameBlurRenderer {
             smallHeight,
             true,
         )
+
+        // Fast in-place box blur on the tiny bitmap for smooth gaussian-like diffusion
+        boxBlur(tiny, radius = 2)
 
         val blurred = Bitmap.createScaledBitmap(
             tiny,
@@ -244,22 +245,74 @@ internal object FrameBlurRenderer {
                 0F,
                 Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 255 },
             )
-
-            // Darken without turning Soft blur into Solid.
-            val veilAlpha = lerp(35F, 115F, amount)
-                .roundToInt()
-                .coerceIn(0, 180)
-
-            drawBlackVeil(bitmap, veilAlpha)
         } finally {
             if (!tiny.isRecycled) tiny.recycle()
             if (!blurred.isRecycled) blurred.recycle()
         }
     }
 
+    private fun boxBlur(bitmap: Bitmap, radius: Int) {
+        if (radius < 1 || bitmap.width <= 1 || bitmap.height <= 1) return
+        val width = bitmap.width
+        val height = bitmap.height
+        val size = width * height
+        val pixels = IntArray(size)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        val temp = IntArray(size)
+
+        // Horizontal pass
+        for (y in 0 until height) {
+            val rowOffset = y * width
+            for (x in 0 until width) {
+                var r = 0
+                var g = 0
+                var b = 0
+                var count = 0
+                val minK = (x - radius).coerceAtLeast(0)
+                val maxK = (x + radius).coerceAtMost(width - 1)
+                for (k in minK..maxK) {
+                    val p = pixels[rowOffset + k]
+                    r += (p shr 16) and 0xFF
+                    g += (p shr 8) and 0xFF
+                    b += p and 0xFF
+                    count++
+                }
+                temp[rowOffset + x] = (-0x1000000) or
+                        ((r / count) shl 16) or
+                        ((g / count) shl 8) or
+                        (b / count)
+            }
+        }
+
+        // Vertical pass
+        for (x in 0 until width) {
+            for (y in 0 until height) {
+                var r = 0
+                var g = 0
+                var b = 0
+                var count = 0
+                val minK = (y - radius).coerceAtLeast(0)
+                val maxK = (y + radius).coerceAtMost(height - 1)
+                for (k in minK..maxK) {
+                    val p = temp[k * width + x]
+                    r += (p shr 16) and 0xFF
+                    g += (p shr 8) and 0xFF
+                    b += p and 0xFF
+                    count++
+                }
+                pixels[y * width + x] = (-0x1000000) or
+                        ((r / count) shl 16) or
+                        ((g / count) shl 8) or
+                        (b / count)
+            }
+        }
+
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    }
+
     /**
-     * Pixelated privacy mode. It uses nearest-neighbour scaling so the result
-     * remains clearly different from Soft blur.
+     * Clean, crisp pixelated privacy mode without darkening.
      */
     private fun applyPixelatedProtection(
         bitmap: Bitmap,
@@ -268,9 +321,9 @@ internal object FrameBlurRenderer {
         if (bitmap.width <= 1 || bitmap.height <= 1) return
 
         val amount = intensity.coerceIn(0F, 1F)
-        val blockSize = lerp(10F, 38F, amount)
+        val blockSize = lerp(8F, 32F, amount)
             .roundToInt()
-            .coerceAtLeast(6)
+            .coerceAtLeast(4)
 
         val smallWidth = (bitmap.width / blockSize).coerceAtLeast(2)
         val smallHeight = (bitmap.height / blockSize).coerceAtLeast(2)
@@ -301,34 +354,10 @@ internal object FrameBlurRenderer {
                     isDither = false
                 },
             )
-
-            val veilAlpha = lerp(25F, 90F, amount)
-                .roundToInt()
-                .coerceIn(0, 150)
-
-            drawBlackVeil(bitmap, veilAlpha)
         } finally {
             if (!tiny.isRecycled) tiny.recycle()
             if (!pixelated.isRecycled) pixelated.recycle()
         }
-    }
-
-    private fun drawBlackVeil(
-        bitmap: Bitmap,
-        alpha: Int,
-    ) {
-        val paint = Paint().apply {
-            color = Color.argb(alpha.coerceIn(0, 255), 0, 0, 0)
-            style = Paint.Style.FILL
-        }
-
-        Canvas(bitmap).drawRect(
-            0F,
-            0F,
-            bitmap.width.toFloat(),
-            bitmap.height.toFloat(),
-            paint,
-        )
     }
 
     /**

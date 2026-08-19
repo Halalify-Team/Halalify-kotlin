@@ -35,7 +35,7 @@ internal class FrameActivityDetector(
 
         val contentChanged = changedRatio(previous, sample) >= changedPixelRatio
         val burstDue = remainingBurstAnalyses > 0 &&
-            elapsedSinceLastAnalysis(nowMs) >= burstIntervalMs
+                elapsedSinceLastAnalysis(nowMs) >= burstIntervalMs
         val safetyRefreshDue = elapsedSinceLastAnalysis(nowMs) >= safetyRefreshMs
         if (!contentChanged && !burstDue && !safetyRefreshDue) return null
 

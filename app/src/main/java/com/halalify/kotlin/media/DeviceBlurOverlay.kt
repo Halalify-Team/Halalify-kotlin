@@ -289,18 +289,7 @@ internal class DeviceBlurOverlay(
         }
     }
 
-    private fun currentDisplayBounds(): Rect =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Rect(windowManager.currentWindowMetrics.bounds)
-        } else {
-            @Suppress("DEPRECATION")
-            Rect(
-                0,
-                0,
-                appContext.resources.displayMetrics.widthPixels,
-                appContext.resources.displayMetrics.heightPixels,
-            )
-        }
+    private fun currentDisplayBounds(): Rect = appContext.getRealDisplayBounds()
 
     private fun Rect.scaleToDisplay(
         sourceWidth: Int,

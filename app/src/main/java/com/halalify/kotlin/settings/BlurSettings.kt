@@ -118,19 +118,19 @@ internal class BlurSettingsRepository(context: Context) {
     }
 
     private companion object {
-        const val PREFERENCES_NAME = "blur_settings"
-        const val KEY_TARGET = "target"
-        const val KEY_BLUR_IMAGES = "blur_images"
-        const val KEY_BLUR_VIDEOS = "blur_videos"
-        const val KEY_BLUR_STYLE = "blur_style"
-        const val KEY_ISOLATE_MUSIC = "isolate_music"
-        const val KEY_BLOCK_ADULT_SITES = "block_adult_sites"
-        const val KEY_MUSIC_SOURCE_URL = "music_source_url"
-        const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
-        const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
-        const val KEY_THEME_MODE = "theme_mode"
-        const val KEY_BLUR_INTENSITY = "blur_intensity"
+        private const val PREFERENCES_NAME = "halalify_blur_settings"
+        private const val KEY_TARGET = "target"
+        private const val KEY_BLUR_IMAGES = "blur_images"
+        private const val KEY_BLUR_VIDEOS = "blur_videos"
+        private const val KEY_BLUR_STYLE = "blur_style"
+        private const val KEY_ISOLATE_MUSIC = "isolate_music"
+        private const val KEY_BLOCK_ADULT_SITES = "block_adult_sites"
+        private const val KEY_MUSIC_SOURCE_URL = "music_source_url"
+        private const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
+        private const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
+        private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
-        const val CURRENT_BLUR_SETTINGS_REVISION = 2
+        const val CURRENT_BLUR_SETTINGS_REVISION = 4
     }
 }

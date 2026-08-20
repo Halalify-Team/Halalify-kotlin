@@ -68,6 +68,25 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `old region is removed immediately when protected subject moves`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val moved = detection(shouldBlur = true).copy(
+            x1 = 0.60F,
+            x2 = 0.95F,
+        )
+        val protected = tracker.update(listOf(moved), contentChanged = true)
+
+        assertEquals(2, protected.size)
+        assertTrue(protected.any { it.x1 == moved.x1 })
+
+        val afterConfirmation = tracker.update(listOf(moved), contentChanged = true)
+        assertEquals(1, afterConfirmation.size)
+        assertEquals(moved.x1, afterConfirmation.single().x1, 0.0001F)
+    }
+
+    @Test
     fun `static region never expires with time or safety refreshes`() {
         val tracker = ProtectionTracker(maxMissedContentChanges = 2)
         tracker.update(listOf(detection(shouldBlur = true)))

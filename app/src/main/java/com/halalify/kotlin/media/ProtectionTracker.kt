@@ -50,18 +50,26 @@ internal class ProtectionTracker(
             matchedDetections += detection
         }
 
-        detections.asSequence()
+        val newProtectedDetections = detections.asSequence()
             .filter(Detection::shouldBlur)
             .filterNot(matchedDetections::contains)
-            .forEach { detection -> tracks += Track(detection) }
+            .toList()
+        newProtectedDetections.forEach { detection -> tracks += Track(detection) }
 
         // A static or periodically refreshed screen never ages protected regions.
-        // Only real screen changes age unmatched regions, preventing timed flicker.
+        // When a new protected box appears after a real change, an unmatched old
+        // box is replaced after a short confirmation window. This prevents one
+        // unstable detector frame from making the overlay disappear and return.
         if (contentChanged) {
             availableTracks.forEach { track -> track.missedContentChanges += 1 }
-            tracks.removeAll { track ->
-                track.missedContentChanges >= maxMissedContentChanges
+            val replacementConfirmed =
+                newProtectedDetections.isNotEmpty() || matchedDetections.isNotEmpty()
+            val expiryLimit = if (replacementConfirmed) {
+                REPLACEMENT_CONFIRMATION_CHANGES.coerceAtMost(maxMissedContentChanges)
+            } else {
+                maxMissedContentChanges
             }
+            tracks.removeAll { track -> track.missedContentChanges >= expiryLimit }
         }
 
         return tracks.map(Track::detection)
@@ -99,11 +107,10 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        // Keep the protected region for a short window during active page motion
-        // (~200ms) to prevent flicker from temporary detector misses, while
-        // expiring stale regions smoothly when the user scrolls away.
+        // Keep protection through a short detector miss during page motion.
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 6
-        const val DEFAULT_MATCHING_IOU = 0.20F
+        const val DEFAULT_MATCHING_IOU = 0.15F
+        const val REPLACEMENT_CONFIRMATION_CHANGES = 2
 
         // Follow the latest detector box immediately so a page flip cannot
         // leave part of the previous location covered.

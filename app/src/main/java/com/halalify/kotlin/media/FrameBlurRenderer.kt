@@ -231,23 +231,18 @@ internal object FrameBlurRenderer {
         // Fast in-place box blur on the tiny bitmap for smooth gaussian-like diffusion
         boxBlur(tiny, radius = 2)
 
-        val blurred = Bitmap.createScaledBitmap(
-            tiny,
-            bitmap.width,
-            bitmap.height,
-            true,
-        )
-
         try {
             Canvas(bitmap).drawBitmap(
-                blurred,
-                0F,
-                0F,
-                Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 255 },
+                tiny,
+                null,
+                Rect(0, 0, bitmap.width, bitmap.height),
+                Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                    alpha = 255
+                    isDither = false
+                },
             )
         } finally {
             if (!tiny.isRecycled) tiny.recycle()
-            if (!blurred.isRecycled) blurred.recycle()
         }
     }
 

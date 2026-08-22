@@ -13,7 +13,6 @@
 namespace {
 
 constexpr int kDetectionFields = 8;
-
 void Throw(JNIEnv* env, const char* class_name, const std::string& message) {
     jclass exception_class = env->FindClass(class_name);
     if (exception_class != nullptr) env->ThrowNew(exception_class, message.c_str());

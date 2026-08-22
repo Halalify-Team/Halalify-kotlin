@@ -1,7 +1,6 @@
 #include "ai_engine.h"
 
 #include <algorithm>
-#include <numeric>
 #include <utility>
 
 #include "nsfw_classifier.h"
@@ -82,8 +81,15 @@ hb_status AiEngine::Process(const hb_frame& frame, std::vector<hb_detection>* de
         return HB_STATUS_OK;
     }
 
-    std::vector<size_t> candidates(detections->size());
-    std::iota(candidates.begin(), candidates.end(), 0);
+    // NSFW is a secondary check for an already selected target region. It
+    // must not turn a male/ignored detection into a blur when the user chose
+    // female (or vice versa), and it must not protect an unrelated full
+    // screen just because a classifier produced a false positive.
+    std::vector<size_t> candidates;
+    candidates.reserve(detections->size());
+    for (size_t index = 0; index < detections->size(); ++index) {
+        if ((*detections)[index].should_blur != 0) candidates.push_back(index);
+    }
     std::stable_sort(candidates.begin(), candidates.end(), [&](size_t left, size_t right) {
         return (*detections)[left].confidence > (*detections)[right].confidence;
     });
@@ -98,27 +104,6 @@ hb_status AiEngine::Process(const hb_frame& frame, std::vector<hb_detection>* de
         }
         if (score >= config_.nsfw_confidence_threshold) {
             detection.is_nsfw = 1;
-            detection.should_blur = 1;
-        }
-    }
-
-    if (detections->empty()) {
-        float score = 0.0F;
-        if (!nsfw_classifier_->Score(frame, NormalizedRect{}, &score, &last_error_)) {
-            return HB_STATUS_INFERENCE_ERROR;
-        }
-        if (score >= config_.nsfw_confidence_threshold) {
-            hb_detection full_frame{};
-            full_frame.x1 = 0.0F;
-            full_frame.y1 = 0.0F;
-            full_frame.x2 = 1.0F;
-            full_frame.y2 = 1.0F;
-            full_frame.confidence = score;
-            full_frame.class_id = 3;
-            full_frame.track_id = -1;
-            full_frame.should_blur = 1;
-            full_frame.is_nsfw = 1;
-            detections->push_back(full_frame);
         }
     }
     last_error_.clear();

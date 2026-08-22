@@ -17,6 +17,7 @@ import com.halalify.kotlin.audio.BundledAudioProcessorProvider
 import com.halalify.kotlin.audio.PlaybackAudioFocusController
 import com.halalify.kotlin.audio.PlaybackAudioMonitor
 import com.halalify.kotlin.media.DeviceBlurOverlay
+import com.halalify.kotlin.media.TrustedOverlayHost
 import com.halalify.kotlin.model.NativeVisionEngine
 import com.halalify.kotlin.network.AdultSiteVpnService
 import com.halalify.kotlin.settings.BlurSettings
@@ -93,8 +94,12 @@ internal class ProtectionCaptureService : Service() {
             val settings = BlurSettingsRepository(applicationContext).load()
             check(settings.hasEnabledProtection) { "No protection type is enabled." }
             if (settings.hasVisualProtection) {
-                check(Settings.canDrawOverlays(this)) {
-                    "Display-over-other-apps permission is required for device-level blur."
+                val hasTrustedOverlay = TrustedOverlayHost.isConnected
+                check(Build.VERSION.SDK_INT < Build.VERSION_CODES.S || hasTrustedOverlay) {
+                    "Enable Halalify private blur overlay for full-opacity protection."
+                }
+                check(hasTrustedOverlay || Settings.canDrawOverlays(this)) {
+                    "Display-over-other-apps permission is required for device-level blur on this Android version."
                 }
                 startScreenProtection(activeProjection, settings)
             }
@@ -108,6 +113,11 @@ internal class ProtectionCaptureService : Service() {
                 )
             }
         } catch (error: Exception) {
+            Log.e(
+                "HalalifyCapture",
+                "Could not start the visual protection session.",
+                error,
+            )
             stopCapture(
                 "Could not start capture: ${error.message ?: error.javaClass.simpleName}",
             )

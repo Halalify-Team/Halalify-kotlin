@@ -68,7 +68,7 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `old region is removed immediately when protected subject moves`() {
+    fun `old region is replaced after a moved subject is confirmed`() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
 
@@ -82,18 +82,33 @@ class ProtectionTrackerTest {
         assertTrue(protected.any { it.x1 == moved.x1 })
 
         val afterConfirmation = tracker.update(listOf(moved), contentChanged = true)
-        assertEquals(1, afterConfirmation.size)
-        assertEquals(moved.x1, afterConfirmation.single().x1, 0.0001F)
+        assertEquals(2, afterConfirmation.size)
+
+        tracker.update(listOf(moved), contentChanged = true)
+        val replaced = tracker.update(listOf(moved), contentChanged = true)
+        assertEquals(1, replaced.size)
+        assertEquals(moved.x1, replaced.single().x1, 0.0001F)
     }
 
     @Test
-    fun `static region never expires with time or safety refreshes`() {
+    fun `safety refresh clears a static region that is no longer detected`() {
         val tracker = ProtectionTracker(maxMissedContentChanges = 2)
         tracker.update(listOf(detection(shouldBlur = true)))
 
-        repeat(100) { tracker.update(emptyList(), contentChanged = false) }
+        repeat(3) { tracker.update(emptyList(), safetyRefresh = true) }
 
-        assertEquals(1, tracker.update(emptyList(), contentChanged = false).size)
+        assertTrue(tracker.update(emptyList(), contentChanged = false).isEmpty())
+    }
+
+    @Test
+    fun `missed region is cleared by a settled safety refresh`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+        tracker.update(emptyList(), contentChanged = true)
+
+        val protected = tracker.update(emptyList(), safetyRefresh = true)
+
+        assertTrue(protected.isEmpty())
     }
 
     @Test
@@ -141,6 +156,19 @@ class ProtectionTrackerTest {
 
         assertEquals(moved.x1, protected.x1, 0.0001F)
         assertEquals(moved.x2, protected.x2, 0.0001F)
+    }
+
+    @Test
+    fun `fast movement is matched by center when boxes barely overlap`() {
+        val tracker = ProtectionTracker()
+        val first = detection(shouldBlur = true)
+        tracker.update(listOf(first))
+
+        val moved = first.copy(x1 = 0.40F, x2 = 0.90F)
+        val protected = tracker.update(listOf(moved), contentChanged = true)
+
+        assertEquals(1, protected.size)
+        assertEquals(moved.x1, protected.single().x1, 0.0001F)
     }
 
     private fun detection(

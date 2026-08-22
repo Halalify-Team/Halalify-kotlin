@@ -95,15 +95,24 @@ extern "C" {
 hb_config hb_default_config(void) {
     hb_config config{};
     config.target = HB_BLUR_TARGET_FEMALE;
+    // Keep the detector threshold aligned with the model's calibrated
+    // benchmark threshold. The female/anime scores commonly fall between
+    // 0.25 and 0.50; raising this to 0.50 makes valid subjects disappear.
+    // False-positive control belongs to NMS/region validation, not by
+    // discarding the lower-confidence female detections outright.
     config.female_confidence_threshold = 0.25F;
     config.male_confidence_threshold = 0.25F;
     config.ignored_confidence_threshold = 0.25F;
     config.iou_threshold = 0.5F;
     config.max_detections = 100;
-    // Two threads provide fast inference on modern multi-core devices.
+    // Two threads are faster on the emulator and avoid oversubscribing the
+    // detector and the optional NSFW classifier.
     config.num_threads = 2;
     config.nsfw_confidence_threshold = 0.70F;
-    config.max_nsfw_regions = 8;
+    // Female/male detections already provide the localized protection. The
+    // NSFW classifier is a safety supplement, so score only the two strongest
+    // regions to keep swipe updates responsive.
+    config.max_nsfw_regions = 2;
     return config;
 }
 

@@ -26,6 +26,6 @@
   "runtime": {
     "threshold": 0.7,
     "max_regions_per_frame": 8,
-    "fallback": "full_frame_when_no_detector_region_exists"
+    "fallback": "none"
   }
 }

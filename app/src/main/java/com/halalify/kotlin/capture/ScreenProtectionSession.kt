@@ -52,7 +52,6 @@ internal class ScreenProtectionSession(
     private var imageReader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var visionThread: HandlerThread? = null
-    private var lastProtectedDetections: List<Detection> = emptyList()
     private var lastRenderedDetections: List<Detection> = emptyList()
     private var lastRenderedStyle: BlurStyle? = null
     private var lastRenderedIntensity = Float.NaN
@@ -128,7 +127,6 @@ internal class ScreenProtectionSession(
             val sample = plane.sampleGrid(
                 width = image.width,
                 height = image.height,
-                ignoredRegions = lastProtectedDetections,
             )
             val currentVisualSettings = visualSettings
             val currentVisualSettingsVersion = visualSettingsVersion
@@ -150,15 +148,7 @@ internal class ScreenProtectionSession(
                 rowStride = plane.rowStride,
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
-            ).map { detection ->
-
-                // إجبار أي شيء يصنف Female على الحجب
-                if (detection.classId == FEMALE_CLASS_ID) {
-                    detection.copy(shouldBlur = true)
-                } else {
-                    detection
-                }
-            }.filter { detection ->
+            ).filter { detection ->
                 !detection.shouldBlur || detection.isReasonableProtectionRegion()
             }
             if (!running) return
@@ -166,9 +156,8 @@ internal class ScreenProtectionSession(
             val protectedDetections = protectionTracker.update(
                 detections,
                 contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
+                safetyRefresh = reason == FrameAnalysisReason.SAFETY_REFRESH,
             )
-            lastProtectedDetections = protectedDetections
-
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
             ) {
@@ -294,7 +283,6 @@ internal class ScreenProtectionSession(
         visionThread = null
         closeResource("vision processor") { visionProcessor.close() }
         closeResource("protection overlay") { overlay.close() }
-        lastProtectedDetections = emptyList()
         lastRenderedDetections = emptyList()
     }
 
@@ -332,7 +320,6 @@ internal class ScreenProtectionSession(
     private fun Image.Plane.sampleGrid(
         width: Int,
         height: Int,
-        ignoredRegions: List<Detection>,
     ): IntArray {
         val columns = SAMPLE_COLUMNS.coerceAtMost(width)
         val rows = SAMPLE_ROWS.coerceAtMost(height)
@@ -342,12 +329,6 @@ internal class ScreenProtectionSession(
             val y = (((row + 0.5F) * height) / rows).toInt().coerceIn(0, height - 1)
             for (column in 0 until columns) {
                 val x = (((column + 0.5F) * width) / columns).toInt().coerceIn(0, width - 1)
-                if (ignoredRegions.any { detection ->
-                        !detection.coversMostOfFrame() && detection.contains(x, y, width, height)
-                    }) {
-                    sample[outputIndex++] = IGNORED_SAMPLE
-                    continue
-                }
                 val sourceIndex = y * rowStride + x * pixelStride
                 val red = buffer.get(sourceIndex).toInt() and 0xFF
                 val green = buffer.get(sourceIndex + 1).toInt() and 0xFF
@@ -357,20 +338,6 @@ internal class ScreenProtectionSession(
         }
         return sample
     }
-
-    private fun Detection.contains(x: Int, y: Int, width: Int, height: Int): Boolean {
-        val normalizedX = x.toFloat() / width
-        val normalizedY = y.toFloat() / height
-        val boxWidth = x2 - x1
-        val boxHeight = y2 - y1
-        val padX = boxWidth * 0.04f
-        val padY = boxHeight * 0.04f
-        return normalizedX in (x1 - padX)..(x2 + padX) &&
-                normalizedY in (y1 - padY)..(y2 + padY)
-    }
-
-    private fun Detection.coversMostOfFrame(): Boolean =
-        (x2 - x1) * (y2 - y1) >= FULL_FRAME_AREA_THRESHOLD
 
     private fun Detection.isReasonableProtectionRegion(): Boolean {
         val regionWidth = x2 - x1
@@ -388,13 +355,14 @@ internal class ScreenProtectionSession(
         const val VISION_THREAD_NAME = "halalify-vision"
         const val CAPTURE_WIDTH = 416
         const val MAX_IMAGES = 2
-        const val CHANGE_CHECK_INTERVAL_MS = 33L
+        // Check every display frame so a fast swipe is noticed without waiting
+        // for the next 30 FPS boundary. Inference still runs on the vision
+        // thread and ImageReader drops stale frames when it is busy.
+        const val CHANGE_CHECK_INTERVAL_MS = 16L
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
-        const val IGNORED_SAMPLE = -1
-        const val FULL_FRAME_AREA_THRESHOLD = 0.85F
         const val MAX_PROTECTION_AREA = 0.60F
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1

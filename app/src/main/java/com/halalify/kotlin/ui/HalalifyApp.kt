@@ -5,6 +5,7 @@ import android.provider.OpenableColumns
 import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -57,6 +58,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -70,6 +73,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
+import com.halalify.kotlin.R
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.settings.AppLanguage
 import com.halalify.kotlin.settings.AppThemeMode
@@ -731,20 +735,14 @@ private fun AppHeader(
             )
             Spacer(Modifier.width(10.dp))
         }
-        Box(
+        Image(
+            painter = painterResource(id = R.drawable.icon),
+            contentDescription = "Halalify",
+            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(42.dp)
-                .clip(RoundedCornerShape(13.dp))
-                .background(Accent),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "H",
-                color = AppBackground,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-            )
-        }
+                .clip(RoundedCornerShape(13.dp)),
+        )
         Spacer(Modifier.width(12.dp))
         Text(
             text = "Halalify",

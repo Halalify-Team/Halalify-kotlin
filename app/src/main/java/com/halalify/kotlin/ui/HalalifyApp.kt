@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,15 +58,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 import com.halalify.kotlin.capture.CaptureUiState
+import com.halalify.kotlin.settings.AppLanguage
 import com.halalify.kotlin.settings.AppThemeMode
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurStyle
@@ -123,6 +129,224 @@ private val TextSecondary: Color
     @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 private val Outline: Color
     @Composable get() = MaterialTheme.colorScheme.outline
+
+private data class UiStrings(
+    val quickControls: String,
+    val protectionProfile: String,
+    val quickControlsDescription: String,
+    val settings: String,
+    val settingsTitle: String,
+    val settingsDescription: String,
+    val monitoring: String,
+    val monitoringDescription: String,
+    val images: String,
+    val imagesDescription: String,
+    val video: String,
+    val videoDescription: String,
+    val musicIsolation: String,
+    val musicIsolationDescription: String,
+    val websiteProtection: String,
+    val websiteProtectionDescription: String,
+    val active: String,
+    val automatic: String,
+    val appearance: String,
+    val appearanceDescription: String,
+    val colorMode: String,
+    val edit: String,
+    val done: String,
+    val language: String,
+    val languageDescription: String,
+    val back: String,
+    val openSettings: String,
+    val on: String,
+    val off: String,
+    val musicCardTitle: String,
+    val musicCardDescription: String,
+    val ready: String,
+    val mediaUrlPlaceholder: String,
+    val chooseFile: String,
+    val noFile: String,
+    val createSpeechCopy: String,
+    val addSource: String,
+    val blurStrength: String,
+    val denseProtection: String,
+    val lightProtection: String,
+    val balancedProtection: String,
+    val levelLabel: (Int) -> String,
+    val levelOne: String,
+    val levelFive: String,
+    val protectedScreen: String,
+    val protectedScreenDescription: String,
+    val privateTitle: String,
+    val privateDescription: String,
+)
+
+private val EnglishUi = UiStrings(
+    quickControls = "QUICK CONTROLS",
+    protectionProfile = "Protection profile",
+    quickControlsDescription = "Choose who to blur and adjust the protection effect.",
+    settings = "SETTINGS",
+    settingsTitle = "Everything in one place",
+    settingsDescription = "Manage monitoring, audio isolation and the app appearance.",
+    monitoring = "Monitoring",
+    monitoringDescription = "Choose which content Halalify protects locally.",
+    images = "Images",
+    imagesDescription = "Protect detections in still images.",
+    video = "Video",
+    videoDescription = "Protect detections in changing frames.",
+    musicIsolation = "Music isolation",
+    musicIsolationDescription = "Mute detected music during protected playback.",
+    websiteProtection = "Website protection",
+    websiteProtectionDescription = "Included automatically when visual protection starts.",
+    active = "Active",
+    automatic = "Automatic",
+    appearance = "Appearance",
+    appearanceDescription = "Change the app theme. Blur controls stay on the home screen for quick access.",
+    colorMode = "Color mode",
+    edit = "Edit",
+    done = "Done",
+    language = "Language",
+    languageDescription = "Choose the language used throughout Halalify.",
+    back = "Back",
+    openSettings = "Open settings",
+    on = "ON",
+    off = "OFF",
+    musicCardTitle = "Remove music from a file",
+    musicCardDescription = "Choose a media file or direct MP4/M4A link to create a speech-focused copy.",
+    ready = "Ready",
+    mediaUrlPlaceholder = "https://example.com/video.mp4 or audio.m4a",
+    chooseFile = "Choose file",
+    noFile = "No file selected",
+    createSpeechCopy = "Create speech-only copy",
+    addSource = "Add source to start",
+    blurStrength = "Blur strength",
+    denseProtection = "Dense protection",
+    lightProtection = "Light protection",
+    balancedProtection = "Balanced protection",
+    levelLabel = { level -> "Level $level/5" },
+    levelOne = "Level 1",
+    levelFive = "Level 5",
+    protectedScreen = "Protected screen",
+    protectedScreenDescription = "A private preview of the same protection drawn over the shared screen.",
+    privateTitle = "Your screen stays private",
+    privateDescription = "Detection runs on your device. Preview frames are never saved or uploaded.",
+)
+
+private val ArabicUi = UiStrings(
+    quickControls = "تحكم سريع",
+    protectionProfile = "ملف الحماية",
+    quickControlsDescription = "اختر الفئة التي تريد حجبها واضبط تأثير الحجب.",
+    settings = "الإعدادات",
+    settingsTitle = "كل الخيارات في مكان واحد",
+    settingsDescription = "تحكم بالمراقبة وعزل الصوت ومظهر التطبيق.",
+    monitoring = "المراقبة",
+    monitoringDescription = "اختر المحتوى الذي يحميه Halalify على جهازك.",
+    images = "الصور",
+    imagesDescription = "حماية العناصر المكتشفة في الصور الثابتة.",
+    video = "الفيديو",
+    videoDescription = "حماية العناصر المكتشفة في الإطارات المتحركة.",
+    musicIsolation = "عزل الموسيقى",
+    musicIsolationDescription = "كتم الموسيقى المكتشفة أثناء التشغيل المحمي.",
+    websiteProtection = "حماية المواقع",
+    websiteProtectionDescription = "تُفعّل تلقائيًا عند بدء الحماية المرئية.",
+    active = "نشطة",
+    automatic = "تلقائية",
+    appearance = "المظهر",
+    appearanceDescription = "غيّر مظهر التطبيق. تبقى خيارات البلور في الصفحة الرئيسية للوصول السريع.",
+    colorMode = "نمط الألوان",
+    edit = "تعديل",
+    done = "تم",
+    language = "اللغة",
+    languageDescription = "اختر اللغة المستخدمة في Halalify.",
+    back = "رجوع",
+    openSettings = "فتح الإعدادات",
+    on = "تشغيل",
+    off = "إيقاف",
+    musicCardTitle = "إزالة الموسيقى من ملف",
+    musicCardDescription = "اختر ملفًا أو رابط MP4/M4A مباشرًا لإنشاء نسخة تركز على الكلام.",
+    ready = "جاهز",
+    mediaUrlPlaceholder = "رابط مباشر مثل video.mp4 أو audio.m4a",
+    chooseFile = "اختيار ملف",
+    noFile = "لم يتم اختيار ملف",
+    createSpeechCopy = "إنشاء نسخة بدون موسيقى",
+    addSource = "أضف مصدرًا للبدء",
+    blurStrength = "قوة البلور",
+    denseProtection = "حماية قوية",
+    lightProtection = "حماية خفيفة",
+    balancedProtection = "حماية متوازنة",
+    levelLabel = { level -> "المستوى $level/5" },
+    levelOne = "المستوى 1",
+    levelFive = "المستوى 5",
+    protectedScreen = "الشاشة المحمية",
+    protectedScreenDescription = "معاينة خاصة لنفس الحماية المطبقة على الشاشة المشتركة.",
+    privateTitle = "شاشتك تبقى خاصة",
+    privateDescription = "تعمل المعالجة على جهازك، ولا يتم حفظ إطارات المعاينة أو رفعها.",
+)
+
+private fun uiStrings(language: AppLanguage): UiStrings =
+    if (language == AppLanguage.ARABIC) ArabicUi else EnglishUi
+
+private fun BlurTarget.localizedTitle(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        if (this == BlurTarget.FEMALE) "أنثى" else "ذكر"
+    } else {
+        title
+    }
+
+private fun BlurTarget.localizedDescription(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        if (this == BlurTarget.FEMALE) {
+            "حجب العناصر المصنفة كأنثى."
+        } else {
+            "حجب العناصر المصنفة كذكر."
+        }
+    } else {
+        description
+    }
+
+private fun BlurStyle.localizedTitle(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        when (this) {
+            BlurStyle.SOFT_BLUR -> "بلور ناعم"
+            BlurStyle.PIXELATED -> "مربعات"
+            BlurStyle.SOLID -> "تغطية كاملة"
+        }
+    } else {
+        title
+    }
+
+private fun BlurStyle.localizedDescription(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        when (this) {
+            BlurStyle.SOFT_BLUR -> "بلور ناعم منخفض التفاصيل يمزج المنطقة المحمية."
+            BlurStyle.PIXELATED -> "مربعات حجب صغيرة تركز على العنصر المكتشف."
+            BlurStyle.SOLID -> "تغطية سوداء كاملة لأقصى قدر من الخصوصية."
+        }
+    } else {
+        description
+    }
+
+private fun AppThemeMode.localizedTitle(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        when (this) {
+            AppThemeMode.NORMAL -> "تلقائي"
+            AppThemeMode.DARK -> "داكن"
+            AppThemeMode.LIGHT -> "فاتح"
+        }
+    } else {
+        title
+    }
+
+private fun AppThemeMode.localizedDescription(language: AppLanguage): String =
+    if (language == AppLanguage.ARABIC) {
+        when (this) {
+            AppThemeMode.NORMAL -> "اتباع مظهر الهاتف الفاتح أو الداكن."
+            AppThemeMode.DARK -> "استخدام المظهر الأخضر الداكن دائمًا."
+            AppThemeMode.LIGHT -> "استخدام المظهر الأخضر الفاتح دائمًا."
+        }
+    } else {
+        description
+    }
 @Composable
 internal fun HalalifyApp(
     initialSettings: BlurSettings,
@@ -134,6 +358,7 @@ internal fun HalalifyApp(
     websiteFilterEnabled: Boolean = initialSettings.blockAdultSites,
 ) {
     var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
+    var showingSettings by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -178,159 +403,282 @@ internal fun HalalifyApp(
     MaterialTheme(
         colorScheme = if (useDarkTheme) HalalifyDarkColorScheme else HalalifyLightColorScheme,
     ) {
-        Scaffold(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(AppBackground),
-            containerColor = AppBackground,
-            topBar = {
-                AppHeader()
+        CompositionLocalProvider(
+            LocalLayoutDirection provides if (settings.language == AppLanguage.ARABIC) {
+                LayoutDirection.Rtl
+            } else {
+                LayoutDirection.Ltr
             },
-        ) { innerPadding ->
-            LazyColumn(
+        ) {
+            Scaffold(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .navigationBarsPadding(),
-                contentPadding = PaddingValues(
-                    start = 20.dp,
-                    top = 12.dp,
-                    end = 20.dp,
-                    bottom = 28.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-            ) {
-                item {
-                    CaptureStatusCard(
+                    .background(AppBackground),
+                containerColor = AppBackground,
+                topBar = {
+                    AppHeader(
+                        showingSettings = showingSettings,
+                        language = settings.language,
+                        onOpenSettings = { showingSettings = true },
+                        onNavigateBack = { showingSettings = false },
+                    )
+                },
+            ) { innerPadding ->
+                if (showingSettings) {
+                    SettingsScreen(
+                        contentPadding = innerPadding,
+                        settings = settings,
                         captureState = captureState,
-                        onToggleProtection = {
-                            if (captureState.isCapturing) onStopCapture() else onStartCapture(settings)
+                        websiteFilterEnabled = websiteFilterEnabled,
+                        language = settings.language,
+                        onSettingsChange = { settings = it },
+                        onOpenFilePicker = {
+                            filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
                         },
+                        onStartIsolation = { onStartIsolation(settings) },
+                    )
+                } else {
+                    HomeScreen(
+                        contentPadding = innerPadding,
+                        settings = settings,
+                        captureState = captureState,
+                        language = settings.language,
+                        onSettingsChange = { settings = it },
+                        onStartCapture = { onStartCapture(settings) },
+                        onStopCapture = onStopCapture,
                     )
                 }
-
-                captureState.previewJpeg?.let { jpeg ->
-                    item { ScreenPreview(jpeg = jpeg) }
-                }
-
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        SectionHeading(
-                            eyebrow = "PROTECTION PROFILE",
-                            title = "Choose who to blur",
-                            description = if (captureState.isCapturing) {
-                                "Stop to edit."
-                            } else {
-                                "Select who to blur."
-                            },
-                        )
-                        TargetSelector(
-                            selected = settings.target,
-                            enabled = !captureState.isCapturing,
-                            onSelect = { target -> settings = settings.copy(target = target) },
-                        )
-                    }
-                }
-
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        SectionHeading(
-                            eyebrow = "CONTENT",
-                            title = "Protection coverage",
-                            description = "Fine-tune which media Halalify monitors locally.",
-                        )
-                        PreferenceCard(enabled = true) {
-                            PreferenceToggle(
-                                shortLabel = "IMG",
-                                title = "Images",
-                                description = "Protect detections in still images.",
-                                checked = settings.blurImages,
-                                enabled = !captureState.isCapturing,
-                                onCheckedChange = { enabled ->
-                                    settings = settings.copy(blurImages = enabled)
-                                },
-                            )
-                            HorizontalDivider(color = Outline)
-                            PreferenceToggle(
-                                shortLabel = "VID",
-                                title = "Video",
-                                description = "Protect detections in changing frames.",
-                                checked = settings.blurVideos,
-                                enabled = !captureState.isCapturing,
-                                onCheckedChange = { enabled ->
-                                    settings = settings.copy(blurVideos = enabled)
-                                },
-                            )
-                            HorizontalDivider(color = Outline)
-                            PreferenceToggle(
-                                shortLabel = "AUD",
-                                title = "Music isolation",
-                                description = "Mute detected music during protected playback.",
-                                checked = settings.isolateMusic,
-                                enabled = !captureState.isCapturing,
-                                onCheckedChange = { enabled ->
-                                    settings = settings.copy(isolateMusic = enabled)
-                                },
-                            )
-                        }
-                    }
-                }
-
-                if (settings.isolateMusic) {
-                    item {
-                        MusicIsolationSourceCard(
-                            settings = settings,
-                            enabled = !captureState.isCapturing,
-                            isolationStatus = captureState.audioStatus,
-                            onUrlChange = { url -> settings = settings.copy(musicSourceUrl = url) },
-                            onOpenFilePicker = {
-                                filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
-                            },
-                            onStartIsolation = { onStartIsolation(settings) },
-                        )
-                    }
-                }
-
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        SectionHeading(
-                            eyebrow = "APPEARANCE",
-                            title = "Make Halalify yours",
-                            description = if (captureState.isCapturing) {
-                                "Theme and blur changes apply immediately."
-                            } else {
-                                "Choose the app theme and how protected areas appear."
-                            },
-                        )
-                        ThemeModeSelector(
-                            selected = settings.themeMode,
-                            onSelect = { mode -> settings = settings.copy(themeMode = mode) },
-                        )
-                        BlurStyleSelector(
-                            selected = settings.style,
-                            enabled = true,
-                            onSelect = { style ->
-                                settings = settings.copy(style = style)
-                            },
-                        )
-                        BlurIntensitySelector(
-                            intensity = settings.intensity,
-                            enabled = true,
-                            onIntensityChange = { intensity ->
-                                settings = settings.copy(intensity = intensity)
-                            },
-                        )
-                    }
-                }
-
-                item { PrivacyNote() }
             }
         }
     }
 }
 
 @Composable
-private fun AppHeader() {
+private fun HomeScreen(
+    contentPadding: PaddingValues,
+    settings: BlurSettings,
+    captureState: CaptureUiState,
+    language: AppLanguage,
+    onSettingsChange: (BlurSettings) -> Unit,
+    onStartCapture: () -> Unit,
+    onStopCapture: () -> Unit,
+) {
+    val ui = uiStrings(language)
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding)
+            .navigationBarsPadding(),
+        contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        item {
+            CaptureStatusCard(
+                captureState = captureState,
+                language = language,
+                onToggleProtection = {
+                    if (captureState.isCapturing) onStopCapture() else onStartCapture()
+                },
+            )
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                SectionHeading(
+                    eyebrow = ui.quickControls,
+                    title = ui.protectionProfile,
+                    description = ui.quickControlsDescription,
+                )
+                TargetSelector(
+                    selected = settings.target,
+                    language = language,
+                    enabled = !captureState.isCapturing,
+                    onSelect = { target -> onSettingsChange(settings.copy(target = target)) },
+                )
+                BlurStyleSelector(
+                    selected = settings.style,
+                    enabled = true,
+                    language = language,
+                    onSelect = { style -> onSettingsChange(settings.copy(style = style)) },
+                )
+                BlurIntensitySelector(
+                    intensity = settings.intensity,
+                    enabled = true,
+                    language = language,
+                    onIntensityChange = { intensity ->
+                        onSettingsChange(settings.copy(intensity = intensity))
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    contentPadding: PaddingValues,
+    settings: BlurSettings,
+    captureState: CaptureUiState,
+    websiteFilterEnabled: Boolean,
+    language: AppLanguage,
+    onSettingsChange: (BlurSettings) -> Unit,
+    onOpenFilePicker: () -> Unit,
+    onStartIsolation: () -> Unit,
+) {
+    var showThemeEditor by remember { mutableStateOf(false) }
+    var showLanguageEditor by remember { mutableStateOf(false) }
+    val ui = uiStrings(language)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding)
+            .navigationBarsPadding(),
+        contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        item {
+            SectionHeading(
+                eyebrow = ui.settings,
+                title = ui.settingsTitle,
+                description = ui.settingsDescription,
+            )
+        }
+
+        item {
+            SettingsSectionTitle(
+                icon = "◉",
+                title = ui.monitoring,
+                description = ui.monitoringDescription,
+            )
+        }
+
+        item {
+            PreferenceCard(enabled = true) {
+                PreferenceToggle(
+                    shortLabel = "▧",
+                    title = ui.images,
+                    description = ui.imagesDescription,
+                    checked = settings.blurImages,
+                    enabled = !captureState.isCapturing,
+                    onCheckedChange = { enabled ->
+                        onSettingsChange(settings.copy(blurImages = enabled))
+                    },
+                )
+                HorizontalDivider(color = Outline)
+                PreferenceToggle(
+                    shortLabel = "▶",
+                    title = ui.video,
+                    description = ui.videoDescription,
+                    checked = settings.blurVideos,
+                    enabled = !captureState.isCapturing,
+                    onCheckedChange = { enabled ->
+                        onSettingsChange(settings.copy(blurVideos = enabled))
+                    },
+                )
+                HorizontalDivider(color = Outline)
+                PreferenceToggle(
+                    shortLabel = "♫",
+                    title = ui.musicIsolation,
+                    description = ui.musicIsolationDescription,
+                    checked = settings.isolateMusic,
+                    enabled = !captureState.isCapturing,
+                    onCheckedChange = { enabled ->
+                        onSettingsChange(settings.copy(isolateMusic = enabled))
+                    },
+                )
+            }
+        }
+
+        if (settings.isolateMusic) {
+            item {
+                MusicIsolationSourceCard(
+                    settings = settings,
+                    language = language,
+                    enabled = !captureState.isCapturing,
+                    isolationStatus = captureState.audioStatus,
+                    onUrlChange = { url -> onSettingsChange(settings.copy(musicSourceUrl = url)) },
+                    onOpenFilePicker = onOpenFilePicker,
+                    onStartIsolation = onStartIsolation,
+                )
+            }
+        }
+
+        item {
+            SettingInfoRow(
+                icon = "⌁",
+                title = ui.websiteProtection,
+                description = ui.websiteProtectionDescription,
+                status = if (websiteFilterEnabled) ui.active else ui.automatic,
+            )
+        }
+
+        item {
+            SettingsSectionTitle(
+                icon = "☼",
+                title = ui.appearance,
+                description = ui.appearanceDescription,
+            )
+        }
+
+        item {
+            PreferenceCard(enabled = true) {
+                SettingActionRow(
+                    icon = "☼",
+                    title = ui.colorMode,
+                    description = settings.themeMode.localizedTitle(language),
+                    actionLabel = if (showThemeEditor) ui.done else ui.edit,
+                    onAction = { showThemeEditor = !showThemeEditor },
+                )
+            }
+        }
+
+        if (showThemeEditor) {
+            item {
+                ThemeModeSelector(
+                    selected = settings.themeMode,
+                    language = language,
+                    onSelect = { mode -> onSettingsChange(settings.copy(themeMode = mode)) },
+                )
+            }
+        }
+
+        item {
+            PreferenceCard(enabled = true) {
+                SettingActionRow(
+                    icon = "文A",
+                    title = ui.language,
+                    description = language.title,
+                    actionLabel = if (showLanguageEditor) ui.done else ui.edit,
+                    onAction = { showLanguageEditor = !showLanguageEditor },
+                )
+            }
+        }
+
+        if (showLanguageEditor) {
+            item {
+                LanguageSelector(
+                    selected = language,
+                    onSelect = { selected ->
+                        showLanguageEditor = false
+                        onSettingsChange(settings.copy(language = selected))
+                    },
+                )
+            }
+        }
+
+        item { PrivacyNote(language = language) }
+    }
+}
+
+@Composable
+private fun AppHeader(
+    showingSettings: Boolean,
+    language: AppLanguage,
+    onOpenSettings: () -> Unit,
+    onNavigateBack: () -> Unit,
+) {
+    val ui = uiStrings(language)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -339,6 +687,14 @@ private fun AppHeader() {
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (showingSettings) {
+            HeaderIconButton(
+                icon = "‹",
+                description = ui.back,
+                onClick = onNavigateBack,
+            )
+            Spacer(Modifier.width(10.dp))
+        }
         Box(
             modifier = Modifier
                 .size(42.dp)
@@ -360,14 +716,50 @@ private fun AppHeader() {
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
         )
+        Spacer(Modifier.weight(1f))
+        if (!showingSettings) {
+            HeaderIconButton(
+                icon = "⚙",
+                description = ui.openSettings,
+                onClick = onOpenSettings,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeaderIconButton(
+    icon: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = description
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = icon,
+            color = TextPrimary,
+            fontSize = if (icon == "‹") 34.sp else 22.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
 @Composable
 private fun CaptureStatusCard(
     captureState: CaptureUiState,
+    language: AppLanguage,
     onToggleProtection: () -> Unit,
 ) {
+    val ui = uiStrings(language)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -398,7 +790,7 @@ private fun CaptureStatusCard(
                 modifier = Modifier.size(72.dp),
             ) {
                 Text(
-                    text = if (captureState.isCapturing) "ON" else "OFF",
+                    text = if (captureState.isCapturing) ui.on else ui.off,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.ExtraBold,
                 )
@@ -434,9 +826,147 @@ private fun SectionHeading(eyebrow: String, title: String, description: String) 
 }
 
 @Composable
+private fun SettingsSectionTitle(
+    icon: String,
+    title: String,
+    description: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingIcon(icon: String) {
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppSurfaceHigh),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = icon,
+            color = Accent,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun SettingInfoRow(
+    icon: String,
+    title: String,
+    description: String,
+    status: String,
+) {
+    PreferenceCard(enabled = true) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SettingIcon(icon)
+            Spacer(Modifier.width(13.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = status,
+                color = Accent,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingActionRow(
+    icon: String,
+    title: String,
+    description: String,
+    actionLabel: String,
+    onAction: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingIcon(icon)
+        Spacer(Modifier.width(13.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Button(
+            onClick = onAction,
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AccentSoft,
+                contentColor = Accent,
+            ),
+        ) {
+            Text(
+                text = actionLabel,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
 private fun TargetSelector(
     selected: BlurTarget,
     enabled: Boolean,
+    language: AppLanguage,
     onSelect: (BlurTarget) -> Unit,
 ) {
     Row(
@@ -448,8 +978,8 @@ private fun TargetSelector(
     ) {
         BlurTarget.entries.forEach { option ->
             SelectableTile(
-                title = option.title,
-                description = option.description,
+                title = option.localizedTitle(language),
+                description = option.localizedDescription(language),
                 selected = selected == option,
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
@@ -608,12 +1138,14 @@ private fun PreferenceToggle(
 @Composable
 private fun MusicIsolationSourceCard(
     settings: BlurSettings,
+    language: AppLanguage,
     enabled: Boolean,
     isolationStatus: String?,
     onUrlChange: (String) -> Unit,
     onOpenFilePicker: () -> Unit,
     onStartIsolation: () -> Unit,
 ) {
+    val ui = uiStrings(language)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -630,13 +1162,13 @@ private fun MusicIsolationSourceCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Remove music from a file",
+                    text = ui.musicCardTitle,
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = "Choose a media file or direct MP4/M4A link to create a speech-focused copy.",
+                    text = ui.musicCardDescription,
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     modifier = Modifier.padding(top = 2.dp),
@@ -644,7 +1176,7 @@ private fun MusicIsolationSourceCard(
             }
             if (settings.hasMusicIsolationSource) {
                 Text(
-                    text = "Ready",
+                    text = ui.ready,
                     color = Accent,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
@@ -657,7 +1189,7 @@ private fun MusicIsolationSourceCard(
             onValueChange = onUrlChange,
             enabled = enabled && settings.isolateMusic,
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("https://example.com/video.mp4 or audio.m4a") },
+            placeholder = { Text(ui.mediaUrlPlaceholder) },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = Accent,
@@ -685,10 +1217,10 @@ private fun MusicIsolationSourceCard(
                 ),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Choose file")
+                Text(ui.chooseFile)
             }
             Text(
-                text = settings.musicSourceFileName.ifBlank { "No file selected" },
+                text = settings.musicSourceFileName.ifBlank { ui.noFile },
                 color = TextSecondary,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
@@ -711,9 +1243,9 @@ private fun MusicIsolationSourceCard(
         ) {
             Text(
                 text = if (settings.isolateMusic && settings.hasMusicIsolationSource) {
-                    "Create speech-only copy"
+                    ui.createSpeechCopy
                 } else {
-                    "Add source to start"
+                    ui.addSource
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
@@ -732,10 +1264,60 @@ private fun MusicIsolationSourceCard(
 }
 
 @Composable
+private fun LanguageSelector(
+    selected: AppLanguage,
+    onSelect: (AppLanguage) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(AppSurface)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .padding(14.dp)
+            .selectableGroup(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AppLanguage.entries.forEach { language ->
+            val isSelected = language == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (isSelected) AccentSoft else AppSurfaceHigh)
+                    .border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) Accent else Outline,
+                        shape = RoundedCornerShape(14.dp),
+                    )
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.RadioButton,
+                        onClick = { onSelect(language) },
+                    )
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = language.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isSelected) Accent else TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.weight(1f))
+                SelectionIndicator(selected = isSelected)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ThemeModeSelector(
     selected: AppThemeMode,
+    language: AppLanguage,
     onSelect: (AppThemeMode) -> Unit,
 ) {
+    val ui = uiStrings(language)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -746,7 +1328,7 @@ private fun ThemeModeSelector(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "Color mode",
+            text = ui.colorMode,
             style = MaterialTheme.typography.titleMedium,
             color = TextPrimary,
             fontWeight = FontWeight.Bold,
@@ -783,7 +1365,7 @@ private fun ThemeModeSelector(
                 ) {
                     SelectionIndicator(selected = isSelected)
                     Text(
-                        text = mode.title,
+                        text = mode.localizedTitle(language),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isSelected) Accent else TextPrimary,
                         fontWeight = FontWeight.Bold,
@@ -794,7 +1376,7 @@ private fun ThemeModeSelector(
             }
         }
         Text(
-            text = selected.description,
+            text = selected.localizedDescription(language),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
@@ -804,6 +1386,7 @@ private fun ThemeModeSelector(
 private fun BlurStyleSelector(
     selected: BlurStyle,
     enabled: Boolean,
+    language: AppLanguage,
     onSelect: (BlurStyle) -> Unit,
 ) {
     Column(
@@ -823,13 +1406,14 @@ private fun BlurStyleSelector(
                     style = option,
                     selected = selected == option,
                     enabled = enabled,
+                    language = language,
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(option) },
                 )
             }
         }
         Text(
-            text = selected.description,
+            text = selected.localizedDescription(language),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
             modifier = Modifier.fillMaxWidth(),
@@ -842,6 +1426,7 @@ private fun BlurStyleTile(
     style: BlurStyle,
     selected: Boolean,
     enabled: Boolean,
+    language: AppLanguage,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -874,7 +1459,7 @@ private fun BlurStyleTile(
             BlurStylePreview(style = style)
         }
         Text(
-            text = style.title,
+            text = style.localizedTitle(language),
             style = MaterialTheme.typography.labelMedium,
             color = if (selected) Accent else TextPrimary,
             fontWeight = FontWeight.Bold,
@@ -963,8 +1548,10 @@ private fun PreviewBlock(color: Color, modifier: Modifier) {
 private fun BlurIntensitySelector(
     intensity: Float,
     enabled: Boolean,
+    language: AppLanguage,
     onIntensityChange: (Float) -> Unit,
 ) {
+    val ui = uiStrings(language)
     val displayedIntensity = normalizeBlurIntensity(intensity)
     val level = (displayedIntensity * 4f)
         .roundToInt() + 1
@@ -984,16 +1571,16 @@ private fun BlurIntensitySelector(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Blur strength",
+                    text = ui.blurStrength,
                     style = MaterialTheme.typography.bodyLarge,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                 text = when {
-                    level >= 4 -> "Dense protection"
-                    level <= 2 -> "Light protection"
-                    else -> "Balanced protection"
+                    level >= 4 -> ui.denseProtection
+                    level <= 2 -> ui.lightProtection
+                    else -> ui.balancedProtection
                 },
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
@@ -1001,7 +1588,7 @@ private fun BlurIntensitySelector(
                 )
             }
             Text(
-                text = "Level $level/5",
+                text = ui.levelLabel(level),
                 style = MaterialTheme.typography.titleMedium,
                 color = Accent,
                 fontWeight = FontWeight.Bold,
@@ -1025,13 +1612,13 @@ private fun BlurIntensitySelector(
         )
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Level 1",
+                text = ui.levelOne,
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = "Level 5",
+                text = ui.levelFive,
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
             )
@@ -1040,12 +1627,13 @@ private fun BlurIntensitySelector(
 }
 
 @Composable
-private fun ScreenPreview(jpeg: ByteArray) {
+private fun ScreenPreview(jpeg: ByteArray, language: AppLanguage) {
+    val ui = uiStrings(language)
     Column {
         SectionHeading(
             eyebrow = "LIVE PREVIEW",
-            title = "Protected screen",
-            description = "A private preview of the same protection drawn over the shared screen.",
+            title = ui.protectedScreen,
+            description = ui.protectedScreenDescription,
         )
         Spacer(Modifier.height(14.dp))
         AndroidView(
@@ -1069,7 +1657,8 @@ private fun ScreenPreview(jpeg: ByteArray) {
 }
 
 @Composable
-private fun PrivacyNote() {
+private fun PrivacyNote(language: AppLanguage) {
+    val ui = uiStrings(language)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1088,13 +1677,13 @@ private fun PrivacyNote() {
         Spacer(Modifier.width(12.dp))
         Column {
             Text(
-                text = "Your screen stays private",
+                text = ui.privateTitle,
                 style = MaterialTheme.typography.titleSmall,
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Detection runs on your device. Preview frames are never saved or uploaded.",
+                text = ui.privateDescription,
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 modifier = Modifier.padding(top = 3.dp),

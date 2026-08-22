@@ -20,6 +20,11 @@ internal enum class AppThemeMode(val title: String, val description: String) {
     LIGHT("Light", "Always use the bright forest theme."),
 }
 
+internal enum class AppLanguage(val title: String) {
+    ENGLISH("English"),
+    ARABIC("العربية"),
+}
+
 // Allow the full intensity range so each of the five slider levels
 // produces a meaningfully different mosaic density (16 columns at 0f
 // down to 4 columns at 1f).
@@ -40,6 +45,7 @@ internal data class BlurSettings(
     val musicSourceFileName: String = "",
     val musicSourceUri: String = "",
     val themeMode: AppThemeMode = AppThemeMode.NORMAL,
+    val language: AppLanguage = AppLanguage.ENGLISH,
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
@@ -81,6 +87,9 @@ internal class BlurSettingsRepository(context: Context) {
         themeMode = preferences.getString(KEY_THEME_MODE, null)
             ?.let { savedValue -> AppThemeMode.entries.firstOrNull { it.name == savedValue } }
             ?: AppThemeMode.NORMAL,
+        language = preferences.getString(KEY_LANGUAGE, null)
+            ?.let { savedValue -> AppLanguage.entries.firstOrNull { it.name == savedValue } }
+            ?: AppLanguage.ENGLISH,
         intensity = loadIntensity(),
     )
 
@@ -112,6 +121,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
             putString(KEY_THEME_MODE, settings.themeMode.name)
+            putString(KEY_LANGUAGE, settings.language.name)
             putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
             putInt(KEY_BLUR_SETTINGS_REVISION, CURRENT_BLUR_SETTINGS_REVISION)
         }
@@ -129,6 +139,7 @@ internal class BlurSettingsRepository(context: Context) {
         private const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
         private const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_LANGUAGE = "language"
         private const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
         const val CURRENT_BLUR_SETTINGS_REVISION = 5

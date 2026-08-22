@@ -62,6 +62,16 @@ internal class HalalifyAppCoordinator(
         }
     }
 
+    fun setWebsiteProtection(enabled: Boolean, settings: BlurSettings) {
+        val updatedSettings = settings.copy(blockAdultSites = enabled)
+        saveSettings(updatedSettings)
+        if (captureState.value.isCapturing) {
+            setWebsiteBlocking(enabled = enabled)
+        } else if (!enabled) {
+            setWebsiteBlocking(enabled = false)
+        }
+    }
+
     fun onStart() {
         CaptureSessionStore.setPreviewRequested(true)
         if (captureState.value.isCapturing && initialSettings.blockAdultSites && !pendingWebsiteFilterEnable) {
@@ -231,7 +241,7 @@ internal class HalalifyAppCoordinator(
 
     private fun continueStartingCapture(settings: BlurSettings) {
         saveSettings(settings)
-        if (settings.hasVisualProtection && !websiteFilterEnabled) {
+        if (settings.hasVisualProtection && settings.blockAdultSites && !websiteFilterEnabled) {
             val protectedSettings = settings.copy(blockAdultSites = true)
             saveSettings(protectedSettings)
             pendingWebsiteProtectionSettings = protectedSettings
@@ -314,10 +324,12 @@ internal class HalalifyAppCoordinator(
         }
     }
 
-    private fun setWebsiteBlocking(enabled: Boolean) {
+    private fun setWebsiteBlocking(enabled: Boolean, persistPreference: Boolean = false) {
         if (!enabled) {
             websiteFilterEnabled = false
-            saveSettings(settingsRepository.load().copy(blockAdultSites = false))
+            if (persistPreference) {
+                saveSettings(settingsRepository.load().copy(blockAdultSites = false))
+            }
             context.startService(
                 Intent(context, AdultSiteVpnService::class.java)
                     .setAction(AdultSiteVpnService.ACTION_STOP),

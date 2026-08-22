@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
                 onStartCapture = appCoordinator::startCapture,
                 onStopCapture = appCoordinator::stopProtection,
                 onStartIsolation = appCoordinator::startIsolation,
+                onWebsiteProtectionChange = appCoordinator::setWebsiteProtection,
                 websiteFilterEnabled = appCoordinator.websiteFilterEnabled,
             )
         }

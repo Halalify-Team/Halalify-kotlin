@@ -1,0 +1,4 @@
+<resources>
+    <string name="privacy_overlay_accessibility_label">Halalify private blur overlay</string>
+    <string name="privacy_overlay_accessibility_description">Allows Halalify to show a fully opaque privacy blur over other apps while preserving touch and scrolling. Halalify does not read accessibility content.</string>
+</resources>

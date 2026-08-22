@@ -14,7 +14,6 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.annotation.RequiresApi
@@ -22,6 +21,7 @@ import java.io.Closeable
 import kotlin.math.roundToInt
 
 private const val HALALIFY_OVERLAY_TAG = "HalalifyOverlay"
+private const val MAX_UNTRUSTED_PASS_THROUGH_OPACITY = 0.8F
 
 internal interface ProtectionOverlay : Closeable {
     /** Takes ownership of every bitmap in [regions]. */
@@ -46,7 +46,24 @@ internal class DeviceBlurOverlay(
     )
 
     private val appContext = context.applicationContext
-    private val windowManager = appContext.getSystemService(WindowManager::class.java)
+    private val trustedAccessibilityService = TrustedOverlayHost.currentService()
+    // AccessibilityService already owns the trusted overlay token. Reusing
+    // its context is required; a newly-created WindowContext has no valid
+    // accessibility token on Android 12+/the emulator.
+    private val trustedWindowContext = trustedAccessibilityService
+    private val usesTrustedOverlay = trustedWindowContext != null
+    private val windowManager = trustedWindowContext?.getSystemService(WindowManager::class.java)
+        ?: appContext.getSystemService(WindowManager::class.java)
+    private val windowType = if (usesTrustedOverlay) {
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+    } else {
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    }
+    private val windowAlpha = if (usesTrustedOverlay || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        1F
+    } else {
+        MAX_UNTRUSTED_PASS_THROUGH_OPACITY
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
     private val updateLock = Any()
 
@@ -115,7 +132,7 @@ internal class DeviceBlurOverlay(
         }
 
         try {
-            if (!Settings.canDrawOverlays(appContext)) {
+            if (!usesTrustedOverlay && !Settings.canDrawOverlays(appContext)) {
                 regions.releaseBitmaps()
                 clearOnMainThread()
                 onError("Display-over-other-apps permission was revoked.")
@@ -143,9 +160,9 @@ internal class DeviceBlurOverlay(
     }
 
     /**
-     * Every protected region lives in its own touch-consuming PixelFormat.OPAQUE
-     * overlay window. This keeps Android 12+ from applying the pass-through
-     * obscuring-opacity cap.
+     * Every protected region lives in its own PixelFormat.OPAQUE overlay window.
+     * On Android 12+ an enabled accessibility service supplies a trusted window,
+     * so the region can be fully opaque without intercepting touch or scroll.
      *
      * SOLID      -> the window draws pure black.
      * PIXELATED  -> the window draws the opaque pixelated bitmap.
@@ -202,7 +219,7 @@ internal class DeviceBlurOverlay(
             params.y = rect.top
             params.width = rect.width()
             params.height = rect.height()
-            params.alpha = 1F
+            params.alpha = windowAlpha
             params.format = PixelFormat.OPAQUE
 
             val oldBitmap = regionWindow.view.replaceRegion(
@@ -228,7 +245,7 @@ internal class DeviceBlurOverlay(
 
             Log.d(
                 HALALIFY_OVERLAY_TAG,
-                "OPAQUE region[$index] bounds=$rect filtered=${region.isFiltered} format=${params.format} alpha=${params.alpha}",
+                "protected region[$index] bounds=$rect filtered=${region.isFiltered} type=$windowType alpha=${params.alpha}",
             )
         }
     }
@@ -243,7 +260,7 @@ internal class DeviceBlurOverlay(
 
             Log.d(
                 HALALIFY_OVERLAY_TAG,
-                "added TOUCH-CONSUMING OPAQUE region window format=${params.format} alpha=${params.alpha}",
+                "added pass-through protected region window type=$windowType alpha=${params.alpha}",
             )
         }
 
@@ -261,26 +278,27 @@ internal class DeviceBlurOverlay(
     }
 
     private fun createRegionLayoutParams(): WindowManager.LayoutParams {
-        // Deliberately no FLAG_NOT_TOUCHABLE:
-        // the protected rectangle consumes touches so Android does not cap
-        // TYPE_APPLICATION_OVERLAY opacity on Android 12+.
+        // Let touches pass through to the app below. A protected body can
+        // cover most of a phone screen, so consuming this window would make
+        // scrolling the underlying page impossible.
         val flags =
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         return WindowManager.LayoutParams(
             1,
             1,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType,
             flags,
             PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 0
             y = 0
-            alpha = 1F
-            title = "Halalify Opaque Protected Region"
+            alpha = windowAlpha
+            title = "Halalify Protected Region"
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 layoutInDisplayCutoutMode =
@@ -368,7 +386,7 @@ internal class DeviceBlurOverlay(
         init {
             setBackgroundColor(Color.BLACK)
             setWillNotDraw(false)
-            isClickable = true
+            isClickable = false
         }
 
         fun replaceRegion(
@@ -417,10 +435,5 @@ internal class DeviceBlurOverlay(
                 bitmapPaint,
             )
         }
-
-        // Required for full opacity on Android 12+ SAW overlays.
-        override fun onTouchEvent(
-            event: MotionEvent,
-        ): Boolean = true
     }
 }

@@ -8,6 +8,7 @@ import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +32,10 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { appCoordinator.onOverlayPermissionResult() }
 
+    private val accessibilitySettingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { appCoordinator.onAccessibilitySettingsResult() }
+
     private val projectionPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result -> appCoordinator.onProjectionPermissionResult(result.resultCode, result.data) }
@@ -52,6 +57,12 @@ class MainActivity : ComponentActivity() {
 
         override fun requestOverlayPermission(intent: Intent) {
             overlayPermissionLauncher.launch(intent)
+        }
+
+        override fun requestAccessibilityService() {
+            accessibilitySettingsLauncher.launch(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            )
         }
 
         override fun requestScreenCapture() {

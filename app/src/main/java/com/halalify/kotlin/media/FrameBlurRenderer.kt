@@ -200,7 +200,7 @@ internal object FrameBlurRenderer {
      * 1) Downsamples the protected patch according to blur intensity,
      * 2) Applies a fast in-place box blur for smooth Gaussian-like color diffusion,
      * 3) Scales back with bilinear filtering to fit the target patch,
-     * 4) Preserves original scene colors and luminosity without darkening or turning black.
+     * 4) Preserves the blurred scene colors so the effect remains natural.
      */
     private fun applySoftProtection(
         bitmap: Bitmap,
@@ -434,9 +434,11 @@ internal object FrameBlurRenderer {
             return null
         }
 
-        // Small safety margin. This is intentionally smaller than the old 25%.
-        val padX = boxWidth * 0.08F
-        val padY = boxHeight * 0.08F
+        // Keep the protection close to the detector's body box. A large
+        // margin makes a woman-sized detection look like a full-page mosaic
+        // on narrow phone screens.
+        val padX = boxWidth * 0.03F
+        val padY = boxHeight * 0.03F
 
         val left = ceil((x1 - padX) * width)
             .toInt()

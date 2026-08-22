@@ -18,6 +18,7 @@ import com.halalify.kotlin.capture.AudioIsolationService
 import com.halalify.kotlin.capture.CaptureSessionStore
 import com.halalify.kotlin.capture.CaptureUiState
 import com.halalify.kotlin.capture.ProtectionCaptureService
+import com.halalify.kotlin.media.TrustedOverlayHost
 import com.halalify.kotlin.network.AdultSiteVpnService
 import com.halalify.kotlin.settings.BlurSettings
 import com.halalify.kotlin.settings.BlurSettingsRepository
@@ -49,6 +50,7 @@ internal class HalalifyAppCoordinator(
     private var pendingCaptureSettings: BlurSettings? = null
     private var pendingWebsiteFilterEnable = false
     private var pendingWebsiteProtectionSettings: BlurSettings? = null
+    private var pendingTrustedOverlaySettings: BlurSettings? = null
 
     fun saveSettings(settings: BlurSettings) {
         settingsRepository.save(settings)
@@ -165,6 +167,20 @@ internal class HalalifyAppCoordinator(
         }
     }
 
+    fun onAccessibilitySettingsResult() {
+        val settings = pendingTrustedOverlaySettings ?: return
+        if (TrustedOverlayHost.isConnected) {
+            pendingTrustedOverlaySettings = null
+            initializeRuntimeAndRequestCapture()
+        } else {
+            updateState { current ->
+                current.copy(
+                    message = "Enable Halalify private blur overlay, then return to start full-opacity protection.",
+                )
+            }
+        }
+    }
+
     fun onProjectionPermissionResult(resultCode: Int, data: Intent?) {
         if (resultCode != android.app.Activity.RESULT_OK || data == null) {
             updateState { current -> current.copy(message = "Screen capture permission was not granted.") }
@@ -227,7 +243,25 @@ internal class HalalifyAppCoordinator(
 
     private fun continueStartingCaptureAfterWebsiteFilter(settings: BlurSettings) {
         saveSettings(settings)
-        if (settings.hasVisualProtection && !Settings.canDrawOverlays(context)) {
+        if (
+            settings.hasVisualProtection &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            !TrustedOverlayHost.isConnected
+        ) {
+            pendingTrustedOverlaySettings = settings
+            updateState { current ->
+                current.copy(
+                    message = "Enable Halalify private blur overlay for full opacity with touch-through.",
+                )
+            }
+            permissionRequester.requestAccessibilityService()
+            return
+        }
+        if (
+            settings.hasVisualProtection &&
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            !Settings.canDrawOverlays(context)
+        ) {
             updateState { current ->
                 current.copy(message = "Allow Halalify to display over other apps, then return here.")
             }
@@ -372,6 +406,7 @@ internal class HalalifyAppCoordinator(
 internal interface PermissionRequester {
     fun requestAudioPermission()
     fun requestOverlayPermission(intent: Intent)
+    fun requestAccessibilityService()
     fun requestScreenCapture()
     fun requestVpnPermission(intent: Intent)
 }

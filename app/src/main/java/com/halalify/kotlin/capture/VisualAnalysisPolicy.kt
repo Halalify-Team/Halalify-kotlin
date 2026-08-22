@@ -11,6 +11,9 @@ internal class VisualAnalysisPolicy(
         FrameAnalysisReason.CONTENT_CHANGED,
         FrameAnalysisReason.STABILIZATION,
         -> settings.hasVisualProtection
-        FrameAnalysisReason.SAFETY_REFRESH -> settings.blurImages
+        // Safety refreshes are also required for video-only coverage: when a
+        // video stops or a page settles, there may be no contentChanged event
+        // to age out a previously protected region.
+        FrameAnalysisReason.SAFETY_REFRESH -> settings.hasVisualProtection
     }
 }

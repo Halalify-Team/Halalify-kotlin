@@ -19,7 +19,7 @@ class VisualAnalysisPolicyTest {
     }
 
     @Test
-    fun `video-only coverage includes stabilization bursts and skips static safety refresh`() {
+    fun `video-only coverage includes periodic safety refresh`() {
         val policy = VisualAnalysisPolicy(
             BlurSettings(blurImages = false, blurVideos = true),
         )
@@ -27,7 +27,7 @@ class VisualAnalysisPolicyTest {
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.INITIAL))
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.CONTENT_CHANGED))
         assertTrue(policy.shouldAnalyze(FrameAnalysisReason.STABILIZATION))
-        assertFalse(policy.shouldAnalyze(FrameAnalysisReason.SAFETY_REFRESH))
+        assertTrue(policy.shouldAnalyze(FrameAnalysisReason.SAFETY_REFRESH))
     }
 
     @Test

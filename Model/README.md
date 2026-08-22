@@ -18,7 +18,7 @@ The package also contains `nsfw2.tflite`, a 5,958,568-byte float32 classifier ex
 - Input: float32 tensor `[1, 224, 224, 3]`; the native adapter follows the source model's centered 224 crop from a 256x256 resize and BGR VGG-mean preprocessing.
 - Output: float32 `[1, 2]`, interpreted as `[sfw, nsfw]`.
 - Runtime threshold: `0.70` NSFW probability.
-- The classifier is run over up to eight highest-confidence detector regions. A positive result marks that region for the existing blur renderer; if no detector region exists, a positive full-frame result protects the entire frame.
+- The classifier is run over up to the configured number of already selected detector regions. A positive result annotates that region as NSFW; it does not override the selected male/female target and there is no full-frame fallback.
 
 The upstream repository documents the model as Apache 2.0, but its README also notes that the project is archived and may be inaccurate on some images. Revalidate the model and review upstream/model provenance before commercial distribution. The classifier is orchestrated by the native `AiEngine`; Kotlin does not load or invoke this model directly.
 

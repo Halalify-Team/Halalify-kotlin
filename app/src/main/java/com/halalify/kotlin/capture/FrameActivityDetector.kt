@@ -82,7 +82,7 @@ internal class FrameActivityDetector(
         if (lastAnalysisAtMs == Long.MIN_VALUE) Long.MAX_VALUE else nowMs - lastAnalysisAtMs
 
     private companion object {
-        const val DEFAULT_CHANGED_PIXEL_RATIO = 0.015F
+        const val DEFAULT_CHANGED_PIXEL_RATIO = 0.005F
         const val DEFAULT_CHANNEL_DIFFERENCE = 32
         const val DEFAULT_SAFETY_REFRESH_MS = 5_000L
         const val DEFAULT_BURST_ANALYSES = 3

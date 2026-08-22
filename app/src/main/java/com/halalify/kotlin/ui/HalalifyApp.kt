@@ -80,6 +80,7 @@ import com.halalify.kotlin.settings.MIN_BLUR_INTENSITY
 import com.halalify.kotlin.settings.normalizeBlurIntensity
 
 private val StopRed = Color(0xFFC62828)
+private const val MUSIC_ISOLATION_AVAILABLE = false
 
 private val HalalifyDarkColorScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFF57D59A),
@@ -145,6 +146,7 @@ private data class UiStrings(
     val videoDescription: String,
     val musicIsolation: String,
     val musicIsolationDescription: String,
+    val comingSoon: String,
     val websiteProtection: String,
     val websiteProtectionDescription: String,
     val active: String,
@@ -196,8 +198,9 @@ private val EnglishUi = UiStrings(
     videoDescription = "Protect detections in changing frames.",
     musicIsolation = "Music isolation",
     musicIsolationDescription = "Mute detected music during protected playback.",
+    comingSoon = "Coming soon",
     websiteProtection = "Website protection",
-    websiteProtectionDescription = "Included automatically when visual protection starts.",
+    websiteProtectionDescription = "Optional website filtering. Turn it on when you need it.",
     active = "Active",
     automatic = "Automatic",
     appearance = "Appearance",
@@ -247,8 +250,9 @@ private val ArabicUi = UiStrings(
     videoDescription = "حماية العناصر المكتشفة في الإطارات المتحركة.",
     musicIsolation = "عزل الموسيقى",
     musicIsolationDescription = "كتم الموسيقى المكتشفة أثناء التشغيل المحمي.",
+    comingSoon = "سيتوفر قريبًا",
     websiteProtection = "حماية المواقع",
-    websiteProtectionDescription = "تُفعّل تلقائيًا عند بدء الحماية المرئية.",
+    websiteProtectionDescription = "حماية اختيارية للمواقع. فعّلها عند الحاجة.",
     active = "نشطة",
     automatic = "تلقائية",
     appearance = "المظهر",
@@ -355,9 +359,16 @@ internal fun HalalifyApp(
     onStartCapture: (BlurSettings) -> Unit,
     onStopCapture: () -> Unit,
     onStartIsolation: (BlurSettings) -> Unit = {},
+    onWebsiteProtectionChange: (Boolean, BlurSettings) -> Unit = { _, _ -> },
     websiteFilterEnabled: Boolean = initialSettings.blockAdultSites,
 ) {
-    var settings by remember(initialSettings) { mutableStateOf(initialSettings) }
+    var settings by remember(initialSettings) {
+        mutableStateOf(
+            initialSettings.copy(
+                isolateMusic = initialSettings.isolateMusic && MUSIC_ISOLATION_AVAILABLE,
+            ),
+        )
+    }
     var showingSettings by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -390,8 +401,13 @@ internal fun HalalifyApp(
         },
     )
 
-    LaunchedEffect(settings, websiteFilterEnabled) {
-        onSave(settings.copy(blockAdultSites = websiteFilterEnabled))
+    LaunchedEffect(settings, websiteFilterEnabled, captureState.isCapturing) {
+        val selectedWebsiteProtection = if (captureState.isCapturing) {
+            websiteFilterEnabled
+        } else {
+            settings.blockAdultSites
+        }
+        onSave(settings.copy(blockAdultSites = selectedWebsiteProtection))
     }
 
     val useDarkTheme = when (settings.themeMode) {
@@ -432,6 +448,7 @@ internal fun HalalifyApp(
                         websiteFilterEnabled = websiteFilterEnabled,
                         language = settings.language,
                         onSettingsChange = { settings = it },
+                        onWebsiteProtectionChange = onWebsiteProtectionChange,
                         onOpenFilePicker = {
                             filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
                         },
@@ -522,6 +539,7 @@ private fun SettingsScreen(
     websiteFilterEnabled: Boolean,
     language: AppLanguage,
     onSettingsChange: (BlurSettings) -> Unit,
+    onWebsiteProtectionChange: (Boolean, BlurSettings) -> Unit,
     onOpenFilePicker: () -> Unit,
     onStartIsolation: () -> Unit,
 ) {
@@ -581,21 +599,25 @@ private fun SettingsScreen(
                     shortLabel = "♫",
                     title = ui.musicIsolation,
                     description = ui.musicIsolationDescription,
-                    checked = settings.isolateMusic,
-                    enabled = !captureState.isCapturing,
+                    checked = MUSIC_ISOLATION_AVAILABLE && settings.isolateMusic,
+                    enabled = MUSIC_ISOLATION_AVAILABLE && !captureState.isCapturing,
+                    trailingLabel = if (MUSIC_ISOLATION_AVAILABLE) null else ui.comingSoon,
                     onCheckedChange = { enabled ->
-                        onSettingsChange(settings.copy(isolateMusic = enabled))
+                        if (MUSIC_ISOLATION_AVAILABLE) {
+                            onSettingsChange(settings.copy(isolateMusic = enabled))
+                        }
                     },
                 )
             }
         }
 
-        if (settings.isolateMusic) {
+        if (!MUSIC_ISOLATION_AVAILABLE || settings.isolateMusic) {
             item {
                 MusicIsolationSourceCard(
                     settings = settings,
                     language = language,
-                    enabled = !captureState.isCapturing,
+                    enabled = MUSIC_ISOLATION_AVAILABLE && !captureState.isCapturing,
+                    comingSoon = !MUSIC_ISOLATION_AVAILABLE,
                     isolationStatus = captureState.audioStatus,
                     onUrlChange = { url -> onSettingsChange(settings.copy(musicSourceUrl = url)) },
                     onOpenFilePicker = onOpenFilePicker,
@@ -605,12 +627,26 @@ private fun SettingsScreen(
         }
 
         item {
-            SettingInfoRow(
-                icon = "⌁",
-                title = ui.websiteProtection,
-                description = ui.websiteProtectionDescription,
-                status = if (websiteFilterEnabled) ui.active else ui.automatic,
-            )
+            val websiteProtectionChecked = if (captureState.isCapturing) {
+                websiteFilterEnabled
+            } else {
+                settings.blockAdultSites
+            }
+            PreferenceCard(enabled = true) {
+                PreferenceToggle(
+                    shortLabel = "WEB",
+                    title = ui.websiteProtection,
+                    description = ui.websiteProtectionDescription,
+                    checked = websiteProtectionChecked,
+                    enabled = true,
+                    trailingLabel = if (websiteProtectionChecked) ui.active else ui.off,
+                    onCheckedChange = { enabled ->
+                        val updatedSettings = settings.copy(blockAdultSites = enabled)
+                        onSettingsChange(updatedSettings)
+                        onWebsiteProtectionChange(enabled, updatedSettings)
+                    },
+                )
+            }
         }
 
         item {
@@ -1077,6 +1113,7 @@ private fun PreferenceToggle(
     description: String,
     checked: Boolean,
     enabled: Boolean,
+    trailingLabel: String? = null,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -1119,6 +1156,14 @@ private fun PreferenceToggle(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+        trailingLabel?.let { label ->
+            Text(
+                text = label,
+                color = TextSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+        }
         Spacer(Modifier.width(10.dp))
         Switch(
             checked = checked,
@@ -1140,6 +1185,7 @@ private fun MusicIsolationSourceCard(
     settings: BlurSettings,
     language: AppLanguage,
     enabled: Boolean,
+    comingSoon: Boolean = false,
     isolationStatus: String?,
     onUrlChange: (String) -> Unit,
     onOpenFilePicker: () -> Unit,
@@ -1174,7 +1220,14 @@ private fun MusicIsolationSourceCard(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            if (settings.hasMusicIsolationSource) {
+            if (comingSoon) {
+                Text(
+                    text = ui.comingSoon,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            } else if (settings.hasMusicIsolationSource) {
                 Text(
                     text = ui.ready,
                     color = Accent,
@@ -1187,7 +1240,7 @@ private fun MusicIsolationSourceCard(
         OutlinedTextField(
             value = settings.musicSourceUrl,
             onValueChange = onUrlChange,
-            enabled = enabled && settings.isolateMusic,
+            enabled = enabled && settings.isolateMusic && !comingSoon,
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text(ui.mediaUrlPlaceholder) },
             singleLine = true,
@@ -1209,7 +1262,7 @@ private fun MusicIsolationSourceCard(
         ) {
             Button(
                 onClick = onOpenFilePicker,
-                enabled = enabled && settings.isolateMusic,
+                enabled = enabled && settings.isolateMusic && !comingSoon,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = AppSurfaceHigh,
@@ -1231,7 +1284,7 @@ private fun MusicIsolationSourceCard(
 
         Button(
             onClick = onStartIsolation,
-            enabled = enabled && settings.isolateMusic && settings.hasMusicIsolationSource,
+            enabled = enabled && settings.isolateMusic && !comingSoon && settings.hasMusicIsolationSource,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Accent,
@@ -1242,7 +1295,9 @@ private fun MusicIsolationSourceCard(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                text = if (settings.isolateMusic && settings.hasMusicIsolationSource) {
+                text = if (comingSoon) {
+                    ui.comingSoon
+                } else if (settings.isolateMusic && settings.hasMusicIsolationSource) {
                     ui.createSpeechCopy
                 } else {
                     ui.addSource

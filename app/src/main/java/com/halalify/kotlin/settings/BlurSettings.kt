@@ -80,7 +80,13 @@ internal class BlurSettingsRepository(context: Context) {
         blurVideos = preferences.getBoolean(KEY_BLUR_VIDEOS, true),
         style = loadStyle(),
         isolateMusic = preferences.getBoolean(KEY_ISOLATE_MUSIC, false),
-        blockAdultSites = preferences.getBoolean(KEY_BLOCK_ADULT_SITES, false),
+        blockAdultSites = if (
+            preferences.getInt(KEY_WEBSITE_PROTECTION_REVISION, 0) < CURRENT_WEBSITE_PROTECTION_REVISION
+        ) {
+            false
+        } else {
+            preferences.getBoolean(KEY_BLOCK_ADULT_SITES, false)
+        },
         musicSourceUrl = preferences.getString(KEY_MUSIC_SOURCE_URL, "") ?: "",
         musicSourceFileName = preferences.getString(KEY_MUSIC_SOURCE_FILE_NAME, "") ?: "",
         musicSourceUri = preferences.getString(KEY_MUSIC_SOURCE_URI, "") ?: "",
@@ -117,6 +123,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_BLUR_STYLE, settings.style.name)
             putBoolean(KEY_ISOLATE_MUSIC, settings.isolateMusic)
             putBoolean(KEY_BLOCK_ADULT_SITES, settings.blockAdultSites)
+            putInt(KEY_WEBSITE_PROTECTION_REVISION, CURRENT_WEBSITE_PROTECTION_REVISION)
             putString(KEY_MUSIC_SOURCE_URL, settings.musicSourceUrl)
             putString(KEY_MUSIC_SOURCE_FILE_NAME, settings.musicSourceFileName)
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
@@ -135,6 +142,7 @@ internal class BlurSettingsRepository(context: Context) {
         private const val KEY_BLUR_STYLE = "blur_style"
         private const val KEY_ISOLATE_MUSIC = "isolate_music"
         private const val KEY_BLOCK_ADULT_SITES = "block_adult_sites"
+        private const val KEY_WEBSITE_PROTECTION_REVISION = "website_protection_revision"
         private const val KEY_MUSIC_SOURCE_URL = "music_source_url"
         private const val KEY_MUSIC_SOURCE_FILE_NAME = "music_source_file_name"
         private const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
@@ -143,5 +151,6 @@ internal class BlurSettingsRepository(context: Context) {
         private const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
         const val CURRENT_BLUR_SETTINGS_REVISION = 5
+        private const val CURRENT_WEBSITE_PROTECTION_REVISION = 1
     }
 }

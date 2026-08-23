@@ -67,4 +67,23 @@ class FrameActivityDetectorTest {
 
         assertNull(detector.analysisReason(overlayChanged, 100L))
     }
+
+    @Test
+    fun ignoredSamplesDoNotMagnifySmallChangesOutsideTheOverlay() {
+        val detector = FrameActivityDetector(
+            changedPixelRatio = 0.10F,
+            burstAnalyses = 1,
+            safetyRefreshMs = 5_000L,
+        )
+        val original = IntArray(100) { -1 }.apply {
+            for (index in 0 until 10) this[index] = 0x101010
+        }
+        val oneVisibleSampleChanged = original.copyOf().apply {
+            this[0] = 0xF0F0F0
+        }
+
+        detector.analysisReason(original, 0L)
+
+        assertNull(detector.analysisReason(oneVisibleSampleChanged, 100L))
+    }
 }

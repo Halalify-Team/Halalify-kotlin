@@ -65,13 +65,16 @@ internal class ProtectionTracker(
         newProtectedDetections.forEach { detection -> tracks += Track(detection) }
 
         // A static or periodically refreshed screen never ages protected regions.
-        // When a new protected box appears after a real change, an unmatched old
-        // box is replaced after a short confirmation window. This prevents one
-        // unstable detector frame from making the overlay disappear and return.
+        // When a new protected box appears after a real change, remove unmatched
+        // old boxes immediately. The current frame already contains a confirmed
+        // replacement, so retaining the previous page's boxes only creates the
+        // stacked mosaics users see during a fast swipe.
         if (contentChanged) {
             availableTracks.forEach { track -> track.missedContentChanges += 1 }
-            val replacementConfirmed =
-                newProtectedDetections.isNotEmpty() || matchedDetections.isNotEmpty()
+            // A matched detection only confirms its own track. It must not
+            // immediately delete a second person that the model missed in this
+            // frame. Only a genuinely new protected box confirms replacement.
+            val replacementConfirmed = newProtectedDetections.isNotEmpty()
             val expiryLimit = if (replacementConfirmed) {
                 REPLACEMENT_CONFIRMATION_CHANGES.coerceAtMost(maxMissedContentChanges)
             } else {
@@ -85,12 +88,12 @@ internal class ProtectionTracker(
         // A safety refresh is deliberately conservative: tracks that were
         // never missed remain protected through a transient detector miss.
         if (safetyRefresh) {
-            // A safety refresh is the settled-frame confirmation that the
-            // current page no longer contains a previously protected region.
-            // Do not keep an unmatched track alive just because the page was
-            // static and therefore never produced a contentChanged event.
-            val unmatchedTracks = availableTracks.toSet()
-            tracks.removeAll { track -> unmatchedTracks.contains(track) }
+            // A clean probe can still be missed by the model. Count it like a
+            // changed frame instead of removing protection on one noisy result.
+            availableTracks.forEach { track -> track.missedContentChanges += 1 }
+            tracks.removeAll { track ->
+                track.missedContentChanges >= maxMissedContentChanges
+            }
         }
 
         return tracks.map(Track::detection)
@@ -162,12 +165,11 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        // Keep protection through a short detector miss during page motion.
-        // A detector can miss several frames while a page is being flung.
-        // Keep the last confirmed body protected until it is genuinely gone.
-        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 12
+        // Three changed frames tolerate the two-frame oscillation observed on
+        // the emulator. Navigation and scroll events reset tracks immediately.
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 3
         const val DEFAULT_MATCHING_IOU = 0.15F
-        const val REPLACEMENT_CONFIRMATION_CHANGES = 4
+        const val REPLACEMENT_CONFIRMATION_CHANGES = 1
         const val MAX_CENTER_DISTANCE = 0.35F
         const val MIN_SIZE_RATIO = 0.45F
         const val MAX_SIZE_RATIO = 2.20F

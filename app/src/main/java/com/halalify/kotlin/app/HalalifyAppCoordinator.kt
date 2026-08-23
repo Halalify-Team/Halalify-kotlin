@@ -47,6 +47,9 @@ internal class HalalifyAppCoordinator(
     )
         private set
 
+    var accessibilityGuideVisible by mutableStateOf(false)
+        private set
+
     private var pendingCaptureSettings: BlurSettings? = null
     private var pendingWebsiteFilterEnable = false
     private var pendingWebsiteProtectionSettings: BlurSettings? = null
@@ -191,6 +194,15 @@ internal class HalalifyAppCoordinator(
         }
     }
 
+    fun continueAccessibilitySetup() {
+        accessibilityGuideVisible = false
+        permissionRequester.requestAccessibilityService()
+    }
+
+    fun dismissAccessibilitySetup() {
+        accessibilityGuideVisible = false
+    }
+
     fun onProjectionPermissionResult(resultCode: Int, data: Intent?) {
         if (resultCode != android.app.Activity.RESULT_OK || data == null) {
             updateState { current -> current.copy(message = "Screen capture permission was not granted.") }
@@ -264,7 +276,7 @@ internal class HalalifyAppCoordinator(
                     message = "Enable Halalify private blur overlay for full opacity with touch-through.",
                 )
             }
-            permissionRequester.requestAccessibilityService()
+            accessibilityGuideVisible = true
             return
         }
         if (

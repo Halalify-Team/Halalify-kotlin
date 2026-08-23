@@ -68,7 +68,7 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `old region is replaced after a moved subject is confirmed`() {
+    fun oldRegionIsReplacedImmediatelyWhenMovedSubjectIsConfirmed() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
 
@@ -78,16 +78,33 @@ class ProtectionTrackerTest {
         )
         val protected = tracker.update(listOf(moved), contentChanged = true)
 
+        assertEquals(1, protected.size)
+        assertEquals(moved.x1, protected.single().x1, 0.0001F)
+    }
+
+    @Test
+    fun `one matched person does not immediately remove a second missed person`() {
+        val tracker = ProtectionTracker()
+        val first = detection(shouldBlur = true)
+        val second = detection(shouldBlur = true).copy(
+            x1 = 0.65F,
+            x2 = 0.95F,
+        )
+        tracker.update(listOf(first, second))
+
+        val protected = tracker.update(listOf(first), contentChanged = true)
+
         assertEquals(2, protected.size)
-        assertTrue(protected.any { it.x1 == moved.x1 })
+    }
 
-        val afterConfirmation = tracker.update(listOf(moved), contentChanged = true)
-        assertEquals(2, afterConfirmation.size)
+    @Test
+    fun defaultTrackerRemovesStaleRegionAfterThreeChangedFrames() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
 
-        tracker.update(listOf(moved), contentChanged = true)
-        val replaced = tracker.update(listOf(moved), contentChanged = true)
-        assertEquals(1, replaced.size)
-        assertEquals(moved.x1, replaced.single().x1, 0.0001F)
+        assertEquals(1, tracker.update(emptyList(), contentChanged = true).size)
+        assertEquals(1, tracker.update(emptyList(), contentChanged = true).size)
+        assertTrue(tracker.update(emptyList(), contentChanged = true).isEmpty())
     }
 
     @Test
@@ -101,11 +118,12 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `missed region is cleared by a settled safety refresh`() {
+    fun `missed region is cleared after enough settled safety refreshes`() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
         tracker.update(emptyList(), contentChanged = true)
 
+        tracker.update(emptyList(), safetyRefresh = true)
         val protected = tracker.update(emptyList(), safetyRefresh = true)
 
         assertTrue(protected.isEmpty())

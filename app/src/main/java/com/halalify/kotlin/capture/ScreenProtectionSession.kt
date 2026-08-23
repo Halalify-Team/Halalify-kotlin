@@ -16,6 +16,7 @@ import androidx.core.graphics.createBitmap
 import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionOverlay
 import com.halalify.kotlin.media.ProtectionTracker
+import com.halalify.kotlin.media.TrustedOverlayHost
 import com.halalify.kotlin.media.getRealDisplayBounds
 import com.halalify.kotlin.model.Detection
 import com.halalify.kotlin.model.VisionProcessor
@@ -24,6 +25,7 @@ import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.normalizeBlurIntensity
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 /** Owns the visual capture pipeline and all resources created for one projection session. */
@@ -37,6 +39,7 @@ internal class ScreenProtectionSession(
     private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) : Closeable {
     private val protectionTracker = ProtectionTracker()
+    private val newProtectionConfirmation = NewProtectionConfirmation()
     private val frameActivityDetector = FrameActivityDetector()
     private val analysisPolicy = VisualAnalysisPolicy(settings)
 
@@ -51,11 +54,30 @@ internal class ScreenProtectionSession(
     private var renderedVisualSettingsVersion = Long.MIN_VALUE
     private var imageReader: ImageReader? = null
     private var display: VirtualDisplay? = null
+    private var captureWidth = 0
+    private var captureHeight = 0
+    private var captureDensityDpi = 0
+    private var refreshedContentGeneration = Long.MIN_VALUE
     private var visionThread: HandlerThread? = null
     private var lastRenderedDetections: List<Detection> = emptyList()
     private var lastRenderedStyle: BlurStyle? = null
     private var lastRenderedIntensity = Float.NaN
     private var lastChangeCheckAt = 0L
+    private var contentInvalidationSubscription: Closeable? = null
+    private val requestedContentGeneration = AtomicLong(0L)
+    @Volatile
+    private var handledContentGeneration = 0L
+
+    @Volatile
+    private var cleanFrameAfterMs = Long.MIN_VALUE
+
+    @Volatile
+    private var restoreProtectionAfterCleanCapture = false
+
+    @Volatile
+    private var pendingCleanFrameReason = FrameAnalysisReason.CONTENT_CHANGED
+
+    private var newProtectionAllowedAfterMs = Long.MIN_VALUE
 
     @Volatile
     private var running = false
@@ -88,26 +110,21 @@ internal class ScreenProtectionSession(
         val handlerThread = HandlerThread(VISION_THREAD_NAME).apply { start() }
         imageReader = reader
         visionThread = handlerThread
+        captureWidth = width
+        captureHeight = height
+        captureDensityDpi = context.resources.configuration.densityDpi
         lastChangeCheckAt = 0L
         running = true
+        contentInvalidationSubscription = TrustedOverlayHost.subscribeToContentInvalidation(
+            ::requestCleanContentFrame,
+        )
 
         try {
             reader.setOnImageAvailableListener(
                 { source -> onImageAvailable(source) },
                 Handler(handlerThread.looper),
             )
-            display = checkNotNull(
-                mediaProjection.createVirtualDisplay(
-                    DISPLAY_NAME,
-                    width,
-                    height,
-                    context.resources.configuration.densityDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    reader.surface,
-                    null,
-                    null,
-                ),
-            ) { "Android could not create the screen capture display." }
+            display = createVirtualDisplay(reader)
         } catch (error: Exception) {
             close()
             throw error
@@ -124,34 +141,114 @@ internal class ScreenProtectionSession(
             val plane = image.planes.firstOrNull() ?: return
             if (plane.pixelStride != RGBA_PIXEL_STRIDE) return
 
+            val observedContentGeneration = requestedContentGeneration.get()
+            val externallyInvalidated = observedContentGeneration != handledContentGeneration
+            if (externallyInvalidated && now < cleanFrameAfterMs) return
+            val shouldRestoreProtection =
+                externallyInvalidated && restoreProtectionAfterCleanCapture
+            val cleanFrameReason = pendingCleanFrameReason
+            if (
+                externallyInvalidated &&
+                !shouldRestoreProtection &&
+                refreshedContentGeneration != observedContentGeneration
+            ) {
+                // Secure overlay layers can leave unchanged tiles from the
+                // previous app in MediaProjection's buffer. Reattaching the
+                // capture surface forces a complete composition of the new
+                // screen instead of classifying those stale pixels.
+                refreshVirtualDisplay()
+                refreshedContentGeneration = observedContentGeneration
+                cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
+                Log.d(TAG, "Reattached capture surface after navigation or scroll.")
+                return
+            }
+            if (externallyInvalidated) {
+                if (!shouldRestoreProtection) {
+                    protectionTracker.reset()
+                    newProtectionConfirmation.reset()
+                    lastRenderedDetections = emptyList()
+                    newProtectionAllowedAfterMs =
+                        now + POST_NAVIGATION_CONFIRMATION_DELAY_MS
+                }
+                frameActivityDetector.reset()
+                handledContentGeneration = observedContentGeneration
+                Log.d(TAG, "Processing clean frame after navigation or scroll.")
+            }
+
             val sample = plane.sampleGrid(
                 width = image.width,
                 height = image.height,
+                protectedDetections =
+                    if (externallyInvalidated) emptyList() else lastRenderedDetections,
             )
             val currentVisualSettings = visualSettings
             val currentVisualSettingsVersion = visualSettingsVersion
             val visualSettingsChanged = currentVisualSettingsVersion != renderedVisualSettingsVersion
             val activityReason = frameActivityDetector.analysisReason(sample, now)
-            val reason = if (visualSettingsChanged) {
+            if (
+                !externallyInvalidated &&
+                (
+                    activityReason == FrameAnalysisReason.CONTENT_CHANGED ||
+                        activityReason == FrameAnalysisReason.SAFETY_REFRESH
+                    ) &&
+                lastRenderedDetections.isNotEmpty()
+            ) {
+                // A sensitive overlay is redacted from MediaProjection. Never
+                // age a protected track using that incomplete frame. Briefly
+                // remove our windows and classify the next clean frame.
+                requestCleanContentFrame(
+                    reason = activityReason,
+                    restoreProtectionAfterCapture = true,
+                )
+                return
+            }
+            val reason = if (externallyInvalidated || visualSettingsChanged) {
                 frameActivityDetector.reset()
-                FrameAnalysisReason.CONTENT_CHANGED
+                if (externallyInvalidated) cleanFrameReason else FrameAnalysisReason.CONTENT_CHANGED
             } else {
                 activityReason
             } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
+            if (shouldRestoreProtection && lastRenderedDetections.isNotEmpty()) {
+                restoreOverlayFromCleanFrame(
+                    plane = plane,
+                    image = image,
+                    visualSettings = currentVisualSettings,
+                )
+            }
             plane.buffer.rewind()
-            val detections = visionProcessor.process(
+            val rawDetections = visionProcessor.process(
                 rgbaBuffer = plane.buffer,
                 width = image.width,
                 height = image.height,
                 rowStride = plane.rowStride,
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
-            ).filter { detection ->
-                !detection.shouldBlur || detection.isReasonableProtectionRegion()
+            ).filter(Detection::isUsableDetection)
+            val confirmationRequired = lastRenderedDetections.isEmpty()
+            val detections = if (
+                confirmationRequired &&
+                now < newProtectionAllowedAfterMs
+            ) {
+                newProtectionConfirmation.reset()
+                rawDetections.map { detection ->
+                    if (detection.shouldBlur) {
+                        detection.copy(shouldBlur = false)
+                    } else {
+                        detection
+                    }
+                }
+            } else {
+                newProtectionConfirmation.apply(
+                    detections = rawDetections,
+                    confirmationRequired = confirmationRequired,
+                )
             }
-            if (!running) return
+            if (
+                !running ||
+                requestedContentGeneration.get() != observedContentGeneration
+            ) return
 
             val protectedDetections = protectionTracker.update(
                 detections,
@@ -269,11 +366,98 @@ internal class ScreenProtectionSession(
         }
     }
 
+    private fun requestCleanContentFrame() {
+        requestCleanContentFrame(
+            reason = FrameAnalysisReason.CONTENT_CHANGED,
+            restoreProtectionAfterCapture = false,
+        )
+    }
+
+    private fun requestCleanContentFrame(
+        reason: FrameAnalysisReason,
+        restoreProtectionAfterCapture: Boolean,
+    ) {
+        if (!running || closed) return
+        val cleanFrameAlreadyPending =
+            requestedContentGeneration.get() != handledContentGeneration
+        if (cleanFrameAlreadyPending) {
+            // A real navigation/scroll request supersedes a periodic probe.
+            if (!restoreProtectionAfterCapture && restoreProtectionAfterCleanCapture) {
+                this.restoreProtectionAfterCleanCapture = false
+                pendingCleanFrameReason = FrameAnalysisReason.CONTENT_CHANGED
+                cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
+                requestedContentGeneration.incrementAndGet()
+            }
+            return
+        }
+
+        // Removing the old overlay first prevents the next inference from
+        // classifying Halalify's own pixels. A short compositor grace period
+        // also drops the final stale frame produced during app switches.
+        this.restoreProtectionAfterCleanCapture = restoreProtectionAfterCapture
+        pendingCleanFrameReason = reason
+        cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
+        requestedContentGeneration.incrementAndGet()
+        Log.d(TAG, "Content changed outside Halalify; clearing stale overlay.")
+        overlay.update(emptyList())
+    }
+
+    /**
+     * A periodic clean probe needs the overlay hidden for capture, not for the
+     * entire model run. Rebuild the previous protection from that clean frame
+     * immediately; the confirmed result replaces it after inference.
+     */
+    private fun restoreOverlayFromCleanFrame(
+        plane: Image.Plane,
+        image: Image,
+        visualSettings: VisualSettings,
+    ) {
+        plane.buffer.rewind()
+        val cleanBitmap = plane.toCroppedBitmap(image.width, image.height)
+        try {
+            val restored = FrameBlurRenderer.renderSelectedDetections(
+                cleanBitmap,
+                lastRenderedDetections,
+                visualSettings.style,
+                visualSettings.intensity,
+                includePreview = false,
+            )
+            overlay.update(restored.overlayRegions)
+        } finally {
+            cleanBitmap.recycle()
+        }
+    }
+
+    private fun createVirtualDisplay(reader: ImageReader): VirtualDisplay =
+        checkNotNull(
+            mediaProjection.createVirtualDisplay(
+                DISPLAY_NAME,
+                captureWidth,
+                captureHeight,
+                captureDensityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface,
+                null,
+                null,
+            ),
+        ) { "Android could not create the screen capture display." }
+
+    private fun refreshVirtualDisplay() {
+        val reader = checkNotNull(imageReader) { "Screen capture reader is unavailable." }
+        val activeDisplay = checkNotNull(display) { "Virtual display is unavailable." }
+        activeDisplay.setSurface(null)
+        activeDisplay.setSurface(reader.surface)
+    }
+
     @Synchronized
     override fun close() {
         if (closed) return
         closed = true
         running = false
+        closeResource("content invalidation subscription") {
+            contentInvalidationSubscription?.close()
+        }
+        contentInvalidationSubscription = null
         closeResource("image listener") { imageReader?.setOnImageAvailableListener(null, null) }
         closeResource("virtual display") { display?.release() }
         display = null
@@ -320,6 +504,7 @@ internal class ScreenProtectionSession(
     private fun Image.Plane.sampleGrid(
         width: Int,
         height: Int,
+        protectedDetections: List<Detection>,
     ): IntArray {
         val columns = SAMPLE_COLUMNS.coerceAtMost(width)
         val rows = SAMPLE_ROWS.coerceAtMost(height)
@@ -329,6 +514,12 @@ internal class ScreenProtectionSession(
             val y = (((row + 0.5F) * height) / rows).toInt().coerceIn(0, height - 1)
             for (column in 0 until columns) {
                 val x = (((column + 0.5F) * width) / columns).toInt().coerceIn(0, width - 1)
+                val normalizedX = (x + 0.5F) / width
+                val normalizedY = (y + 0.5F) / height
+                if (isProtectedSample(normalizedX, normalizedY, protectedDetections)) {
+                    sample[outputIndex++] = IGNORED_FRAME_SAMPLE
+                    continue
+                }
                 val sourceIndex = y * rowStride + x * pixelStride
                 val red = buffer.get(sourceIndex).toInt() and 0xFF
                 val green = buffer.get(sourceIndex + 1).toInt() and 0xFF
@@ -337,17 +528,6 @@ internal class ScreenProtectionSession(
             }
         }
         return sample
-    }
-
-    private fun Detection.isReasonableProtectionRegion(): Boolean {
-        val regionWidth = x2 - x1
-        val regionHeight = y2 - y1
-        val area = regionWidth * regionHeight
-        return x1.isFinite() && y1.isFinite() &&
-                x2.isFinite() && y2.isFinite() &&
-                regionWidth > 0F && regionHeight > 0F &&
-                x1 >= 0F && y1 >= 0F && x2 <= 1F && y2 <= 1F &&
-                area <= MAX_PROTECTION_AREA
     }
 
     private companion object {
@@ -363,7 +543,9 @@ internal class ScreenProtectionSession(
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
-        const val MAX_PROTECTION_AREA = 0.60F
+        const val IGNORED_FRAME_SAMPLE = -1
+        const val CLEAN_FRAME_SETTLE_MS = 80L
+        const val POST_NAVIGATION_CONFIRMATION_DELAY_MS = 1_500L
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1
         const val TAG = "HalalifyVision"

@@ -195,6 +195,17 @@ private data class UiStrings(
     val firstRunOpenSettings: String,
     val firstRunContinue: String,
     val firstRunNotNow: String,
+    val accessibilityGuideTitle: String,
+    val accessibilityGuideDescription: String,
+    val accessibilityGuideStepOpen: String,
+    val accessibilityGuideStepEnable: String,
+    val accessibilityGuideStepReturn: String,
+    val accessibilityGuideOpenSystem: String,
+    val accessibilityGuideNotNow: String,
+    val accessibilityGuideSettingsTitle: String,
+    val accessibilityGuideDownloadedApps: String,
+    val accessibilityGuideOff: String,
+    val accessibilityGuideTapHint: String,
 )
 
 private val EnglishUi = UiStrings(
@@ -255,6 +266,17 @@ private val EnglishUi = UiStrings(
     firstRunOpenSettings = "Open settings",
     firstRunContinue = "Continue",
     firstRunNotNow = "Not now",
+    accessibilityGuideTitle = "Enable the private blur overlay",
+    accessibilityGuideDescription = "Android needs one accessibility permission so Halalify can draw the protected layer above other apps.",
+    accessibilityGuideStepOpen = "In the next screen, tap Halalify private blur overlay under Downloaded apps.",
+    accessibilityGuideStepEnable = "Turn on the switch, confirm the Android dialog, then return to Halalify.",
+    accessibilityGuideStepReturn = "After you come back, the screen-sharing permission will appear automatically.",
+    accessibilityGuideOpenSystem = "Open Accessibility",
+    accessibilityGuideNotNow = "Not now",
+    accessibilityGuideSettingsTitle = "Accessibility",
+    accessibilityGuideDownloadedApps = "Downloaded apps",
+    accessibilityGuideOff = "Off",
+    accessibilityGuideTapHint = "Tap this item",
 )
 
 private val ArabicUi = UiStrings(
@@ -315,6 +337,17 @@ private val ArabicUi = UiStrings(
     firstRunOpenSettings = "فتح الإعدادات",
     firstRunContinue = "متابعة",
     firstRunNotNow = "ليس الآن",
+    accessibilityGuideTitle = "فعّل طبقة البلور الخاصة",
+    accessibilityGuideDescription = "يحتاج Android إلى صلاحية إمكانية وصول حتى يتمكن Halalify من رسم طبقة الحماية فوق التطبيقات الأخرى.",
+    accessibilityGuideStepOpen = "في الشاشة التالية، اضغط على Halalify private blur overlay ضمن التطبيقات التي تم تنزيلها.",
+    accessibilityGuideStepEnable = "فعّل المفتاح، وافق على رسالة Android، ثم ارجع إلى Halalify.",
+    accessibilityGuideStepReturn = "بعد العودة، ستظهر تلقائيًا نافذة السماح بمشاركة الشاشة.",
+    accessibilityGuideOpenSystem = "فتح Accessibility",
+    accessibilityGuideNotNow = "ليس الآن",
+    accessibilityGuideSettingsTitle = "Accessibility",
+    accessibilityGuideDownloadedApps = "Downloaded apps",
+    accessibilityGuideOff = "Off",
+    accessibilityGuideTapHint = "اضغط هنا",
 )
 
 private fun uiStrings(language: AppLanguage): UiStrings =
@@ -391,6 +424,9 @@ internal fun HalalifyApp(
     onStartIsolation: (BlurSettings) -> Unit = {},
     onWebsiteProtectionChange: (Boolean, BlurSettings) -> Unit = { _, _ -> },
     websiteFilterEnabled: Boolean = initialSettings.blockAdultSites,
+    accessibilityGuideVisible: Boolean = false,
+    onAccessibilityGuideContinue: () -> Unit = {},
+    onAccessibilityGuideDismiss: () -> Unit = {},
 ) {
     var settings by remember(initialSettings) {
         mutableStateOf(
@@ -526,6 +562,14 @@ internal fun HalalifyApp(
                     onDismiss = { showingFirstRunGuide = false },
                 )
             }
+
+            if (accessibilityGuideVisible) {
+                AccessibilityGuideDialog(
+                    ui = uiStrings(settings.language),
+                    onOpenSystemSettings = onAccessibilityGuideContinue,
+                    onDismiss = onAccessibilityGuideDismiss,
+                )
+            }
         }
     }
 }
@@ -601,6 +645,137 @@ private fun FirstRunGuideStep(number: String, text: String) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+@Composable
+private fun AccessibilityGuideDialog(
+    ui: UiStrings,
+    onOpenSystemSettings: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = ui.accessibilityGuideTitle,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = ui.accessibilityGuideDescription,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                AccessibilitySettingsPreview(ui)
+                FirstRunGuideStep(number = "1", text = ui.accessibilityGuideStepOpen)
+                FirstRunGuideStep(number = "2", text = ui.accessibilityGuideStepEnable)
+                FirstRunGuideStep(number = "3", text = ui.accessibilityGuideStepReturn)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onOpenSystemSettings) {
+                Text(ui.accessibilityGuideOpenSystem)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(ui.accessibilityGuideNotNow)
+            }
+        },
+    )
+}
+
+@Composable
+private fun AccessibilitySettingsPreview(ui: UiStrings) {
+    val settingsBackground = Color(0xFFF5F3FC)
+    val settingsText = Color(0xFF282632)
+    val settingsSecondary = Color(0xFF68749A)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(184.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(settingsBackground)
+            .padding(14.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "‹",
+                    color = settingsText,
+                    fontSize = 28.sp,
+                    lineHeight = 28.sp,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = ui.accessibilityGuideSettingsTitle,
+                    color = settingsText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                text = ui.accessibilityGuideDownloadedApps,
+                color = settingsSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(Color.White)
+                    .border(2.dp, Accent, RoundedCornerShape(11.dp))
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF0D8B73)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "H",
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Halalify private blur overlay",
+                        color = settingsText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = ui.accessibilityGuideOff,
+                        color = settingsText.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                Text(
+                    text = "›",
+                    color = Accent,
+                    fontSize = 25.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                text = ui.accessibilityGuideTapHint,
+                color = StopRed,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.End),
+            )
+        }
     }
 }
 

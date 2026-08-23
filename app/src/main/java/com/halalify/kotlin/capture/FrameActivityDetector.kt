@@ -75,14 +75,20 @@ internal class FrameActivityDetector(
             val blueDifference = kotlin.math.abs((before and 0xFF) - (after and 0xFF))
             if (redDifference + greenDifference + blueDifference >= channelDifference) changed += 1
         }
-        return if (compared > 0) changed.toFloat() / compared else 0F
+        // Keep the threshold relative to the full sampled display. Otherwise a
+        // large protected region leaves only a handful of comparable samples,
+        // and one animated toolbar pixel can look like a full page change.
+        return if (compared > 0) changed.toFloat() / current.size else 0F
     }
 
     private fun elapsedSinceLastAnalysis(nowMs: Long): Long =
         if (lastAnalysisAtMs == Long.MIN_VALUE) Long.MAX_VALUE else nowMs - lastAnalysisAtMs
 
     private companion object {
-        const val DEFAULT_CHANGED_PIXEL_RATIO = 0.005F
+        // Roughly seven of the 20x32 samples must move. This ignores a blinking
+        // cursor or status-bar animation while still reacting to real page
+        // motion immediately.
+        const val DEFAULT_CHANGED_PIXEL_RATIO = 0.01F
         const val DEFAULT_CHANNEL_DIFFERENCE = 32
         const val DEFAULT_SAFETY_REFRESH_MS = 5_000L
         const val DEFAULT_BURST_ANALYSES = 3

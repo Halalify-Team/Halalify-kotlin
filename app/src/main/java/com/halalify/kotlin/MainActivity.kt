@@ -99,6 +99,9 @@ class MainActivity : ComponentActivity() {
                 onStartIsolation = appCoordinator::startIsolation,
                 onWebsiteProtectionChange = appCoordinator::setWebsiteProtection,
                 websiteFilterEnabled = appCoordinator.websiteFilterEnabled,
+                accessibilityGuideVisible = appCoordinator.accessibilityGuideVisible,
+                onAccessibilityGuideContinue = appCoordinator::continueAccessibilitySetup,
+                onAccessibilityGuideDismiss = appCoordinator::dismissAccessibilitySetup,
             )
         }
     }

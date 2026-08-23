@@ -46,24 +46,15 @@ internal class DeviceBlurOverlay(
     )
 
     private val appContext = context.applicationContext
-    private val trustedAccessibilityService = TrustedOverlayHost.currentService()
+    private var trustedAccessibilityService = TrustedOverlayHost.currentService()
     // AccessibilityService already owns the trusted overlay token. Reusing
     // its context is required; a newly-created WindowContext has no valid
     // accessibility token on Android 12+/the emulator.
-    private val trustedWindowContext = trustedAccessibilityService
-    private val usesTrustedOverlay = trustedWindowContext != null
-    private val windowManager = trustedWindowContext?.getSystemService(WindowManager::class.java)
-        ?: appContext.getSystemService(WindowManager::class.java)
-    private val windowType = if (usesTrustedOverlay) {
-        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-    } else {
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-    }
-    private val windowAlpha = if (usesTrustedOverlay || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        1F
-    } else {
-        MAX_UNTRUSTED_PASS_THROUGH_OPACITY
-    }
+    private var trustedWindowContext = trustedAccessibilityService
+    private var usesTrustedOverlay = trustedWindowContext != null
+    private var windowManager = resolveWindowManager()
+    private var windowType = resolveWindowType()
+    private var windowAlpha = resolveWindowAlpha()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val updateLock = Any()
 
@@ -77,6 +68,21 @@ internal class DeviceBlurOverlay(
     override fun update(regions: List<OverlayRegion>) {
         if (closed) {
             regions.releaseBitmaps()
+            return
+        }
+
+        // Accessibility navigation callbacks already run on the main looper.
+        // Remove stale windows inside that callback instead of placing the
+        // clear behind pending bitmap/render work.
+        if (regions.isEmpty() && Looper.myLooper() == Looper.getMainLooper()) {
+            val oldPending = synchronized(updateLock) {
+                pending.also {
+                    pending = null
+                    updatePosted = false
+                }
+            }
+            oldPending?.releaseBitmaps()
+            clearOnMainThread()
             return
         }
 
@@ -169,6 +175,7 @@ internal class DeviceBlurOverlay(
      * SOFT_BLUR  -> the window draws the opaque blurred bitmap.
      */
     private fun renderRegions(regions: List<OverlayRegion>) {
+        refreshWindowHost()
         val displayBounds = currentDisplayBounds()
         val prepared = ArrayList<PreparedRegion>(regions.size)
 
@@ -252,7 +259,7 @@ internal class DeviceBlurOverlay(
 
     private fun ensureWindowCount(required: Int) {
         while (windows.size < required) {
-            val view = OpaqueRegionView(appContext)
+            val view = OpaqueRegionView(trustedWindowContext ?: appContext)
             val params = createRegionLayoutParams()
 
             windowManager.addView(view, params)
@@ -276,6 +283,43 @@ internal class DeviceBlurOverlay(
             }
         }
     }
+
+    /**
+     * Android can reconnect an accessibility service while screen capture is
+     * still running (for example after an app update). Its old WindowManager
+     * then retains an invalid accessibility token. Resolve the active service
+     * before every render and discard windows owned by the previous token.
+     */
+    private fun refreshWindowHost() {
+        val currentService = TrustedOverlayHost.currentService()
+        if (currentService === trustedAccessibilityService) return
+
+        clearOnMainThread()
+        trustedAccessibilityService = currentService
+        trustedWindowContext = currentService
+        usesTrustedOverlay = currentService != null
+        windowManager = resolveWindowManager()
+        windowType = resolveWindowType()
+        windowAlpha = resolveWindowAlpha()
+    }
+
+    private fun resolveWindowManager(): WindowManager =
+        trustedWindowContext?.getSystemService(WindowManager::class.java)
+            ?: appContext.getSystemService(WindowManager::class.java)
+
+    private fun resolveWindowType(): Int =
+        if (usesTrustedOverlay) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        }
+
+    private fun resolveWindowAlpha(): Float =
+        if (usesTrustedOverlay || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            1F
+        } else {
+            MAX_UNTRUSTED_PASS_THROUGH_OPACITY
+        }
 
     private fun createRegionLayoutParams(): WindowManager.LayoutParams {
         // Let touches pass through to the app below. A protected body can
@@ -342,6 +386,7 @@ internal class DeviceBlurOverlay(
     }
 
     private fun clearOnMainThread() {
+        val removedWindowCount = windows.size
         windows.forEach { regionWindow ->
             regionWindow.view.detachBitmap()?.let {
                 FrameBlurRenderer.releaseOverlayBitmap(it)
@@ -356,6 +401,9 @@ internal class DeviceBlurOverlay(
 
         windows.clear()
         FrameBlurRenderer.clearBitmapPool()
+        if (removedWindowCount > 0) {
+            Log.d(HALALIFY_OVERLAY_TAG, "cleared $removedWindowCount protected region windows")
+        }
     }
 
     private fun List<OverlayRegion>.releaseBitmaps() {
@@ -387,6 +435,13 @@ internal class DeviceBlurOverlay(
             setBackgroundColor(Color.BLACK)
             setWillNotDraw(false)
             isClickable = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                // Android marks this small region window secure only while a
+                // MediaProjection is active. The user still sees the blur, but
+                // Halalify's detector receives a redacted region instead of a
+                // recursive copy of its own pixelated output.
+                contentSensitivity = View.CONTENT_SENSITIVITY_SENSITIVE
+            }
         }
 
         fun replaceRegion(

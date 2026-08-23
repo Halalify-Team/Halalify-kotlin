@@ -34,6 +34,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -43,6 +44,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -185,6 +187,14 @@ private data class UiStrings(
     val protectedScreenDescription: String,
     val privateTitle: String,
     val privateDescription: String,
+    val firstRunTitle: String,
+    val firstRunDescription: String,
+    val firstRunStepProfile: String,
+    val firstRunStepPermissions: String,
+    val firstRunStepStart: String,
+    val firstRunOpenSettings: String,
+    val firstRunContinue: String,
+    val firstRunNotNow: String,
 )
 
 private val EnglishUi = UiStrings(
@@ -237,6 +247,14 @@ private val EnglishUi = UiStrings(
     protectedScreenDescription = "A private preview of the same protection drawn over the shared screen.",
     privateTitle = "Your screen stays private",
     privateDescription = "Detection runs on your device. Preview frames are never saved or uploaded.",
+    firstRunTitle = "Set up protection",
+    firstRunDescription = "Before the first start, follow these quick steps to let Halalify protect your screen.",
+    firstRunStepProfile = "Choose who to blur and adjust the blur style on the home screen.",
+    firstRunStepPermissions = "Allow screen capture and enable the Halalify private overlay when Android asks.",
+    firstRunStepStart = "Return to Halalify and press the power button again to start protection.",
+    firstRunOpenSettings = "Open settings",
+    firstRunContinue = "Continue",
+    firstRunNotNow = "Not now",
 )
 
 private val ArabicUi = UiStrings(
@@ -289,6 +307,14 @@ private val ArabicUi = UiStrings(
     protectedScreenDescription = "معاينة خاصة لنفس الحماية المطبقة على الشاشة المشتركة.",
     privateTitle = "شاشتك تبقى خاصة",
     privateDescription = "تعمل المعالجة على جهازك، ولا يتم حفظ إطارات المعاينة أو رفعها.",
+    firstRunTitle = "إعداد الحماية",
+    firstRunDescription = "قبل التشغيل الأول، اتبع هذه الخطوات السريعة للسماح لـ Halalify بحماية شاشتك.",
+    firstRunStepProfile = "اختر الفئة التي تريد حجبها واضبط نوع البلور من الصفحة الرئيسية.",
+    firstRunStepPermissions = "اسمح بمشاركة الشاشة وفعّل طبقة Halalify الخاصة عندما يطلب Android ذلك.",
+    firstRunStepStart = "ارجع إلى Halalify واضغط زر التشغيل مرة أخرى لبدء الحماية.",
+    firstRunOpenSettings = "فتح الإعدادات",
+    firstRunContinue = "متابعة",
+    firstRunNotNow = "ليس الآن",
 )
 
 private fun uiStrings(language: AppLanguage): UiStrings =
@@ -374,6 +400,9 @@ internal fun HalalifyApp(
         )
     }
     var showingSettings by remember { mutableStateOf(false) }
+    var showingFirstRunGuide by remember(initialSettings.hasSeenSetupGuide) {
+        mutableStateOf(false)
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -465,12 +494,113 @@ internal fun HalalifyApp(
                         captureState = captureState,
                         language = settings.language,
                         onSettingsChange = { settings = it },
-                        onStartCapture = { onStartCapture(settings) },
+                        onStartCapture = {
+                            if (!settings.hasSeenSetupGuide) {
+                                showingFirstRunGuide = true
+                            } else {
+                                onStartCapture(settings)
+                            }
+                        },
                         onStopCapture = onStopCapture,
                     )
                 }
             }
+
+            if (showingFirstRunGuide) {
+                FirstRunGuideDialog(
+                    ui = uiStrings(settings.language),
+                    onOpenSettings = {
+                        val updatedSettings = settings.copy(hasSeenSetupGuide = true)
+                        settings = updatedSettings
+                        onSave(updatedSettings)
+                        showingFirstRunGuide = false
+                        showingSettings = true
+                    },
+                    onContinue = {
+                        val updatedSettings = settings.copy(hasSeenSetupGuide = true)
+                        settings = updatedSettings
+                        onSave(updatedSettings)
+                        showingFirstRunGuide = false
+                        onStartCapture(updatedSettings)
+                    },
+                    onDismiss = { showingFirstRunGuide = false },
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun FirstRunGuideDialog(
+    ui: UiStrings,
+    onOpenSettings: () -> Unit,
+    onContinue: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = ui.firstRunTitle,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    text = ui.firstRunDescription,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                FirstRunGuideStep(number = "1", text = ui.firstRunStepProfile)
+                FirstRunGuideStep(number = "2", text = ui.firstRunStepPermissions)
+                FirstRunGuideStep(number = "3", text = ui.firstRunStepStart)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onOpenSettings) {
+                Text(ui.firstRunOpenSettings)
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDismiss) {
+                    Text(ui.firstRunNotNow)
+                }
+                TextButton(onClick = onContinue) {
+                    Text(ui.firstRunContinue)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun FirstRunGuideStep(number: String, text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(AccentSoft),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = number,
+                color = Accent,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = text,
+            color = TextPrimary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

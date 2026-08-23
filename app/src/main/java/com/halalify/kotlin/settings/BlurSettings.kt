@@ -46,6 +46,7 @@ internal data class BlurSettings(
     val musicSourceUri: String = "",
     val themeMode: AppThemeMode = AppThemeMode.NORMAL,
     val language: AppLanguage = AppLanguage.ENGLISH,
+    val hasSeenSetupGuide: Boolean = false,
     /** Intensity of the blur effect.
      * 0f = no blur (lightest), 1f = maximum blur (heaviest).
      */
@@ -96,6 +97,7 @@ internal class BlurSettingsRepository(context: Context) {
         language = preferences.getString(KEY_LANGUAGE, null)
             ?.let { savedValue -> AppLanguage.entries.firstOrNull { it.name == savedValue } }
             ?: AppLanguage.ENGLISH,
+        hasSeenSetupGuide = preferences.getBoolean(KEY_HAS_SEEN_SETUP_GUIDE, false),
         intensity = loadIntensity(),
     )
 
@@ -129,6 +131,7 @@ internal class BlurSettingsRepository(context: Context) {
             putString(KEY_MUSIC_SOURCE_URI, settings.musicSourceUri)
             putString(KEY_THEME_MODE, settings.themeMode.name)
             putString(KEY_LANGUAGE, settings.language.name)
+            putBoolean(KEY_HAS_SEEN_SETUP_GUIDE, settings.hasSeenSetupGuide)
             putFloat(KEY_BLUR_INTENSITY, normalizeBlurIntensity(settings.intensity))
             putInt(KEY_BLUR_SETTINGS_REVISION, CURRENT_BLUR_SETTINGS_REVISION)
         }
@@ -148,6 +151,7 @@ internal class BlurSettingsRepository(context: Context) {
         private const val KEY_MUSIC_SOURCE_URI = "music_source_uri"
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_HAS_SEEN_SETUP_GUIDE = "has_seen_setup_guide"
         private const val KEY_BLUR_INTENSITY = "blur_intensity"
         const val KEY_BLUR_SETTINGS_REVISION = "blur_settings_revision"
         const val CURRENT_BLUR_SETTINGS_REVISION = 5

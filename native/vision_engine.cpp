@@ -1,6 +1,7 @@
 #include "vision_engine.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <new>
 #include <utility>
@@ -44,6 +45,7 @@ bool VisionEngine::Initialize(
     if (!ValidateConfig(config, &last_error_)) return false;
     if (!backend_->Load(model_data, model_size, config.num_threads, &last_error_)) return false;
     config_ = config;
+    detail_tile_index_ = 0;
     initialized_ = true;
     last_error_.clear();
     return true;
@@ -55,8 +57,37 @@ hb_status VisionEngine::Process(const hb_frame& frame, std::vector<hb_detection>
         last_error_ = "Vision engine is not initialized or output is null.";
         return HB_STATUS_INVALID_ARGUMENT;
     }
+    // A portrait screenshot that is letterboxed as one square makes a 28px
+    // avatar only about five input pixels wide. Rotate one inference between
+    // the full screen and two overlapping detail regions. Android already
+    // schedules an initial/content-change analysis plus two stabilization
+    // analyses, so a stable screen is covered without increasing the cost of
+    // an individual call beyond one inference.
+    const bool swaps_axes = frame.rotation_degrees == 90 || frame.rotation_degrees == 270;
+    const int upright_width = swaps_axes ? frame.height : frame.width;
+    const int upright_height = swaps_axes ? frame.width : frame.height;
+    constexpr float kPortraitRatio = 1.4F;
+    constexpr float kDetailTileHeightInWidths = 1.25F;
+    constexpr int kDetailTileCount = 2;
+    constexpr int kAnalysisPassCount = kDetailTileCount + 1;
+    FrameRegion region{};
+    if (upright_height >= static_cast<int>(std::round(upright_width * kPortraitRatio))) {
+        const int analysis_pass = detail_tile_index_++ % kAnalysisPassCount;
+        if (analysis_pass > 0) {
+            const int tile_height = std::min(
+                    upright_height,
+                    std::max(
+                            upright_width,
+                            static_cast<int>(
+                                    std::round(upright_width * kDetailTileHeightInWidths))));
+            const int maximum_y = upright_height - tile_height;
+            const int tile_index = analysis_pass - 1;
+            const int tile_y = maximum_y * tile_index / (kDetailTileCount - 1);
+            region = {0, tile_y, upright_width, tile_height};
+        }
+    }
     FrameTransform transform;
-    if (!PreprocessFrame(frame, &input_, &transform, &last_error_)) {
+    if (!PreprocessFrameRegion(frame, region, &input_, &transform, &last_error_)) {
         return HB_STATUS_INVALID_ARGUMENT;
     }
     if (!backend_->Invoke(input_.data(), input_.size(), &output_, &last_error_)) {

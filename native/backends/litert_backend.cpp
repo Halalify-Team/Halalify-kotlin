@@ -20,6 +20,21 @@ bool HasShape(const TfLiteTensor* tensor, const std::vector<int>& expected) {
     return true;
 }
 
+bool IsSupportedSingleOutput(const TfLiteTensor* tensor) {
+    if (tensor == nullptr || TfLiteTensorNumDims(tensor) != 3 ||
+        TfLiteTensorDim(tensor, 0) != 1) {
+        return false;
+    }
+    const int rows = TfLiteTensorDim(tensor, 1);
+    const int columns = TfLiteTensorDim(tensor, 2);
+    return (rows == kOutputChannels && columns > 0) || (rows > 0 && columns == 6);
+}
+
+bool HasValidQuantization(const TfLiteTensor* tensor) {
+    const TfLiteQuantizationParams quantization = TfLiteTensorQuantizationParams(tensor);
+    return quantization.scale > 0.0F && std::isfinite(quantization.scale);
+}
+
 }  // namespace
 
 LiteRtBackend::~LiteRtBackend() {
@@ -34,9 +49,13 @@ void LiteRtBackend::Reset() {
     options_ = nullptr;
     model_ = nullptr;
     model_bytes_.clear();
-    quantized_io_ = false;
+    input_quantized_ = false;
+    split_quantized_output_ = false;
+    single_quantized_output_ = false;
     input_scale_ = 1.0F;
     input_zero_point_ = 0;
+    output_element_count_ = 0;
+    output_candidate_count_ = 0;
 }
 
 bool LiteRtBackend::Load(
@@ -80,51 +99,72 @@ bool LiteRtBackend::Load(
         Reset();
         return false;
     }
-    const int output_count = TfLiteInterpreterGetOutputTensorCount(interpreter_);
-    if (TfLiteTensorType(input) == kTfLiteFloat32 && output_count == 1) {
-        const TfLiteTensor* output = TfLiteInterpreterGetOutputTensor(interpreter_, 0);
-        if (TfLiteTensorType(output) != kTfLiteFloat32 ||
-            !HasShape(output, {1, kOutputChannels, kOutputCandidates})) {
-            if (error) *error = "Model output must be float32 [1, 7, 3549].";
-            Reset();
-            return false;
-        }
-        return true;
-    }
-    if (TfLiteTensorType(input) != kTfLiteInt8 || output_count != 2) {
-        if (error) *error = "Expected Float32 I/O or split INT8 detector I/O.";
+    const TfLiteType input_type = TfLiteTensorType(input);
+    if (input_type != kTfLiteFloat32 && input_type != kTfLiteInt8) {
+        if (error) *error = "Detector input must be Float32 or INT8.";
         Reset();
         return false;
     }
-    const TfLiteQuantizationParams input_quantization =
-            TfLiteTensorQuantizationParams(input);
-    if (!(input_quantization.scale > 0.0F) || !std::isfinite(input_quantization.scale)) {
-        if (error) *error = "INT8 input quantization parameters are invalid.";
+    if (input_type == kTfLiteInt8) {
+        if (!HasValidQuantization(input)) {
+            if (error) *error = "INT8 input quantization parameters are invalid.";
+            Reset();
+            return false;
+        }
+        const TfLiteQuantizationParams input_quantization = TfLiteTensorQuantizationParams(input);
+        input_quantized_ = true;
+        input_scale_ = input_quantization.scale;
+        input_zero_point_ = input_quantization.zero_point;
+    }
+
+    const int output_count = TfLiteInterpreterGetOutputTensorCount(interpreter_);
+    if (output_count == 1) {
+        const TfLiteTensor* output = TfLiteInterpreterGetOutputTensor(interpreter_, 0);
+        const TfLiteType output_type = TfLiteTensorType(output);
+        if (!IsSupportedSingleOutput(output) ||
+            (output_type != kTfLiteFloat32 && output_type != kTfLiteInt8) ||
+            (output_type == kTfLiteInt8 && !HasValidQuantization(output))) {
+            if (error) {
+                *error = "Single output must be Float32/INT8 raw [1, 7, N] or end-to-end [1, N, 6].";
+            }
+            Reset();
+            return false;
+        }
+        output_element_count_ = static_cast<size_t>(TfLiteTensorDim(output, 1)) *
+                TfLiteTensorDim(output, 2);
+        single_quantized_output_ = output_type == kTfLiteInt8;
+        return true;
+    }
+    if (output_count != 2) {
+        if (error) *error = "Expected one detector output or two split INT8 outputs.";
         Reset();
         return false;
     }
     const TfLiteTensor* boxes = TfLiteInterpreterGetOutputTensor(interpreter_, 0);
     const TfLiteTensor* scores = TfLiteInterpreterGetOutputTensor(interpreter_, 1);
-    if (TfLiteTensorType(boxes) != kTfLiteInt8 ||
-        !HasShape(boxes, {1, 4, kOutputCandidates}) ||
-        TfLiteTensorType(scores) != kTfLiteInt8 ||
-        !HasShape(scores, {1, 3, kOutputCandidates})) {
-        if (error) *error = "Split INT8 outputs must be [1, 4, 3549] and [1, 3, 3549].";
+    const bool boxes_shape = boxes != nullptr && TfLiteTensorNumDims(boxes) == 3 &&
+            TfLiteTensorDim(boxes, 0) == 1 && TfLiteTensorDim(boxes, 1) == 4 &&
+            TfLiteTensorDim(boxes, 2) > 0;
+    const bool scores_shape = scores != nullptr && TfLiteTensorNumDims(scores) == 3 &&
+            TfLiteTensorDim(scores, 0) == 1 && TfLiteTensorDim(scores, 1) == 3 &&
+            TfLiteTensorDim(scores, 2) > 0;
+    if (TfLiteTensorType(boxes) != kTfLiteInt8 || !boxes_shape ||
+        TfLiteTensorType(scores) != kTfLiteInt8 || !scores_shape ||
+        TfLiteTensorDim(boxes, 2) != TfLiteTensorDim(scores, 2)) {
+        if (error) *error = "Split INT8 outputs must be [1, 4, N] and [1, 3, N].";
         Reset();
         return false;
     }
     for (const TfLiteTensor* output : {boxes, scores}) {
-        const TfLiteQuantizationParams quantization =
-                TfLiteTensorQuantizationParams(output);
-        if (!(quantization.scale > 0.0F) || !std::isfinite(quantization.scale)) {
+        if (!HasValidQuantization(output)) {
             if (error) *error = "INT8 output quantization parameters are invalid.";
             Reset();
             return false;
         }
     }
-    quantized_io_ = true;
-    input_scale_ = input_quantization.scale;
-    input_zero_point_ = input_quantization.zero_point;
+    split_quantized_output_ = true;
+    output_candidate_count_ = TfLiteTensorDim(boxes, 2);
+    output_element_count_ = static_cast<size_t>(kOutputChannels) * output_candidate_count_;
     return true;
 }
 
@@ -144,7 +184,7 @@ bool LiteRtBackend::Invoke(
         return false;
     }
     TfLiteTensor* input_tensor = TfLiteInterpreterGetInputTensor(interpreter_, 0);
-    if (!quantized_io_) {
+    if (!input_quantized_) {
         const size_t input_bytes = input_count * sizeof(float);
         if (TfLiteTensorByteSize(input_tensor) != input_bytes ||
             TfLiteTensorCopyFromBuffer(input_tensor, input, input_bytes) != kTfLiteOk) {
@@ -170,16 +210,31 @@ bool LiteRtBackend::Invoke(
         if (error) *error = "LiteRT inference failed.";
         return false;
     }
-    constexpr size_t kExpectedOutputCount =
-            static_cast<size_t>(kOutputChannels) * kOutputCandidates;
-    output->resize(kExpectedOutputCount);
-    if (!quantized_io_) {
+    output->resize(output_element_count_);
+    if (!split_quantized_output_) {
         const TfLiteTensor* output_tensor = TfLiteInterpreterGetOutputTensor(interpreter_, 0);
-        const size_t output_bytes = kExpectedOutputCount * sizeof(float);
-        if (TfLiteTensorByteSize(output_tensor) != output_bytes ||
-            TfLiteTensorCopyToBuffer(output_tensor, output->data(), output_bytes) != kTfLiteOk) {
-            if (error) *error = "Could not copy the LiteRT output tensor.";
-            return false;
+        if (!single_quantized_output_) {
+            const size_t output_bytes = output_element_count_ * sizeof(float);
+            if (TfLiteTensorByteSize(output_tensor) != output_bytes ||
+                TfLiteTensorCopyToBuffer(output_tensor, output->data(), output_bytes) != kTfLiteOk) {
+                if (error) *error = "Could not copy the LiteRT output tensor.";
+                return false;
+            }
+        } else {
+            std::vector<int8_t> quantized_output(output_element_count_);
+            if (TfLiteTensorByteSize(output_tensor) != quantized_output.size() ||
+                TfLiteTensorCopyToBuffer(
+                        output_tensor, quantized_output.data(), quantized_output.size()) != kTfLiteOk) {
+                if (error) *error = "Could not copy the quantized LiteRT output tensor.";
+                return false;
+            }
+            const TfLiteQuantizationParams quantization =
+                    TfLiteTensorQuantizationParams(output_tensor);
+            for (size_t index = 0; index < output_element_count_; ++index) {
+                (*output)[index] =
+                        (static_cast<float>(quantized_output[index]) - quantization.zero_point) *
+                        quantization.scale;
+            }
         }
         return true;
     }
@@ -190,7 +245,7 @@ bool LiteRtBackend::Invoke(
         const int channels = branch == 0 ? kBoxChannels : kScoreChannels;
         const TfLiteTensor* output_tensor =
                 TfLiteInterpreterGetOutputTensor(interpreter_, branch);
-        const size_t branch_count = static_cast<size_t>(channels) * kOutputCandidates;
+        const size_t branch_count = static_cast<size_t>(channels) * output_candidate_count_;
         std::vector<int8_t> quantized_output(branch_count);
         if (TfLiteTensorByteSize(output_tensor) != branch_count ||
             TfLiteTensorCopyToBuffer(
@@ -201,11 +256,11 @@ bool LiteRtBackend::Invoke(
         const TfLiteQuantizationParams quantization =
                 TfLiteTensorQuantizationParams(output_tensor);
         for (int channel = 0; channel < channels; ++channel) {
-            for (int candidate = 0; candidate < kOutputCandidates; ++candidate) {
+            for (int candidate = 0; candidate < output_candidate_count_; ++candidate) {
                 const size_t source =
-                        static_cast<size_t>(channel) * kOutputCandidates + candidate;
+                        static_cast<size_t>(channel) * output_candidate_count_ + candidate;
                 const size_t destination =
-                        static_cast<size_t>(branch * kBoxChannels + channel) * kOutputCandidates +
+                        static_cast<size_t>(branch * kBoxChannels + channel) * output_candidate_count_ +
                         candidate;
                 (*output)[destination] =
                         (static_cast<float>(quantized_output[source]) -

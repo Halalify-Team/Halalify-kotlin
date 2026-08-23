@@ -13,6 +13,13 @@ constexpr int kModelChannels = 3;
 constexpr int kOutputChannels = 7;
 constexpr int kOutputCandidates = 3549;
 
+struct FrameRegion {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
 struct FrameTransform {
     int upright_width = 0;
     int upright_height = 0;
@@ -21,6 +28,10 @@ struct FrameTransform {
     float scale = 1.0F;
     float pad_x = 0.0F;
     float pad_y = 0.0F;
+    int crop_x = 0;
+    int crop_y = 0;
+    int crop_width = 0;
+    int crop_height = 0;
 };
 
 }  // namespace halalify

@@ -32,6 +32,7 @@ private:
     std::vector<float> output_;
     std::string last_error_;
     bool initialized_ = false;
+    int detail_tile_index_ = 0;
 };
 
 }  // namespace halalify

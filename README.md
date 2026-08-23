@@ -43,6 +43,8 @@ The extracted web implementation currently interprets model label `a` as female 
 
 The verified deployed model, its machine-readable contract, provenance notes, and the cross-platform C++ integration plan are in [`Model`](Model/README.md).
 
+The reproducible large-data mobile retraining pipeline, leakage guard, tiny-avatar simulation, INT8 export, per-class calibration, and fail-closed release gates are documented in [`training/vision/README_AR.md`](training/vision/README_AR.md).
+
 ## Audio AI engine plan
 
 The playback-capture architecture, exact TFLite waveform contract, integration point, and Android platform limits are documented.

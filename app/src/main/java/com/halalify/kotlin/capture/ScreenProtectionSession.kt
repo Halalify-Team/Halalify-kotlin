@@ -226,7 +226,15 @@ internal class ScreenProtectionSession(
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
             ).filter(Detection::isUsableDetection)
-            val confirmationRequired = lastRenderedDetections.isEmpty()
+            // INITIAL/content-change detections still require two-frame
+            // confirmation. A STABILIZATION result is already a delayed clean
+            // observation, and may come from a non-overlapping portrait tile;
+            // requiring the same box in the next tile would make small bottom
+            // avatars impossible to confirm.
+            val confirmationRequired = requiresNewProtectionConfirmation(
+                hasExistingProtection = lastRenderedDetections.isNotEmpty(),
+                reason = reason,
+            )
             val detections = if (
                 confirmationRequired &&
                 now < newProtectionAllowedAfterMs

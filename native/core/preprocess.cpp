@@ -71,6 +71,15 @@ bool PreprocessFrame(
         std::vector<float>* output,
         FrameTransform* transform,
         std::string* error) {
+    return PreprocessFrameRegion(frame, FrameRegion{}, output, transform, error);
+}
+
+bool PreprocessFrameRegion(
+        const hb_frame& frame,
+        const FrameRegion& region,
+        std::vector<float>* output,
+        FrameTransform* transform,
+        std::string* error) {
     if (output == nullptr || transform == nullptr) {
         if (error) *error = "Preprocess output arguments are null.";
         return false;
@@ -98,13 +107,25 @@ bool PreprocessFrame(
             (frame.rotation_degrees == 90 || frame.rotation_degrees == 270)
                     ? frame.width
                     : frame.height;
+    const bool full_frame = region.width == 0 && region.height == 0;
+    transform->crop_x = full_frame ? 0 : region.x;
+    transform->crop_y = full_frame ? 0 : region.y;
+    transform->crop_width = full_frame ? transform->upright_width : region.width;
+    transform->crop_height = full_frame ? transform->upright_height : region.height;
+    if (transform->crop_x < 0 || transform->crop_y < 0 ||
+        transform->crop_width <= 0 || transform->crop_height <= 0 ||
+        transform->crop_x + transform->crop_width > transform->upright_width ||
+        transform->crop_y + transform->crop_height > transform->upright_height) {
+        if (error) *error = "Frame crop is outside the upright frame.";
+        return false;
+    }
     transform->scale = std::min(
-            static_cast<float>(kModelWidth) / transform->upright_width,
-            static_cast<float>(kModelHeight) / transform->upright_height);
+            static_cast<float>(kModelWidth) / transform->crop_width,
+            static_cast<float>(kModelHeight) / transform->crop_height);
     transform->resized_width = std::max(
-            1, static_cast<int>(std::round(transform->upright_width * transform->scale)));
+            1, static_cast<int>(std::round(transform->crop_width * transform->scale)));
     transform->resized_height = std::max(
-            1, static_cast<int>(std::round(transform->upright_height * transform->scale)));
+            1, static_cast<int>(std::round(transform->crop_height * transform->scale)));
     transform->pad_x = static_cast<float>(kModelWidth - transform->resized_width) * 0.5F;
     transform->pad_y = static_cast<float>(kModelHeight - transform->resized_height) * 0.5F;
 
@@ -117,8 +138,10 @@ bool PreprocessFrame(
             const float resized_x = static_cast<float>(model_x) - transform->pad_x;
             if (resized_x < 0.0F || resized_x >= transform->resized_width) continue;
 
-            const float upright_x = (resized_x + 0.5F) / transform->scale - 0.5F;
-            const float upright_y = (resized_y + 0.5F) / transform->scale - 0.5F;
+            const float upright_x = static_cast<float>(transform->crop_x) +
+                    (resized_x + 0.5F) / transform->scale - 0.5F;
+            const float upright_y = static_cast<float>(transform->crop_y) +
+                    (resized_y + 0.5F) / transform->scale - 0.5F;
             float source_x = 0.0F;
             float source_y = 0.0F;
             UprightToSource(frame, upright_x, upright_y, &source_x, &source_y);

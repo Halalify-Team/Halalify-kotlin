@@ -36,9 +36,13 @@ private:
     TfLiteModel* model_ = nullptr;
     TfLiteInterpreterOptions* options_ = nullptr;
     TfLiteInterpreter* interpreter_ = nullptr;
-    bool quantized_io_ = false;
+    bool input_quantized_ = false;
+    bool split_quantized_output_ = false;
+    bool single_quantized_output_ = false;
     float input_scale_ = 1.0F;
     int input_zero_point_ = 0;
+    size_t output_element_count_ = 0;
+    int output_candidate_count_ = 0;
 };
 
 }  // namespace halalify

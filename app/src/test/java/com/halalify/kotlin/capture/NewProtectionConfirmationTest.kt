@@ -58,4 +58,20 @@ class NewProtectionConfirmationTest {
 
         assertTrue(result.single().shouldBlur)
     }
+
+    @Test
+    fun `stabilization tile is already a confirmed observation`() {
+        assertFalse(
+            requiresNewProtectionConfirmation(
+                hasExistingProtection = false,
+                reason = FrameAnalysisReason.STABILIZATION,
+            ),
+        )
+        assertTrue(
+            requiresNewProtectionConfirmation(
+                hasExistingProtection = false,
+                reason = FrameAnalysisReason.INITIAL,
+            ),
+        )
+    }
 }

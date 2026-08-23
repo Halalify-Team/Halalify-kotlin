@@ -1,0 +1,10 @@
+ultralytics>=8.4.83,<8.5
+torch>=2.7,<3
+torchvision>=0.22,<1
+datasets>=4,<5
+huggingface-hub>=0.34,<1
+Pillow>=11,<13
+numpy>=2,<3
+tensorflow>=2.19,<2.22
+boto3>=1.40,<2
+tqdm>=4.67,<5

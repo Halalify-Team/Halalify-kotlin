@@ -35,6 +35,25 @@ void TestPreprocessLetterboxAndRgb() {
     assert(output[first_content_pixel] > output[first_content_pixel + 1]);
 }
 
+void TestPreprocessDetailRegion() {
+    const std::vector<uint8_t> rgba = {
+            255, 0, 0, 255, 255, 0, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255,
+            0, 0, 255, 255, 0, 0, 255, 255,
+            0, 0, 255, 255, 0, 0, 255, 255,
+    };
+    const hb_frame frame{rgba.data(), 2, 4, 8, 0, 0, HB_PIXEL_FORMAT_RGBA8888};
+    std::vector<float> output;
+    halalify::FrameTransform transform;
+    std::string error;
+    assert(halalify::PreprocessFrameRegion(
+            frame, halalify::FrameRegion{0, 2, 2, 2}, &output, &transform, &error));
+    assert(transform.crop_y == 2);
+    assert(transform.crop_height == 2);
+    const size_t center = (208U * 416U + 208U) * 3U;
+    assert(output[center + 2] > output[center]);
+}
+
 void TestDecodeAndNms() {
     std::vector<float> output(halalify::kOutputChannels * halalify::kOutputCandidates);
     auto set = [&output](int channel, int candidate, float value) {
@@ -60,6 +79,27 @@ void TestDecodeAndNms() {
     assert(detections.size() == 1);
     assert(detections.front().class_id == 0);
     assert(detections.front().should_blur == 1);
+}
+
+void TestDecodeEndToEndOutput() {
+    const std::vector<float> output = {100.0F, 80.0F, 220.0F, 300.0F, 0.91F, 0.0F};
+    halalify::FrameTransform transform{416, 416, 416, 416, 1.0F, 0.0F, 0.0F};
+    hb_config config{};
+    config.target = HB_BLUR_TARGET_FEMALE;
+    config.female_confidence_threshold = 0.25F;
+    config.male_confidence_threshold = 0.25F;
+    config.ignored_confidence_threshold = 0.25F;
+    config.iou_threshold = 0.5F;
+    config.max_detections = 100;
+    config.num_threads = 2;
+    std::vector<hb_detection> detections;
+    std::string error;
+    assert(halalify::DecodeDetections(
+            output.data(), output.size(), transform, config, &detections, &error));
+    assert(detections.size() == 1);
+    assert(detections.front().class_id == 0);
+    assert(detections.front().should_blur == 1);
+    assert(std::fabs(detections.front().x1 - 100.0F / 416.0F) < 1e-5F);
 }
 
 void TestAudioSignalConversionAndResidualScore() {
@@ -121,8 +161,10 @@ void TestSiteFilterReadsExternalRules() {
 int main() {
     TestPolicy();
     TestPreprocessLetterboxAndRgb();
+    TestPreprocessDetailRegion();
     TestNsfwPreprocessUsesBgrVggMeans();
     TestDecodeAndNms();
+    TestDecodeEndToEndOutput();
     TestAudioSignalConversionAndResidualScore();
     TestSiteFilterReadsExternalRules();
     return 0;

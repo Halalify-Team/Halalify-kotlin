@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "seed": 20260823,
+  "model": {
+    "architecture": "yolo26n-p2.yaml",
+    "pretrained": "yolo26n.pt",
+    "input_size": 416,
+    "classes": ["female_appearance", "male_appearance", "other_person"]
+  },
+  "dataset_targets": {
+    "fairface_train": 80000,
+    "openimages_people": 45000,
+    "openimages_hard_negatives": 15000,
+    "avatar_composites": 60000,
+    "validation_fraction": 0.06,
+    "minimum_unique_sources": 100000,
+    "minimum_train_images": 160000,
+    "minimum_tiny_instances": 40000
+  },
+  "training": {
+    "epochs": 100,
+    "patience": 20,
+    "batch": 0.75,
+    "workers": 4,
+    "device": 0,
+    "optimizer": "MuSGD",
+    "amp": true,
+    "deterministic": true,
+    "cache": false,
+    "cos_lr": true,
+    "close_mosaic": 12,
+    "mosaic": 1.0,
+    "mixup": 0.2,
+    "scale": 0.8,
+    "multi_scale": 0.2,
+    "translate": 0.12,
+    "degrees": 5.0,
+    "perspective": 0.0005,
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "hsv_h": 0.015,
+    "hsv_s": 0.55,
+    "hsv_v": 0.4,
+    "save_period": 5
+  },
+  "release_gates": {
+    "max_tflite_size_bytes": 4500000,
+    "max_phone_p50_ms": 35.0,
+    "max_phone_p95_ms": 55.0,
+    "min_female_recall": 0.9,
+    "min_male_recall": 0.9,
+    "min_avatar_recall": 0.8,
+    "min_profile_recall": 0.8,
+    "min_ap50": 0.7,
+    "max_false_blur_rate": 0.035,
+    "min_quantized_map_retention": 0.98
+  }
+}

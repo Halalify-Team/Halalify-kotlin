@@ -4,6 +4,11 @@ import com.halalify.kotlin.model.Detection
 import kotlin.math.max
 import kotlin.math.min
 
+internal fun requiresNewProtectionConfirmation(
+    hasExistingProtection: Boolean,
+    reason: FrameAnalysisReason,
+): Boolean = !hasExistingProtection && reason != FrameAnalysisReason.STABILIZATION
+
 /**
  * Prevents a single unstable model result from creating a new overlay on an
  * otherwise clean screen. Existing protected tracks bypass this gate.

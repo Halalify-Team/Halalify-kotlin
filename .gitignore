@@ -33,6 +33,8 @@ build/
 
 # Local configuration file (sdk path, etc)
 local.properties
+.env
+**/.env
 
 # Signing files
 *.jks
@@ -80,3 +82,5 @@ bancmark/
 training/*
 !training/vision/
 !training/vision/**
+!training/discord_bot/
+!training/discord_bot/**

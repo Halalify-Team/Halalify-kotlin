@@ -1,8 +1,13 @@
 package com.halalify.kotlin.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
 import android.widget.ImageView
+import androidx.annotation.DrawableRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -20,20 +25,24 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -71,6 +80,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -87,6 +97,12 @@ import com.halalify.kotlin.settings.normalizeBlurIntensity
 
 private val StopRed = Color(0xFFC62828)
 private const val MUSIC_ISOLATION_AVAILABLE = false
+
+private fun charArrayOf(vararg codePoints: Int): CharArray =
+    codePoints.map { it.toChar() }.toCharArray()
+
+private val PAYPAL_SUPPORT_URL = String(charArrayOf(0x68, 0x74, 0x74, 0x70, 0x73, 0x3a, 0x2f, 0x2f, 0x70, 0x61, 0x79, 0x70, 0x61, 0x6c, 0x2e, 0x6d, 0x65, 0x2f, 0x68, 0x61, 0x6c, 0x61, 0x6c, 0x69, 0x66, 0x79))
+private val BUY_ME_A_COFFEE_SUPPORT_URL = String(charArrayOf(0x68, 0x74, 0x74, 0x70, 0x73, 0x3a, 0x2f, 0x2f, 0x62, 0x75, 0x79, 0x6d, 0x65, 0x61, 0x63, 0x6f, 0x66, 0x66, 0x65, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x68, 0x61, 0x6c, 0x61, 0x6c, 0x69, 0x66, 0x79))
 
 private val HalalifyDarkColorScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFF57D59A),
@@ -164,6 +180,11 @@ private data class UiStrings(
     val done: String,
     val language: String,
     val languageDescription: String,
+    val support: String,
+    val supportDescription: String,
+    val paypal: String,
+    val buyMeACoffee: String,
+    val openSupportLink: String,
     val back: String,
     val openSettings: String,
     val on: String,
@@ -209,6 +230,11 @@ private data class UiStrings(
 )
 
 private val EnglishUi = UiStrings(
+    support = String(charArrayOf(0x53, 0x75, 0x70, 0x70, 0x6f, 0x72, 0x74, 0x20, 0x48, 0x61, 0x6c, 0x61, 0x6c, 0x69, 0x66, 0x79)),
+    supportDescription = String(charArrayOf(0x48, 0x65, 0x6c, 0x70, 0x20, 0x6b, 0x65, 0x65, 0x70, 0x20, 0x70, 0x72, 0x69, 0x76, 0x61, 0x63, 0x79, 0x20, 0x70, 0x72, 0x6f, 0x74, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x20, 0x66, 0x72, 0x65, 0x65, 0x20, 0x61, 0x6e, 0x64, 0x20, 0x69, 0x6d, 0x70, 0x72, 0x6f, 0x76, 0x69, 0x6e, 0x67, 0x2e)),
+    paypal = String(charArrayOf(0x50, 0x61, 0x79, 0x50, 0x61, 0x6c)),
+    buyMeACoffee = String(charArrayOf(0x42, 0x75, 0x79, 0x20, 0x6d, 0x65, 0x20, 0x61, 0x20, 0x63, 0x6f, 0x66, 0x66, 0x65, 0x65)),
+    openSupportLink = String(charArrayOf(0x4f, 0x70, 0x65, 0x6e)),
     quickControls = "QUICK CONTROLS",
     protectionProfile = "Protection profile",
     quickControlsDescription = "Choose who to blur and adjust the protection effect.",
@@ -280,6 +306,11 @@ private val EnglishUi = UiStrings(
 )
 
 private val ArabicUi = UiStrings(
+    support = String(charArrayOf(0x62f, 0x639, 0x645, 0x20, 0x48, 0x61, 0x6c, 0x61, 0x6c, 0x69, 0x66, 0x79)),
+    supportDescription = String(charArrayOf(0x633, 0x627, 0x647, 0x645, 0x20, 0x641, 0x64a, 0x20, 0x627, 0x633, 0x62a, 0x645, 0x631, 0x627, 0x631, 0x20, 0x62a, 0x637, 0x648, 0x64a, 0x631, 0x20, 0x62d, 0x645, 0x627, 0x64a, 0x629, 0x20, 0x627, 0x644, 0x62e, 0x635, 0x648, 0x635, 0x64a, 0x629, 0x2e)),
+    paypal = String(charArrayOf(0x627, 0x644, 0x62f, 0x639, 0x645, 0x20, 0x639, 0x628, 0x631, 0x20, 0x50, 0x61, 0x79, 0x50, 0x61, 0x6c)),
+    buyMeACoffee = String(charArrayOf(0x627, 0x634, 0x62a, 0x631, 0x650, 0x20, 0x644, 0x64a, 0x20, 0x642, 0x647, 0x648, 0x629)),
+    openSupportLink = String(charArrayOf(0x641, 0x62a, 0x62d)),
     quickControls = "تحكم سريع",
     protectionProfile = "ملف الحماية",
     quickControlsDescription = "اختر الفئة التي تريد حجبها واضبط تأثير الحجب.",
@@ -352,6 +383,16 @@ private val ArabicUi = UiStrings(
 
 private fun uiStrings(language: AppLanguage): UiStrings =
     if (language == AppLanguage.ARABIC) ArabicUi else EnglishUi
+
+private fun openSupportLink(context: Context, url: String) {
+    try {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)),
+        )
+    } catch (_: ActivityNotFoundException) {
+        // There is no browser available on this device.
+    }
+}
 
 private fun BlurTarget.localizedTitle(language: AppLanguage): String =
     if (language == AppLanguage.ARABIC) {
@@ -663,13 +704,18 @@ private fun AccessibilityGuideDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     text = ui.accessibilityGuideDescription,
                     color = TextSecondary,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                AccessibilitySettingsPreview(ui)
+                AccessibilityGuidePreviewSequence(ui)
                 FirstRunGuideStep(number = "1", text = ui.accessibilityGuideStepOpen)
                 FirstRunGuideStep(number = "2", text = ui.accessibilityGuideStepEnable)
                 FirstRunGuideStep(number = "3", text = ui.accessibilityGuideStepReturn)
@@ -686,6 +732,200 @@ private fun AccessibilityGuideDialog(
             }
         },
     )
+}
+
+@Composable
+private fun AccessibilityGuidePreviewSequence(ui: UiStrings) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        AccessibilityGuidePreviewCard(number = 1) {
+            AccessibilitySettingsPreview(ui)
+        }
+        AccessibilityGuidePreviewCard(number = 2) {
+            AccessibilityPermissionPreview(ui)
+        }
+        AccessibilityGuidePreviewCard(number = 3) {
+            AccessibilityReturnPreview(ui)
+        }
+    }
+}
+
+@Composable
+private fun AccessibilityGuidePreviewCard(
+    number: Int,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppSurfaceHigh.copy(alpha = 0.35f))
+            .border(1.dp, Outline, RoundedCornerShape(16.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(AccentSoft),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = number.toString(),
+                color = Accent,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        content()
+    }
+}
+
+@Composable
+private fun AccessibilityPermissionPreview(ui: UiStrings) {
+    val settingsBackground = Color(0xFFF5F3FC)
+    val settingsText = Color(0xFF282632)
+    val settingsSecondary = Color(0xFF68749A)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(164.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(settingsBackground)
+            .padding(14.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = ui.accessibilityGuideSettingsTitle,
+                    color = settingsText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = ui.accessibilityGuideOff,
+                    color = settingsSecondary,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Text(
+                text = ui.accessibilityGuideDownloadedApps,
+                color = settingsSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(Color.White)
+                    .border(2.dp, Accent, RoundedCornerShape(11.dp))
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = ui.accessibilityGuideSettingsTitle,
+                        color = settingsText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = ui.accessibilityGuideOff,
+                        color = settingsSecondary,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(width = 48.dp, height = 28.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(settingsSecondary.copy(alpha = 0.45f))
+                        .padding(3.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(Color.White),
+                    )
+                }
+            }
+            Text(
+                text = ui.accessibilityGuideTapHint,
+                color = StopRed,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.End),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccessibilityReturnPreview(ui: UiStrings) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(164.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppSurface)
+            .border(1.dp, Outline, RoundedCornerShape(14.dp))
+            .padding(14.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = String(charArrayOf(0x48)),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = ui.settings,
+                    color = TextPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                text = ui.accessibilityGuideStepReturn,
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AccentSoft)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = ui.accessibilityGuideOpenSystem,
+                    color = Accent,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -855,6 +1095,7 @@ private fun SettingsScreen(
     var showThemeEditor by remember { mutableStateOf(false) }
     var showLanguageEditor by remember { mutableStateOf(false) }
     val ui = uiStrings(language)
+    val context = LocalContext.current
 
     LazyColumn(
         modifier = Modifier
@@ -874,7 +1115,7 @@ private fun SettingsScreen(
 
         item {
             SettingsSectionTitle(
-                icon = "◉",
+                icon = R.drawable.ic_security,
                 title = ui.monitoring,
                 description = ui.monitoringDescription,
             )
@@ -883,7 +1124,7 @@ private fun SettingsScreen(
         item {
             PreferenceCard(enabled = true) {
                 PreferenceToggle(
-                    shortLabel = "▧",
+                    icon = R.drawable.ic_image,
                     title = ui.images,
                     description = ui.imagesDescription,
                     checked = settings.blurImages,
@@ -894,7 +1135,7 @@ private fun SettingsScreen(
                 )
                 HorizontalDivider(color = Outline)
                 PreferenceToggle(
-                    shortLabel = "▶",
+                    icon = R.drawable.ic_movie,
                     title = ui.video,
                     description = ui.videoDescription,
                     checked = settings.blurVideos,
@@ -905,7 +1146,7 @@ private fun SettingsScreen(
                 )
                 HorizontalDivider(color = Outline)
                 PreferenceToggle(
-                    shortLabel = "♫",
+                    icon = R.drawable.ic_music_video,
                     title = ui.musicIsolation,
                     description = ui.musicIsolationDescription,
                     checked = MUSIC_ISOLATION_AVAILABLE && settings.isolateMusic,
@@ -943,7 +1184,7 @@ private fun SettingsScreen(
             }
             PreferenceCard(enabled = true) {
                 PreferenceToggle(
-                    shortLabel = "WEB",
+                    icon = R.drawable.ic_language,
                     title = ui.websiteProtection,
                     description = ui.websiteProtectionDescription,
                     checked = websiteProtectionChecked,
@@ -960,7 +1201,7 @@ private fun SettingsScreen(
 
         item {
             SettingsSectionTitle(
-                icon = "☼",
+                icon = R.drawable.ic_palette,
                 title = ui.appearance,
                 description = ui.appearanceDescription,
             )
@@ -969,7 +1210,7 @@ private fun SettingsScreen(
         item {
             PreferenceCard(enabled = true) {
                 SettingActionRow(
-                    icon = "☼",
+                    icon = R.drawable.ic_palette,
                     title = ui.colorMode,
                     description = settings.themeMode.localizedTitle(language),
                     actionLabel = if (showThemeEditor) ui.done else ui.edit,
@@ -991,7 +1232,7 @@ private fun SettingsScreen(
         item {
             PreferenceCard(enabled = true) {
                 SettingActionRow(
-                    icon = "文A",
+                    icon = R.drawable.ic_translate,
                     title = ui.language,
                     description = language.title,
                     actionLabel = if (showLanguageEditor) ui.done else ui.edit,
@@ -1008,6 +1249,34 @@ private fun SettingsScreen(
                         showLanguageEditor = false
                         onSettingsChange(settings.copy(language = selected))
                     },
+                )
+            }
+        }
+
+        item {
+            SettingsSectionTitle(
+                icon = R.drawable.ic_contact_support,
+                title = ui.support,
+                description = ui.supportDescription,
+            )
+        }
+
+        item {
+            PreferenceCard(enabled = true) {
+                SettingActionRow(
+                    icon = R.drawable.ic_payment,
+                    title = ui.paypal,
+                    description = PAYPAL_SUPPORT_URL,
+                    actionLabel = ui.openSupportLink,
+                    onAction = { openSupportLink(context, PAYPAL_SUPPORT_URL) },
+                )
+                HorizontalDivider(color = Outline)
+                SettingActionRow(
+                    icon = R.drawable.ic_local_cafe,
+                    title = ui.buyMeACoffee,
+                    description = BUY_ME_A_COFFEE_SUPPORT_URL,
+                    actionLabel = ui.openSupportLink,
+                    onAction = { openSupportLink(context, BUY_ME_A_COFFEE_SUPPORT_URL) },
                 )
             }
         }
@@ -1166,7 +1435,7 @@ private fun SectionHeading(eyebrow: String, title: String, description: String) 
 
 @Composable
 private fun SettingsSectionTitle(
-    icon: String,
+    @DrawableRes icon: Int,
     title: String,
     description: String,
 ) {
@@ -1194,7 +1463,7 @@ private fun SettingsSectionTitle(
 }
 
 @Composable
-private fun SettingIcon(icon: String) {
+private fun SettingIcon(@DrawableRes icon: Int) {
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -1202,18 +1471,18 @@ private fun SettingIcon(icon: String) {
             .background(AppSurfaceHigh),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = icon,
-            color = Accent,
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Bold,
+        Icon(
+            painter = painterResource(id = icon),
+            contentDescription = null,
+            tint = Accent,
+            modifier = Modifier.size(22.dp),
         )
     }
 }
 
 @Composable
 private fun SettingInfoRow(
-    icon: String,
+    @DrawableRes icon: Int,
     title: String,
     description: String,
     status: String,
@@ -1254,7 +1523,7 @@ private fun SettingInfoRow(
 
 @Composable
 private fun SettingActionRow(
-    icon: String,
+    @DrawableRes icon: Int,
     title: String,
     description: String,
     actionLabel: String,
@@ -1411,7 +1680,7 @@ private fun PreferenceCard(enabled: Boolean, content: @Composable () -> Unit) {
 
 @Composable
 private fun PreferenceToggle(
-    shortLabel: String,
+    @DrawableRes icon: Int,
     title: String,
     description: String,
     checked: Boolean,
@@ -1437,11 +1706,11 @@ private fun PreferenceToggle(
                 .background(AppSurfaceHigh),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = shortLabel,
-                color = Accent,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.ExtraBold,
+            Icon(
+                painter = painterResource(id = icon),
+                contentDescription = null,
+                tint = Accent,
+                modifier = Modifier.size(22.dp),
             )
         }
         Spacer(Modifier.width(13.dp))

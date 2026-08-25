@@ -76,11 +76,3 @@ extracted_haramblur_model/
 training/
 bancmark/
 
-# Keep the reproducible visual-training recipe in Git while continuing to
-# ignore downloaded datasets, environments, checkpoints, and run artifacts.
-!training/
-training/*
-!training/vision/
-!training/vision/**
-!training/discord_bot/
-!training/discord_bot/**

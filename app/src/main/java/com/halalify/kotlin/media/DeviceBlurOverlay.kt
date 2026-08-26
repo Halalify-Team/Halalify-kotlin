@@ -26,6 +26,9 @@ private const val MAX_UNTRUSTED_PASS_THROUGH_OPACITY = 0.8F
 internal interface ProtectionOverlay : Closeable {
     /** Takes ownership of every bitmap in [regions]. */
     fun update(regions: List<OverlayRegion>)
+
+    /** Moves the currently visible regions with scrolled screen content. */
+    fun offset(deltaX: Int, deltaY: Int) = Unit
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -37,12 +40,14 @@ internal class DeviceBlurOverlay(
     private data class RegionWindow(
         val view: OpaqueRegionView,
         val params: WindowManager.LayoutParams,
+        var protectionId: Long? = null,
     )
 
     private data class PreparedRegion(
         val bitmap: Bitmap,
         val bounds: Rect,
         val isFiltered: Boolean,
+        val protectionId: Long?,
     )
 
     private val appContext = context.applicationContext
@@ -105,6 +110,22 @@ internal class DeviceBlurOverlay(
 
         if (shouldPost) {
             mainHandler.post { applyPending() }
+        }
+    }
+
+    override fun offset(deltaX: Int, deltaY: Int) {
+        if (closed || (deltaX == 0 && deltaY == 0)) return
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyPending()
+            offsetOnMainThread(deltaX, deltaY)
+        } else {
+            mainHandler.post {
+                if (!closed) {
+                    applyPending()
+                    offsetOnMainThread(deltaX, deltaY)
+                }
+            }
         }
     }
 
@@ -206,10 +227,11 @@ internal class DeviceBlurOverlay(
                 bitmap = region.bitmap,
                 bounds = scaled,
                 isFiltered = region.isFiltered,
+                protectionId = region.protectionId,
             )
         }
 
-        ensureWindowCount(prepared.size)
+        matchWindowsToRegions(prepared)
 
         prepared.forEachIndexed { index, region ->
             val regionWindow = windows[index]
@@ -229,10 +251,22 @@ internal class DeviceBlurOverlay(
             params.alpha = windowAlpha
             params.format = PixelFormat.OPAQUE
 
-            val oldBitmap = regionWindow.view.replaceRegion(
-                bitmap = region.bitmap,
-                solid = !region.isFiltered,
+            val preserveBitmap = shouldPreserveOverlayBitmap(
+                currentProtectionId = regionWindow.protectionId,
+                hasFilteredBitmap = regionWindow.view.hasFilteredBitmap(),
+                newProtectionId = region.protectionId,
+                newIsFiltered = region.isFiltered,
             )
+            val oldBitmap = if (preserveBitmap) {
+                FrameBlurRenderer.releaseOverlayBitmap(region.bitmap)
+                null
+            } else {
+                regionWindow.view.replaceRegion(
+                    bitmap = region.bitmap,
+                    solid = !region.isFiltered,
+                )
+            }
+            regionWindow.protectionId = region.protectionId
 
             if (
                 oldBitmap != null &&
@@ -252,13 +286,13 @@ internal class DeviceBlurOverlay(
 
             Log.d(
                 HALALIFY_OVERLAY_TAG,
-                "protected region[$index] bounds=$rect filtered=${region.isFiltered} type=$windowType alpha=${params.alpha}",
+                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
             )
         }
     }
 
-    private fun ensureWindowCount(required: Int) {
-        while (windows.size < required) {
+    private fun matchWindowsToRegions(regions: List<PreparedRegion>) {
+        while (windows.size < regions.size) {
             val view = OpaqueRegionView(trustedWindowContext ?: appContext)
             val params = createRegionLayoutParams()
 
@@ -271,9 +305,21 @@ internal class DeviceBlurOverlay(
             )
         }
 
-        while (windows.size > required) {
-            val removed = windows.removeAt(windows.lastIndex)
+        val incomingIds = regions.mapNotNull(PreparedRegion::protectionId).toSet()
+        val available = windows.toMutableList()
+        val ordered = ArrayList<RegionWindow>(regions.size)
+        regions.forEach { region ->
+            val matchingWindow = region.protectionId?.let { protectionId ->
+                available.firstOrNull { it.protectionId == protectionId }
+            }
+            val reusableWindow = matchingWindow ?: available.firstOrNull {
+                it.protectionId == null || it.protectionId !in incomingIds
+            } ?: available.first()
+            available.remove(reusableWindow)
+            ordered += reusableWindow
+        }
 
+        available.forEach { removed ->
             removed.view.detachBitmap()?.let {
                 FrameBlurRenderer.releaseOverlayBitmap(it)
             }
@@ -281,6 +327,18 @@ internal class DeviceBlurOverlay(
             runCatching {
                 windowManager.removeViewImmediate(removed.view)
             }
+        }
+
+        windows.clear()
+        windows += ordered
+    }
+
+    private fun offsetOnMainThread(deltaX: Int, deltaY: Int) {
+        windows.forEach { regionWindow ->
+            val params = regionWindow.params
+            params.x += deltaX
+            params.y += deltaY
+            windowManager.updateViewLayout(regionWindow.view, params)
         }
     }
 
@@ -462,6 +520,9 @@ internal class DeviceBlurOverlay(
             regionBitmap = null
             return old
         }
+
+        fun hasFilteredBitmap(): Boolean =
+            !solid && regionBitmap?.isRecycled == false
 
         override fun onDraw(canvas: Canvas) {
             // Replace every surface pixel with fully opaque black first.

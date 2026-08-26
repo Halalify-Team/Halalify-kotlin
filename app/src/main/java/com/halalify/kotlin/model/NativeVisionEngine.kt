@@ -14,6 +14,7 @@ internal data class Detection(
     val classId: Int,
     val shouldBlur: Boolean,
     val isNsfw: Boolean = false,
+    val protectionId: Long? = null,
 ) {
     val label: String
         get() = when (classId) {

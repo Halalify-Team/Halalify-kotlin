@@ -15,11 +15,13 @@ internal class ProtectionTracker(
     private val smoothingAlpha: Float = DEFAULT_SMOOTHING_ALPHA,
 ) {
     private class Track(
+        val id: Long,
         var detection: Detection,
         var missedContentChanges: Int = 0,
     )
 
     private val tracks = mutableListOf<Track>()
+    private var nextProtectionId = 1L
 
     init {
         require(maxMissedContentChanges > 0) { "Missed content-change limit must be positive." }
@@ -51,7 +53,10 @@ internal class ProtectionTracker(
 
             // Preserve the protection decision even when a later frame briefly
             // changes the class assigned to the same person.
-            track.detection = smooth(track.detection, detection).copy(shouldBlur = true)
+            track.detection = smooth(track.detection, detection).copy(
+                shouldBlur = true,
+                protectionId = track.id,
+            )
             track.missedContentChanges = 0
             availableTracks.remove(track)
             matchedDetections += indexedDetection.index
@@ -62,7 +67,13 @@ internal class ProtectionTracker(
             .filterNot { matchedDetections.contains(it.index) }
             .map { it.value }
             .toList()
-        newProtectedDetections.forEach { detection -> tracks += Track(detection) }
+        newProtectedDetections.forEach { detection ->
+            val id = nextProtectionId++
+            tracks += Track(
+                id = id,
+                detection = detection.copy(protectionId = id),
+            )
+        }
 
         // A static or periodically refreshed screen never ages protected regions.
         // When a new protected box appears after a real change, remove unmatched
@@ -101,7 +112,33 @@ internal class ProtectionTracker(
 
     fun reset() {
         tracks.clear()
+        nextProtectionId = 1L
     }
+
+    /**
+     * Follows content moved by an accessibility scroll event. Tracks are kept
+     * while any part of their box is on screen and removed only after the box
+     * has moved completely beyond the display edge.
+     */
+    fun offset(deltaX: Float, deltaY: Float): List<Detection> {
+        if (deltaX == 0F && deltaY == 0F) return currentDetections()
+
+        tracks.forEach { track ->
+            track.detection = track.detection.copy(
+                x1 = track.detection.x1 + deltaX,
+                y1 = track.detection.y1 + deltaY,
+                x2 = track.detection.x2 + deltaX,
+                y2 = track.detection.y2 + deltaY,
+            )
+        }
+        tracks.removeAll { track -> !track.detection.intersectsDisplay() }
+        return currentDetections()
+    }
+
+    private fun currentDetections(): List<Detection> = tracks.map(Track::detection)
+
+    private fun Detection.intersectsDisplay(): Boolean =
+        x2 > 0F && x1 < 1F && y2 > 0F && y1 < 1F
 
     private fun intersectionOverUnion(first: Detection, second: Detection): Float {
         val intersectionWidth = (min(first.x2, second.x2) - max(first.x1, second.x1))

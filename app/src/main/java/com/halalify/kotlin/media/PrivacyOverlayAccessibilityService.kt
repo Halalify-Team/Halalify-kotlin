@@ -35,7 +35,7 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
                 if (sourcePackageName == lastWindowPackageName) return
                 lastWindowPackageName = sourcePackageName
                 lastTrackedContentEventAtMs = event.eventTime
-                TrustedOverlayHost.invalidateContent()
+                TrustedOverlayHost.invalidateContent(discardExistingProtection = true)
             }
 
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
@@ -45,6 +45,14 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
                         event.scrollDeltaX != 0 ||
                         event.scrollDeltaY != 0
                 if (!hasRealScrollDelta) return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    // Accessibility reports how far the scroll position moved;
+                    // visible content moves in the opposite direction.
+                    TrustedOverlayHost.moveContentBy(
+                        deltaX = -event.scrollDeltaX,
+                        deltaY = -event.scrollDeltaY,
+                    )
+                }
                 val startsNewInteraction =
                     lastTrackedContentEventAtMs == Long.MIN_VALUE ||
                         event.eventTime - lastTrackedContentEventAtMs >= CONTENT_EVENT_QUIET_GAP_MS
@@ -82,7 +90,8 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
 internal object TrustedOverlayHost {
     @Volatile
     private var service: PrivacyOverlayAccessibilityService? = null
-    private val contentInvalidationListeners = CopyOnWriteArraySet<() -> Unit>()
+    private val contentInvalidationListeners = CopyOnWriteArraySet<(Boolean) -> Unit>()
+    private val contentMovementListeners = CopyOnWriteArraySet<(Int, Int) -> Unit>()
 
     val isConnected: Boolean
         get() = service?.let { true } ?: false
@@ -101,7 +110,7 @@ internal object TrustedOverlayHost {
         }
     }
 
-    fun subscribeToContentInvalidation(listener: () -> Unit): Closeable {
+    fun subscribeToContentInvalidation(listener: (Boolean) -> Unit): Closeable {
         contentInvalidationListeners += listener
         return object : Closeable {
             override fun close() {
@@ -110,9 +119,25 @@ internal object TrustedOverlayHost {
         }
     }
 
-    fun invalidateContent() {
+    fun subscribeToContentMovement(listener: (Int, Int) -> Unit): Closeable {
+        contentMovementListeners += listener
+        return object : Closeable {
+            override fun close() {
+                contentMovementListeners -= listener
+            }
+        }
+    }
+
+    fun invalidateContent(discardExistingProtection: Boolean = false) {
         contentInvalidationListeners.forEach { listener ->
-            runCatching(listener)
+            runCatching { listener(discardExistingProtection) }
+        }
+    }
+
+    fun moveContentBy(deltaX: Int, deltaY: Int) {
+        if (deltaX == 0 && deltaY == 0) return
+        contentMovementListeners.forEach { listener ->
+            runCatching { listener(deltaX, deltaY) }
         }
     }
 }

@@ -189,6 +189,41 @@ class ProtectionTrackerTest {
         assertEquals(moved.x1, protected.single().x1, 0.0001F)
     }
 
+    @Test
+    fun `protected region follows content movement while still on screen`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val protected = tracker.offset(deltaX = 0F, deltaY = -0.20F)
+
+        assertEquals(1, protected.size)
+        assertEquals(-0.10F, protected.single().y1, 0.0001F)
+        assertEquals(0.60F, protected.single().y2, 0.0001F)
+    }
+
+    @Test
+    fun `protected region is removed only after content leaves the display`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+
+        val protected = tracker.offset(deltaX = 0F, deltaY = -0.90F)
+
+        assertTrue(protected.isEmpty())
+    }
+
+    @Test
+    fun `protected region keeps the same identity across detector updates`() {
+        val tracker = ProtectionTracker()
+        val first = tracker.update(listOf(detection(shouldBlur = true))).single()
+
+        val refreshed = tracker.update(
+            listOf(detection(shouldBlur = true).copy(x1 = 0.12F, x2 = 0.62F)),
+        ).single()
+
+        assertTrue(first.protectionId != null)
+        assertEquals(first.protectionId, refreshed.protectionId)
+    }
+
     private fun detection(
         classId: Int = 0,
         shouldBlur: Boolean,

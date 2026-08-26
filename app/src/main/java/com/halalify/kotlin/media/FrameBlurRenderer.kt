@@ -28,6 +28,8 @@ internal data class OverlayRegion(
      * false = draw a fully solid black region (Solid)
      */
     val isFiltered: Boolean = true,
+    /** Stable identity used to keep the original filtered bitmap on screen. */
+    val protectionId: Long? = null,
 )
 
 internal object FrameBlurRenderer {
@@ -65,7 +67,7 @@ internal object FrameBlurRenderer {
                     rect = rect,
                     style = style,
                     intensity = intensity,
-                )
+                ).copy(protectionId = detection.protectionId)
             }
 
             if (includePreview) {

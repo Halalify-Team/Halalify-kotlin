@@ -25,6 +25,7 @@ import com.halalify.kotlin.settings.BlurStyle
 import com.halalify.kotlin.settings.normalizeBlurIntensity
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
@@ -57,27 +58,21 @@ internal class ScreenProtectionSession(
     private var captureWidth = 0
     private var captureHeight = 0
     private var captureDensityDpi = 0
-    private var refreshedContentGeneration = Long.MIN_VALUE
     private var visionThread: HandlerThread? = null
     private var lastRenderedDetections: List<Detection> = emptyList()
     private var lastRenderedStyle: BlurStyle? = null
     private var lastRenderedIntensity = Float.NaN
     private var lastChangeCheckAt = 0L
     private var contentInvalidationSubscription: Closeable? = null
+    private var contentMovementSubscription: Closeable? = null
     private val requestedContentGeneration = AtomicLong(0L)
+    private val discardExistingProtection = AtomicBoolean(false)
     @Volatile
     private var handledContentGeneration = 0L
 
-    @Volatile
-    private var cleanFrameAfterMs = Long.MIN_VALUE
-
-    @Volatile
-    private var restoreProtectionAfterCleanCapture = false
-
-    @Volatile
-    private var pendingCleanFrameReason = FrameAnalysisReason.CONTENT_CHANGED
-
-    private var newProtectionAllowedAfterMs = Long.MIN_VALUE
+    private val contentMovementLock = Any()
+    private var pendingContentDeltaX = 0
+    private var pendingContentDeltaY = 0
 
     @Volatile
     private var running = false
@@ -116,7 +111,10 @@ internal class ScreenProtectionSession(
         lastChangeCheckAt = 0L
         running = true
         contentInvalidationSubscription = TrustedOverlayHost.subscribeToContentInvalidation(
-            ::requestCleanContentFrame,
+            ::requestContentAnalysis,
+        )
+        contentMovementSubscription = TrustedOverlayHost.subscribeToContentMovement(
+            ::onContentMoved,
         )
 
         try {
@@ -141,82 +139,38 @@ internal class ScreenProtectionSession(
             val plane = image.planes.firstOrNull() ?: return
             if (plane.pixelStride != RGBA_PIXEL_STRIDE) return
 
+            applyPendingContentMovement()
             val observedContentGeneration = requestedContentGeneration.get()
             val externallyInvalidated = observedContentGeneration != handledContentGeneration
-            if (externallyInvalidated && now < cleanFrameAfterMs) return
-            val shouldRestoreProtection =
-                externallyInvalidated && restoreProtectionAfterCleanCapture
-            val cleanFrameReason = pendingCleanFrameReason
-            if (
-                externallyInvalidated &&
-                !shouldRestoreProtection &&
-                refreshedContentGeneration != observedContentGeneration
-            ) {
-                // Secure overlay layers can leave unchanged tiles from the
-                // previous app in MediaProjection's buffer. Reattaching the
-                // capture surface forces a complete composition of the new
-                // screen instead of classifying those stale pixels.
-                refreshVirtualDisplay()
-                refreshedContentGeneration = observedContentGeneration
-                cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
-                Log.d(TAG, "Reattached capture surface after navigation or scroll.")
-                return
-            }
             if (externallyInvalidated) {
-                if (!shouldRestoreProtection) {
+                if (discardExistingProtection.getAndSet(false)) {
                     protectionTracker.reset()
                     newProtectionConfirmation.reset()
                     lastRenderedDetections = emptyList()
-                    newProtectionAllowedAfterMs =
-                        now + POST_NAVIGATION_CONFIRMATION_DELAY_MS
+                    overlay.update(emptyList())
                 }
                 frameActivityDetector.reset()
                 handledContentGeneration = observedContentGeneration
-                Log.d(TAG, "Processing clean frame after navigation or scroll.")
+                Log.d(TAG, "Analyzing changed content while retaining visible protection.")
             }
 
             val sample = plane.sampleGrid(
                 width = image.width,
                 height = image.height,
-                protectedDetections =
-                    if (externallyInvalidated) emptyList() else lastRenderedDetections,
+                protectedDetections = lastRenderedDetections,
             )
             val currentVisualSettings = visualSettings
             val currentVisualSettingsVersion = visualSettingsVersion
             val visualSettingsChanged = currentVisualSettingsVersion != renderedVisualSettingsVersion
             val activityReason = frameActivityDetector.analysisReason(sample, now)
-            if (
-                !externallyInvalidated &&
-                (
-                    activityReason == FrameAnalysisReason.CONTENT_CHANGED ||
-                        activityReason == FrameAnalysisReason.SAFETY_REFRESH
-                    ) &&
-                lastRenderedDetections.isNotEmpty()
-            ) {
-                // A sensitive overlay is redacted from MediaProjection. Never
-                // age a protected track using that incomplete frame. Briefly
-                // remove our windows and classify the next clean frame.
-                requestCleanContentFrame(
-                    reason = activityReason,
-                    restoreProtectionAfterCapture = true,
-                )
-                return
-            }
             val reason = if (externallyInvalidated || visualSettingsChanged) {
                 frameActivityDetector.reset()
-                if (externallyInvalidated) cleanFrameReason else FrameAnalysisReason.CONTENT_CHANGED
+                FrameAnalysisReason.CONTENT_CHANGED
             } else {
                 activityReason
             } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
-            if (shouldRestoreProtection && lastRenderedDetections.isNotEmpty()) {
-                restoreOverlayFromCleanFrame(
-                    plane = plane,
-                    image = image,
-                    visualSettings = currentVisualSettings,
-                )
-            }
             plane.buffer.rewind()
             val rawDetections = visionProcessor.process(
                 rgbaBuffer = plane.buffer,
@@ -235,34 +189,20 @@ internal class ScreenProtectionSession(
                 hasExistingProtection = lastRenderedDetections.isNotEmpty(),
                 reason = reason,
             )
-            val detections = if (
-                confirmationRequired &&
-                now < newProtectionAllowedAfterMs
-            ) {
-                newProtectionConfirmation.reset()
-                rawDetections.map { detection ->
-                    if (detection.shouldBlur) {
-                        detection.copy(shouldBlur = false)
-                    } else {
-                        detection
-                    }
-                }
-            } else {
-                newProtectionConfirmation.apply(
-                    detections = rawDetections,
-                    confirmationRequired = confirmationRequired,
-                )
-            }
+            val detections = newProtectionConfirmation.apply(
+                detections = rawDetections,
+                confirmationRequired = confirmationRequired,
+            )
             if (
                 !running ||
                 requestedContentGeneration.get() != observedContentGeneration
             ) return
 
-            val protectedDetections = protectionTracker.update(
-                detections,
-                contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
-                safetyRefresh = reason == FrameAnalysisReason.SAFETY_REFRESH,
-            )
+            // The current overlay is deliberately retained and may be redacted
+            // in MediaProjection. A miss in such a frame cannot prove that the
+            // protected image disappeared. Scroll movement removes a track only
+            // after its box has actually crossed a display edge.
+            val protectedDetections = protectionTracker.update(detections)
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
             ) {
@@ -277,7 +217,6 @@ internal class ScreenProtectionSession(
                     protectedDetections = protectedDetections,
                     visualSettings = currentVisualSettings,
                     visualSettingsVersion = currentVisualSettingsVersion,
-                    contentChanged = reason == FrameAnalysisReason.CONTENT_CHANGED,
                 )
             } finally {
                 frameBitmap?.recycle()
@@ -301,13 +240,12 @@ internal class ScreenProtectionSession(
         protectedDetections: List<Detection>,
         visualSettings: VisualSettings,
         visualSettingsVersion: Long,
-        contentChanged: Boolean,
     ) {
         val settingsChanged = visualSettingsVersion != renderedVisualSettingsVersion ||
                 lastRenderedStyle != visualSettings.style ||
                 lastRenderedIntensity != visualSettings.intensity
         val protectionChanged = !sameDetections(lastRenderedDetections, protectedDetections)
-        val needsOverlayRender = contentChanged || settingsChanged || protectionChanged ||
+        val needsOverlayRender = settingsChanged || protectionChanged ||
                 statePublisher.isPreviewRequested
         if (!needsOverlayRender) {
             publishDetectionStatus(detections, protectedDetections.size)
@@ -374,66 +312,44 @@ internal class ScreenProtectionSession(
         }
     }
 
-    private fun requestCleanContentFrame() {
-        requestCleanContentFrame(
-            reason = FrameAnalysisReason.CONTENT_CHANGED,
-            restoreProtectionAfterCapture = false,
-        )
-    }
-
-    private fun requestCleanContentFrame(
-        reason: FrameAnalysisReason,
-        restoreProtectionAfterCapture: Boolean,
-    ) {
+    private fun requestContentAnalysis(shouldDiscardExistingProtection: Boolean) {
         if (!running || closed) return
-        val cleanFrameAlreadyPending =
-            requestedContentGeneration.get() != handledContentGeneration
-        if (cleanFrameAlreadyPending) {
-            // A real navigation/scroll request supersedes a periodic probe.
-            if (!restoreProtectionAfterCapture && restoreProtectionAfterCleanCapture) {
-                this.restoreProtectionAfterCleanCapture = false
-                pendingCleanFrameReason = FrameAnalysisReason.CONTENT_CHANGED
-                cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
-                requestedContentGeneration.incrementAndGet()
-            }
-            return
+        if (shouldDiscardExistingProtection) {
+            discardExistingProtection.set(true)
         }
-
-        // Removing the old overlay first prevents the next inference from
-        // classifying Halalify's own pixels. A short compositor grace period
-        // also drops the final stale frame produced during app switches.
-        this.restoreProtectionAfterCleanCapture = restoreProtectionAfterCapture
-        pendingCleanFrameReason = reason
-        cleanFrameAfterMs = clock() + CLEAN_FRAME_SETTLE_MS
         requestedContentGeneration.incrementAndGet()
-        Log.d(TAG, "Content changed outside Halalify; clearing stale overlay.")
-        overlay.update(emptyList())
     }
 
-    /**
-     * A periodic clean probe needs the overlay hidden for capture, not for the
-     * entire model run. Rebuild the previous protection from that clean frame
-     * immediately; the confirmed result replaces it after inference.
-     */
-    private fun restoreOverlayFromCleanFrame(
-        plane: Image.Plane,
-        image: Image,
-        visualSettings: VisualSettings,
-    ) {
-        plane.buffer.rewind()
-        val cleanBitmap = plane.toCroppedBitmap(image.width, image.height)
-        try {
-            val restored = FrameBlurRenderer.renderSelectedDetections(
-                cleanBitmap,
-                lastRenderedDetections,
-                visualSettings.style,
-                visualSettings.intensity,
-                includePreview = false,
-            )
-            overlay.update(restored.overlayRegions)
-        } finally {
-            cleanBitmap.recycle()
+    private fun onContentMoved(deltaX: Int, deltaY: Int) {
+        if (!running || closed || (deltaX == 0 && deltaY == 0)) return
+        overlay.offset(deltaX, deltaY)
+        synchronized(contentMovementLock) {
+            pendingContentDeltaX += deltaX
+            pendingContentDeltaY += deltaY
         }
+        // Invalidate any inference that started before this scroll event. The
+        // latest captured frame will analyze the content at its new position.
+        requestedContentGeneration.incrementAndGet()
+    }
+
+    private fun applyPendingContentMovement() {
+        val movement = synchronized(contentMovementLock) {
+            Pair(pendingContentDeltaX, pendingContentDeltaY).also {
+                pendingContentDeltaX = 0
+                pendingContentDeltaY = 0
+            }
+        }
+        if (movement.first == 0 && movement.second == 0) return
+
+        val displayBounds = context.getRealDisplayBounds()
+        val normalizedDeltaX =
+            movement.first.toFloat() / displayBounds.width().coerceAtLeast(1)
+        val normalizedDeltaY =
+            movement.second.toFloat() / displayBounds.height().coerceAtLeast(1)
+        lastRenderedDetections = protectionTracker.offset(
+            deltaX = normalizedDeltaX,
+            deltaY = normalizedDeltaY,
+        )
     }
 
     private fun createVirtualDisplay(reader: ImageReader): VirtualDisplay =
@@ -450,13 +366,6 @@ internal class ScreenProtectionSession(
             ),
         ) { "Android could not create the screen capture display." }
 
-    private fun refreshVirtualDisplay() {
-        val reader = checkNotNull(imageReader) { "Screen capture reader is unavailable." }
-        val activeDisplay = checkNotNull(display) { "Virtual display is unavailable." }
-        activeDisplay.setSurface(null)
-        activeDisplay.setSurface(reader.surface)
-    }
-
     @Synchronized
     override fun close() {
         if (closed) return
@@ -466,6 +375,10 @@ internal class ScreenProtectionSession(
             contentInvalidationSubscription?.close()
         }
         contentInvalidationSubscription = null
+        closeResource("content movement subscription") {
+            contentMovementSubscription?.close()
+        }
+        contentMovementSubscription = null
         closeResource("image listener") { imageReader?.setOnImageAvailableListener(null, null) }
         closeResource("virtual display") { display?.release() }
         display = null
@@ -552,8 +465,6 @@ internal class ScreenProtectionSession(
         const val SAMPLE_COLUMNS = 20
         const val SAMPLE_ROWS = 32
         const val IGNORED_FRAME_SAMPLE = -1
-        const val CLEAN_FRAME_SETTLE_MS = 80L
-        const val POST_NAVIGATION_CONFIRMATION_DELAY_MS = 1_500L
         const val FEMALE_CLASS_ID = 0
         const val MALE_CLASS_ID = 1
         const val TAG = "HalalifyVision"

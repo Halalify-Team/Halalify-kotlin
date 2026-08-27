@@ -140,10 +140,11 @@ hb_config hb_default_config(void) {
     // detector and the optional NSFW classifier.
     config.num_threads = 2;
     config.nsfw_confidence_threshold = 0.70F;
-    // Female/male detections already provide the localized protection. The
-    // NSFW classifier is a safety supplement, so score only the two strongest
-    // regions to keep swipe updates responsive.
-    config.max_nsfw_regions = 2;
+    // Female/male detections already make the localized protection decision.
+    // The secondary NSFW score is informational and does not change
+    // should_blur, so disable its per-region inference in the real-time screen
+    // path. This removes up to two extra 224x224 model invocations per pass.
+    config.max_nsfw_regions = 0;
     return config;
 }
 

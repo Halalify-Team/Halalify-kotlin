@@ -213,7 +213,15 @@ internal class ProtectionTracker(
             firstCenterX - secondCenterX,
             firstCenterY - secondCenterY,
         )
-        if (centerDistance > MAX_CENTER_DISTANCE) return null
+        val averageBoxDiagonal = (
+            hypot(firstWidth, firstHeight) +
+                hypot(secondWidth, secondHeight)
+            ) * 0.5F
+        val allowedCenterDistance = min(
+            MAX_CENTER_DISTANCE,
+            averageBoxDiagonal * MAX_CENTER_DISTANCE_IN_BOX_DIAGONALS,
+        )
+        if (centerDistance > allowedCenterDistance) return null
 
         return 0.01F - centerDistance
     }
@@ -230,10 +238,10 @@ internal class ProtectionTracker(
     }
 
     /**
-     * Detail tiles can return a tighter upper/lower portion of the same body.
-     * Keep the enclosing protection in that case so the window does not pulse
-     * between tile-sized boxes. Equal-sized movement still follows the latest
-     * detector box (or the configured smoothing) normally.
+     * Detail tiles can return a tighter portion of the same body. Prefer the
+     * larger single observation only when one box is genuinely nested inside
+     * the other. Never union partially overlapping observations: repeating
+     * that operation makes the region grow permanently across the screen.
      */
     private fun stabilize(previous: Detection, current: Detection): Detection {
         val previousArea = area(previous)
@@ -244,15 +252,16 @@ internal class ProtectionTracker(
         } else {
             1F
         }
-        val isDifferentTileExtent =
+        val isNestedTileExtent =
             sizeRatio <= MAX_TILE_EXTENT_SIZE_RATIO &&
                 overlapOverSmallerArea(previous, current) >= STABLE_TILE_OVERLAP
-        if (isDifferentTileExtent) {
+        if (isNestedTileExtent) {
+            val largerObservation = if (previousArea >= currentArea) previous else current
             return current.copy(
-                x1 = min(previous.x1, current.x1),
-                y1 = min(previous.y1, current.y1),
-                x2 = max(previous.x2, current.x2),
-                y2 = max(previous.y2, current.y2),
+                x1 = largerObservation.x1,
+                y1 = largerObservation.y1,
+                x2 = largerObservation.x2,
+                y2 = largerObservation.y2,
             )
         }
         return smooth(previous, current)
@@ -264,10 +273,15 @@ internal class ProtectionTracker(
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 3
         const val DEFAULT_MATCHING_IOU = 0.15F
         const val DUPLICATE_CONTAINMENT_OVERLAP = 0.70F
-        const val STABLE_TILE_OVERLAP = 0.50F
-        const val MAX_TILE_EXTENT_SIZE_RATIO = 0.90F
+        const val STABLE_TILE_OVERLAP = 0.85F
+        const val MAX_TILE_EXTENT_SIZE_RATIO = 0.75F
         const val REPLACEMENT_CONFIRMATION_CHANGES = 1
         const val MAX_CENTER_DISTANCE = 0.35F
+        // An absolute screen-distance limit alone can associate two separate
+        // image cards in the same column. Scale the fallback by the boxes too:
+        // a large subject can move farther, while small neighbouring cards
+        // must remain separate tracks.
+        const val MAX_CENTER_DISTANCE_IN_BOX_DIAGONALS = 0.55F
         const val MIN_SIZE_RATIO = 0.45F
         const val MAX_SIZE_RATIO = 2.20F
 

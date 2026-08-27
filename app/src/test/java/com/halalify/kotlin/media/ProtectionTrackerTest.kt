@@ -197,6 +197,34 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `separate stacked image cards cannot steal the same protection identity`() {
+        val tracker = ProtectionTracker()
+        // Coordinates are normalized from the two regions that alternated as
+        // id=1 on the emulator: they are similar in size, but belong to image
+        // cards roughly 800 px apart vertically.
+        val upperCard = detection(shouldBlur = true).copy(
+            x1 = 0.19F,
+            y1 = 0.36F,
+            x2 = 0.48F,
+            y2 = 0.56F,
+        )
+        val lowerCard = upperCard.copy(
+            x1 = 0.06F,
+            y1 = 0.64F,
+            x2 = 0.47F,
+            y2 = 0.96F,
+        )
+        val firstId = tracker.update(listOf(upperCard)).single().protectionId
+
+        val protected = tracker.update(listOf(lowerCard))
+
+        assertEquals(2, protected.size)
+        assertEquals(firstId, protected.first().protectionId)
+        assertTrue(protected[0].protectionId != protected[1].protectionId)
+        assertEquals(upperCard.y1, protected.first().y1, 0.0001F)
+    }
+
+    @Test
     fun `protected region follows content movement while still on screen`() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
@@ -273,7 +301,7 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `adjacent portrait tiles expand one stable covering box`() {
+    fun `partially overlapping portrait tiles follow the latest box without expansion`() {
         val tracker = ProtectionTracker()
         val upperTile = detection(shouldBlur = true).copy(
             x1 = 0.10F,
@@ -291,10 +319,43 @@ class ProtectionTrackerTest {
         )
         val protected = tracker.update(listOf(lowerTile)).single()
 
-        assertEquals(upperTile.x1, protected.x1, 0.0001F)
-        assertEquals(upperTile.y1, protected.y1, 0.0001F)
+        assertEquals(lowerTile.x1, protected.x1, 0.0001F)
+        assertEquals(lowerTile.y1, protected.y1, 0.0001F)
         assertEquals(lowerTile.x2, protected.x2, 0.0001F)
         assertEquals(lowerTile.y2, protected.y2, 0.0001F)
+    }
+
+    @Test
+    fun `successive overlapping tiles cannot ratchet protection across the screen`() {
+        val tracker = ProtectionTracker()
+        val firstTile = detection(shouldBlur = true).copy(
+            x1 = 0.05F,
+            y1 = 0.10F,
+            x2 = 0.55F,
+            y2 = 0.55F,
+        )
+        tracker.update(listOf(firstTile))
+
+        val secondTile = firstTile.copy(
+            x1 = 0.15F,
+            y1 = 0.30F,
+            x2 = 0.65F,
+            y2 = 0.75F,
+        )
+        tracker.update(listOf(secondTile))
+
+        val thirdTile = firstTile.copy(
+            x1 = 0.25F,
+            y1 = 0.45F,
+            x2 = 0.75F,
+            y2 = 0.90F,
+        )
+        val protected = tracker.update(listOf(thirdTile)).single()
+
+        assertEquals(thirdTile.x1, protected.x1, 0.0001F)
+        assertEquals(thirdTile.y1, protected.y1, 0.0001F)
+        assertEquals(thirdTile.x2, protected.x2, 0.0001F)
+        assertEquals(thirdTile.y2, protected.y2, 0.0001F)
     }
 
     private fun detection(

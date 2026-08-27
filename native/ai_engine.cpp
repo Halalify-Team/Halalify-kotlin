@@ -35,7 +35,7 @@ bool AiEngine::ValidateConfig(const hb_config& config, std::string* error) const
         config.num_threads <= 0 || config.num_threads > 32 ||
         config.nsfw_confidence_threshold < 0.0F ||
         config.nsfw_confidence_threshold > 1.0F ||
-        config.max_nsfw_regions <= 0 || config.max_nsfw_regions > 32) {
+        config.max_nsfw_regions < 0 || config.max_nsfw_regions > 32) {
         if (error) *error = "AI Engine thresholds, limits, or thread count are invalid.";
         return false;
     }

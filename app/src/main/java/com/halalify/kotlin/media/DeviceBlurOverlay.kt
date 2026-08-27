@@ -49,6 +49,7 @@ internal class DeviceBlurOverlay(
         val isFiltered: Boolean,
         val protectionId: Long?,
         val looksRedactedBlack: Boolean,
+        val restoredOverlapCount: Int,
     )
 
     private data class RetainedWindow(
@@ -229,6 +230,14 @@ internal class DeviceBlurOverlay(
                 return@forEach
             }
 
+            val restoredOverlapCount = if (region.isFiltered) {
+                restoreRedactedOverlaps(
+                    bitmap = region.bitmap,
+                    targetBounds = scaled,
+                )
+            } else {
+                0
+            }
             region.bitmap.prepareToDraw()
 
             prepared += PreparedRegion(
@@ -238,6 +247,7 @@ internal class DeviceBlurOverlay(
                 protectionId = region.protectionId,
                 looksRedactedBlack =
                     region.isFiltered && region.bitmap.looksLikeRedactedBlack(),
+                restoredOverlapCount = restoredOverlapCount,
             )
         }
 
@@ -305,9 +315,42 @@ internal class DeviceBlurOverlay(
 
             Log.d(
                 HALALIFY_OVERLAY_TAG,
-                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} redacted=${region.looksRedactedBlack} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
+                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} redacted=${region.looksRedactedBlack} restored=${region.restoredOverlapCount} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
             )
         }
+    }
+
+    /**
+     * Android 15 replaces sensitive overlay pixels in MediaProjection with
+     * pure black. A new detector box can overlap only part of an existing
+     * window, so checking the whole patch misses that contamination. Restore
+     * just those black intersections from the already-filtered visible
+     * bitmap; clean pixels in the new capture remain untouched.
+     */
+    private fun restoreRedactedOverlaps(
+        bitmap: Bitmap,
+        targetBounds: Rect,
+    ): Int {
+        var restored = 0
+        windows.forEach { regionWindow ->
+            val params = regionWindow.params
+            val sourceBounds = Rect(
+                params.x,
+                params.y,
+                params.x + params.width,
+                params.y + params.height,
+            )
+            if (
+                regionWindow.view.restoreRedactedOverlapInto(
+                    target = bitmap,
+                    targetBounds = targetBounds,
+                    sourceBounds = sourceBounds,
+                )
+            ) {
+                restored += 1
+            }
+        }
+        return restored
     }
 
     private fun matchWindowsToRegions(regions: List<PreparedRegion>) {
@@ -373,10 +416,34 @@ internal class DeviceBlurOverlay(
     }
 
     private fun offsetOnMainThread(deltaX: Int, deltaY: Int) {
-        windows.forEach { regionWindow ->
+        val displayBounds = currentDisplayBounds()
+        val iterator = windows.iterator()
+        while (iterator.hasNext()) {
+            val regionWindow = iterator.next()
             val params = regionWindow.params
             params.x += deltaX
             params.y += deltaY
+            if (
+                !windowIntersectsDisplay(
+                    left = params.x,
+                    top = params.y,
+                    width = params.width,
+                    height = params.height,
+                    displayLeft = displayBounds.left,
+                    displayTop = displayBounds.top,
+                    displayRight = displayBounds.right,
+                    displayBottom = displayBounds.bottom,
+                )
+            ) {
+                regionWindow.view.detachBitmap()?.let {
+                    FrameBlurRenderer.releaseOverlayBitmap(it)
+                }
+                runCatching {
+                    windowManager.removeViewImmediate(regionWindow.view)
+                }
+                iterator.remove()
+                continue
+            }
             windowManager.updateViewLayout(regionWindow.view, params)
         }
     }
@@ -556,37 +623,6 @@ internal class DeviceBlurOverlay(
         return intersectionArea.toFloat() / minOf(thisArea, otherArea).toFloat()
     }
 
-    private fun Bitmap.looksLikeRedactedBlack(): Boolean {
-        if (isRecycled || width <= 0 || height <= 0) return false
-
-        var blackSamples = 0
-        var totalSamples = 0
-        repeat(REDACTION_SAMPLE_GRID_SIZE) { row ->
-            val y =
-                (((row + 0.5F) * height) / REDACTION_SAMPLE_GRID_SIZE)
-                    .toInt()
-                    .coerceIn(0, height - 1)
-            repeat(REDACTION_SAMPLE_GRID_SIZE) { column ->
-                val x =
-                    (((column + 0.5F) * width) / REDACTION_SAMPLE_GRID_SIZE)
-                        .toInt()
-                        .coerceIn(0, width - 1)
-                val pixel = getPixel(x, y)
-                if (
-                    Color.alpha(pixel) >= REDACTION_MIN_ALPHA &&
-                    Color.red(pixel) <= REDACTION_MAX_CHANNEL &&
-                    Color.green(pixel) <= REDACTION_MAX_CHANNEL &&
-                    Color.blue(pixel) <= REDACTION_MAX_CHANNEL
-                ) {
-                    blackSamples += 1
-                }
-                totalSamples += 1
-            }
-        }
-
-        return blackSamples.toFloat() / totalSamples >= REDACTION_BLACK_RATIO
-    }
-
     private fun clearOnMainThread() {
         val removedWindowCount = windows.size
         windows.forEach { regionWindow ->
@@ -679,6 +715,42 @@ internal class DeviceBlurOverlay(
         fun hasFilteredBitmap(): Boolean =
             !solid && regionBitmap?.isRecycled == false
 
+        fun restoreRedactedOverlapInto(
+            target: Bitmap,
+            targetBounds: Rect,
+            sourceBounds: Rect,
+        ): Boolean {
+            if (solid || target.isRecycled || !target.isMutable) return false
+            val source = regionBitmap
+                ?.takeUnless(Bitmap::isRecycled)
+                ?: return false
+            val mapping = bitmapOverlapMapping(
+                sourceBounds = sourceBounds,
+                sourceWidth = source.width,
+                sourceHeight = source.height,
+                targetBounds = targetBounds,
+                targetWidth = target.width,
+                targetHeight = target.height,
+            ) ?: return false
+            if (
+                !target.looksLikeRedactedBlack(
+                    sampleBounds = mapping.destination,
+                    requiredRatio = PARTIAL_REDACTION_BLACK_RATIO,
+                )
+            ) {
+                return false
+            }
+
+            Canvas(target).drawBitmap(
+                source,
+                mapping.source,
+                mapping.destination,
+                bitmapPaint,
+            )
+            target.setHasAlpha(false)
+            return true
+        }
+
         override fun onDraw(canvas: Canvas) {
             // Replace every surface pixel with fully opaque black first.
             canvas.drawColor(
@@ -714,3 +786,129 @@ private const val REDACTION_SAMPLE_GRID_SIZE = 8
 private const val REDACTION_MIN_ALPHA = 240
 private const val REDACTION_MAX_CHANNEL = 12
 private const val REDACTION_BLACK_RATIO = 0.9F
+private const val PARTIAL_REDACTION_BLACK_RATIO = 0.72F
+
+private fun Bitmap.looksLikeRedactedBlack(
+    sampleBounds: Rect = Rect(0, 0, width, height),
+    requiredRatio: Float = REDACTION_BLACK_RATIO,
+): Boolean {
+    if (isRecycled || width <= 0 || height <= 0) return false
+    val clipped = Rect(sampleBounds)
+    if (!clipped.intersect(0, 0, width, height)) return false
+    if (clipped.width() <= 0 || clipped.height() <= 0) return false
+
+    var blackSamples = 0
+    var totalSamples = 0
+    repeat(REDACTION_SAMPLE_GRID_SIZE) { row ->
+        val y =
+            (
+                clipped.top +
+                    ((row + 0.5F) * clipped.height()) / REDACTION_SAMPLE_GRID_SIZE
+                )
+                .toInt()
+                .coerceIn(clipped.top, clipped.bottom - 1)
+        repeat(REDACTION_SAMPLE_GRID_SIZE) { column ->
+            val x =
+                (
+                    clipped.left +
+                        ((column + 0.5F) * clipped.width()) / REDACTION_SAMPLE_GRID_SIZE
+                    )
+                    .toInt()
+                    .coerceIn(clipped.left, clipped.right - 1)
+            val pixel = getPixel(x, y)
+            if (
+                Color.alpha(pixel) >= REDACTION_MIN_ALPHA &&
+                Color.red(pixel) <= REDACTION_MAX_CHANNEL &&
+                Color.green(pixel) <= REDACTION_MAX_CHANNEL &&
+                Color.blue(pixel) <= REDACTION_MAX_CHANNEL
+            ) {
+                blackSamples += 1
+            }
+            totalSamples += 1
+        }
+    }
+
+    return blackSamples.toFloat() / totalSamples >= requiredRatio
+}
+
+private data class BitmapOverlapMapping(
+    val source: Rect,
+    val destination: Rect,
+)
+
+private fun bitmapOverlapMapping(
+    sourceBounds: Rect,
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetBounds: Rect,
+    targetWidth: Int,
+    targetHeight: Int,
+): BitmapOverlapMapping? {
+    if (
+        sourceBounds.width() <= 0 ||
+        sourceBounds.height() <= 0 ||
+        targetBounds.width() <= 0 ||
+        targetBounds.height() <= 0 ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0 ||
+        targetWidth <= 0 ||
+        targetHeight <= 0
+    ) {
+        return null
+    }
+
+    val intersection = Rect(sourceBounds)
+    if (!intersection.intersect(targetBounds)) return null
+
+    fun mapCoordinate(
+        coordinate: Int,
+        boundsStart: Int,
+        boundsSize: Int,
+        bitmapSize: Int,
+    ): Int = (
+        (coordinate - boundsStart).toFloat() *
+            bitmapSize.toFloat() /
+            boundsSize.toFloat()
+        ).roundToInt().coerceIn(0, bitmapSize)
+
+    val sourceRect = Rect(
+        mapCoordinate(intersection.left, sourceBounds.left, sourceBounds.width(), sourceWidth),
+        mapCoordinate(intersection.top, sourceBounds.top, sourceBounds.height(), sourceHeight),
+        mapCoordinate(intersection.right, sourceBounds.left, sourceBounds.width(), sourceWidth),
+        mapCoordinate(intersection.bottom, sourceBounds.top, sourceBounds.height(), sourceHeight),
+    )
+    val destinationRect = Rect(
+        mapCoordinate(intersection.left, targetBounds.left, targetBounds.width(), targetWidth),
+        mapCoordinate(intersection.top, targetBounds.top, targetBounds.height(), targetHeight),
+        mapCoordinate(intersection.right, targetBounds.left, targetBounds.width(), targetWidth),
+        mapCoordinate(intersection.bottom, targetBounds.top, targetBounds.height(), targetHeight),
+    )
+    return if (
+        sourceRect.width() > 0 &&
+        sourceRect.height() > 0 &&
+        destinationRect.width() > 0 &&
+        destinationRect.height() > 0
+    ) {
+        BitmapOverlapMapping(sourceRect, destinationRect)
+    } else {
+        null
+    }
+}
+
+internal fun windowIntersectsDisplay(
+    left: Int,
+    top: Int,
+    width: Int,
+    height: Int,
+    displayLeft: Int,
+    displayTop: Int,
+    displayRight: Int,
+    displayBottom: Int,
+): Boolean {
+    val right = left.toLong() + width.coerceAtLeast(0)
+    val bottom = top.toLong() + height.coerceAtLeast(0)
+    return right > displayLeft &&
+        left < displayRight &&
+        bottom > displayTop &&
+        top < displayBottom
+}

@@ -173,6 +173,7 @@ internal class ScreenProtectionSession(
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
             plane.buffer.rewind()
+            val inferenceStartedAt = clock()
             val rawDetections = visionProcessor.process(
                 rgbaBuffer = plane.buffer,
                 width = image.width,
@@ -181,6 +182,10 @@ internal class ScreenProtectionSession(
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
             ).filter(Detection::isUsableDetection)
+            Log.d(
+                TAG,
+                "inference_ms=${clock() - inferenceStartedAt} raw=${rawDetections.size} reason=$reason",
+            )
             // INITIAL/content-change detections still require two-frame
             // confirmation. A STABILIZATION result is already a delayed clean
             // observation, and may come from a non-overlapping portrait tile;
@@ -199,14 +204,11 @@ internal class ScreenProtectionSession(
                 requestedContentGeneration.get() != observedContentGeneration
             ) return
 
-            // The current overlay is deliberately retained and may be redacted
-            // in MediaProjection. A miss in such a frame cannot prove that the
-            // protected image disappeared. Scroll movement removes a track only
-            // after its box has actually crossed a display edge.
-            // The trusted overlay is redacted in MediaProjection, so a later
-            // miss cannot prove that the protected subject disappeared. Keep
-            // its track until an explicit navigation/scroll invalidation;
-            // ProtectionTracker still merges overlapping tile observations.
+            // The native detector rotates between a full-frame pass and two
+            // portrait detail passes. A region absent from one pass is not
+            // stale; ageing it here churns protection IDs and lets redacted
+            // overlay pixels leak into replacement bitmaps. Explicit
+            // navigation and scroll events own invalidation/removal instead.
             val protectedDetections = protectionTracker.update(detections)
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested

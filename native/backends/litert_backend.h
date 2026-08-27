@@ -39,6 +39,10 @@ private:
     bool input_quantized_ = false;
     bool split_quantized_output_ = false;
     bool single_quantized_output_ = false;
+    // The converted YOLO26 P2 float model is exported as a single raw [1, 7, N]
+    // tensor. onnx2tf's layout rewrite stores its box channels as
+    // [x2/2, y2/2, 2*x1, 2*y1]; normalize that layout before the shared decoder.
+    bool single_raw_v5_output_ = false;
     float input_scale_ = 1.0F;
     int input_zero_point_ = 0;
     size_t output_element_count_ = 0;

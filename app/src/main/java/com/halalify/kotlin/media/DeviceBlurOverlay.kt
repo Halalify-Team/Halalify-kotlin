@@ -48,6 +48,14 @@ internal class DeviceBlurOverlay(
         val bounds: Rect,
         val isFiltered: Boolean,
         val protectionId: Long?,
+        val looksRedactedBlack: Boolean,
+    )
+
+    private data class RetainedWindow(
+        val bitmap: Bitmap?,
+        val solid: Boolean,
+        val bounds: Rect,
+        val protectionId: Long?,
     )
 
     private val appContext = context.applicationContext
@@ -228,6 +236,8 @@ internal class DeviceBlurOverlay(
                 bounds = scaled,
                 isFiltered = region.isFiltered,
                 protectionId = region.protectionId,
+                looksRedactedBlack =
+                    region.isFiltered && region.bitmap.looksLikeRedactedBlack(),
             )
         }
 
@@ -237,6 +247,12 @@ internal class DeviceBlurOverlay(
             val regionWindow = windows[index]
             val params = regionWindow.params
             val rect = region.bounds
+            val previousBounds = Rect(
+                params.x,
+                params.y,
+                params.x + params.width,
+                params.y + params.height,
+            )
 
             val layoutChanged =
                 params.x != rect.left ||
@@ -256,6 +272,9 @@ internal class DeviceBlurOverlay(
                 hasFilteredBitmap = regionWindow.view.hasFilteredBitmap(),
                 newProtectionId = region.protectionId,
                 newIsFiltered = region.isFiltered,
+                newBitmapLooksRedacted = region.looksRedactedBlack,
+                hasSpatialContinuity =
+                    previousBounds.overlapFraction(rect) >= MIN_REGION_OVERLAP,
             )
             val oldBitmap = if (preserveBitmap) {
                 FrameBlurRenderer.releaseOverlayBitmap(region.bitmap)
@@ -286,7 +305,7 @@ internal class DeviceBlurOverlay(
 
             Log.d(
                 HALALIFY_OVERLAY_TAG,
-                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
+                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} redacted=${region.looksRedactedBlack} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
             )
         }
     }
@@ -312,9 +331,29 @@ internal class DeviceBlurOverlay(
             val matchingWindow = region.protectionId?.let { protectionId ->
                 available.firstOrNull { it.protectionId == protectionId }
             }
-            val reusableWindow = matchingWindow ?: available.firstOrNull {
+            val reusableCandidates = available.filter {
                 it.protectionId == null || it.protectionId !in incomingIds
-            } ?: available.first()
+            }
+            val spatialWindow = reusableCandidates
+                .filter { it.view.hasFilteredBitmap() }
+                .maxByOrNull { window ->
+                    Rect(
+                        window.params.x,
+                        window.params.y,
+                        window.params.x + window.params.width,
+                        window.params.y + window.params.height,
+                    ).overlapFraction(region.bounds)
+                }
+                ?.takeIf { window ->
+                    Rect(
+                        window.params.x,
+                        window.params.y,
+                        window.params.x + window.params.width,
+                        window.params.y + window.params.height,
+                    ).overlapFraction(region.bounds) >= MIN_REGION_OVERLAP
+                }
+            val reusableWindow =
+                matchingWindow ?: spatialWindow ?: reusableCandidates.firstOrNull() ?: available.first()
             available.remove(reusableWindow)
             ordered += reusableWindow
         }
@@ -346,19 +385,73 @@ internal class DeviceBlurOverlay(
      * Android can reconnect an accessibility service while screen capture is
      * still running (for example after an app update). Its old WindowManager
      * then retains an invalid accessibility token. Resolve the active service
-     * before every render and discard windows owned by the previous token.
+     * before every render and move the already-filtered bitmaps to the new
+     * host. Re-rendering them from MediaProjection would capture Android's
+     * redacted black rectangles instead of the original filtered pixels.
      */
     private fun refreshWindowHost() {
         val currentService = TrustedOverlayHost.currentService()
         if (currentService === trustedAccessibilityService) return
 
-        clearOnMainThread()
+        val previousWindowManager = windowManager
+        val retained = windows.map { regionWindow ->
+            RetainedWindow(
+                bitmap = regionWindow.view.detachBitmap(),
+                solid = regionWindow.view.isSolid(),
+                bounds = Rect(
+                    regionWindow.params.x,
+                    regionWindow.params.y,
+                    regionWindow.params.x + regionWindow.params.width,
+                    regionWindow.params.y + regionWindow.params.height,
+                ),
+                protectionId = regionWindow.protectionId,
+            ).also {
+                runCatching {
+                    previousWindowManager.removeViewImmediate(regionWindow.view)
+                }
+            }
+        }
+        windows.clear()
+
         trustedAccessibilityService = currentService
         trustedWindowContext = currentService
         usesTrustedOverlay = currentService != null
         windowManager = resolveWindowManager()
         windowType = resolveWindowType()
         windowAlpha = resolveWindowAlpha()
+
+        retained.forEach { retainedWindow ->
+            val view = OpaqueRegionView(trustedWindowContext ?: appContext)
+            val params = createRegionLayoutParams().apply {
+                x = retainedWindow.bounds.left
+                y = retainedWindow.bounds.top
+                width = retainedWindow.bounds.width().coerceAtLeast(1)
+                height = retainedWindow.bounds.height().coerceAtLeast(1)
+            }
+            view.restoreRegion(
+                bitmap = retainedWindow.bitmap,
+                solid = retainedWindow.solid,
+            )
+
+            try {
+                windowManager.addView(view, params)
+                windows += RegionWindow(
+                    view = view,
+                    params = params,
+                    protectionId = retainedWindow.protectionId,
+                )
+            } catch (error: Throwable) {
+                view.detachBitmap()?.let(FrameBlurRenderer::releaseOverlayBitmap)
+                throw error
+            }
+        }
+
+        if (retained.isNotEmpty()) {
+            Log.d(
+                HALALIFY_OVERLAY_TAG,
+                "migrated ${retained.size} protected region windows without replacing their bitmaps type=$windowType alpha=$windowAlpha",
+            )
+        }
     }
 
     private fun resolveWindowManager(): WindowManager =
@@ -443,6 +536,57 @@ internal class DeviceBlurOverlay(
         )
     }
 
+    private fun Rect.overlapFraction(other: Rect): Float {
+        val intersectionLeft = maxOf(left, other.left)
+        val intersectionTop = maxOf(top, other.top)
+        val intersectionRight = minOf(right, other.right)
+        val intersectionBottom = minOf(bottom, other.bottom)
+        if (
+            intersectionRight <= intersectionLeft ||
+            intersectionBottom <= intersectionTop
+        ) {
+            return 0F
+        }
+
+        val intersectionArea =
+            (intersectionRight - intersectionLeft).toLong() *
+                (intersectionBottom - intersectionTop).toLong()
+        val thisArea = width().coerceAtLeast(1).toLong() * height().coerceAtLeast(1)
+        val otherArea = other.width().coerceAtLeast(1).toLong() * other.height().coerceAtLeast(1)
+        return intersectionArea.toFloat() / minOf(thisArea, otherArea).toFloat()
+    }
+
+    private fun Bitmap.looksLikeRedactedBlack(): Boolean {
+        if (isRecycled || width <= 0 || height <= 0) return false
+
+        var blackSamples = 0
+        var totalSamples = 0
+        repeat(REDACTION_SAMPLE_GRID_SIZE) { row ->
+            val y =
+                (((row + 0.5F) * height) / REDACTION_SAMPLE_GRID_SIZE)
+                    .toInt()
+                    .coerceIn(0, height - 1)
+            repeat(REDACTION_SAMPLE_GRID_SIZE) { column ->
+                val x =
+                    (((column + 0.5F) * width) / REDACTION_SAMPLE_GRID_SIZE)
+                        .toInt()
+                        .coerceIn(0, width - 1)
+                val pixel = getPixel(x, y)
+                if (
+                    Color.alpha(pixel) >= REDACTION_MIN_ALPHA &&
+                    Color.red(pixel) <= REDACTION_MAX_CHANNEL &&
+                    Color.green(pixel) <= REDACTION_MAX_CHANNEL &&
+                    Color.blue(pixel) <= REDACTION_MAX_CHANNEL
+                ) {
+                    blackSamples += 1
+                }
+                totalSamples += 1
+            }
+        }
+
+        return blackSamples.toFloat() / totalSamples >= REDACTION_BLACK_RATIO
+    }
+
     private fun clearOnMainThread() {
         val removedWindowCount = windows.size
         windows.forEach { regionWindow ->
@@ -521,6 +665,17 @@ internal class DeviceBlurOverlay(
             return old
         }
 
+        fun restoreRegion(
+            bitmap: Bitmap?,
+            solid: Boolean,
+        ) {
+            regionBitmap = bitmap
+            this.solid = solid
+            invalidate()
+        }
+
+        fun isSolid(): Boolean = solid
+
         fun hasFilteredBitmap(): Boolean =
             !solid && regionBitmap?.isRecycled == false
 
@@ -553,3 +708,9 @@ internal class DeviceBlurOverlay(
         }
     }
 }
+
+private const val MIN_REGION_OVERLAP = 0.15F
+private const val REDACTION_SAMPLE_GRID_SIZE = 8
+private const val REDACTION_MIN_ALPHA = 240
+private const val REDACTION_MAX_CHANNEL = 12
+private const val REDACTION_BLACK_RATIO = 0.9F

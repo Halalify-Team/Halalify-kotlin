@@ -6,8 +6,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Keeps a protected region stable across intermittent or changing classifications.
- * Once a region is protected, any detection at the same location refreshes it.
+ * Keeps a selected protected region stable across intermittent detections.
+ * Only another selected detection at the same subject location can refresh it.
  */
 internal class ProtectionTracker(
     private val maxMissedContentChanges: Int = DEFAULT_MAX_MISSED_CONTENT_CHANGES,
@@ -36,14 +36,20 @@ internal class ProtectionTracker(
     ): List<Detection> {
         val availableTracks = tracks.toMutableList()
         val matchedDetections = mutableSetOf<Int>()
+        val protectedCandidates = mutableListOf<IndexedValue<Detection>>()
         detections.withIndex()
+            .filter { it.value.shouldBlur }
             .sortedByDescending { it.value.confidence }
-            .forEach { indexedDetection ->
+            .forEach { candidate ->
+                val duplicatesStrongerCandidate = protectedCandidates.any { stronger ->
+                    overlapOverSmallerArea(stronger.value, candidate.value) >=
+                        DUPLICATE_CONTAINMENT_OVERLAP
+                }
+                if (!duplicatesStrongerCandidate) protectedCandidates += candidate
+            }
+
+        protectedCandidates.forEach { indexedDetection ->
             val detection = indexedDetection.value
-            // On a real content change, an unprotected detection represents
-            // the new subject. Do not attach it to the previous protected
-            // track, otherwise the old blur can remain over the new page.
-            if ((contentChanged || safetyRefresh) && !detection.shouldBlur) return@forEach
             val track = availableTracks
                 .map { candidate -> candidate to matchScore(candidate.detection, detection) }
                 .filter { (_, score) -> score != null }
@@ -53,7 +59,7 @@ internal class ProtectionTracker(
 
             // Preserve the protection decision even when a later frame briefly
             // changes the class assigned to the same person.
-            track.detection = smooth(track.detection, detection).copy(
+            track.detection = stabilize(track.detection, detection).copy(
                 shouldBlur = true,
                 protectionId = track.id,
             )
@@ -62,8 +68,7 @@ internal class ProtectionTracker(
             matchedDetections += indexedDetection.index
         }
 
-        val newProtectedDetections = detections.withIndex().asSequence()
-            .filter { it.value.shouldBlur }
+        val newProtectedDetections = protectedCandidates.asSequence()
             .filterNot { matchedDetections.contains(it.index) }
             .map { it.value }
             .toList()
@@ -141,25 +146,48 @@ internal class ProtectionTracker(
         x2 > 0F && x1 < 1F && y2 > 0F && y1 < 1F
 
     private fun intersectionOverUnion(first: Detection, second: Detection): Float {
-        val intersectionWidth = (min(first.x2, second.x2) - max(first.x1, second.x1))
-            .coerceAtLeast(0F)
-        val intersectionHeight = (min(first.y2, second.y2) - max(first.y1, second.y1))
-            .coerceAtLeast(0F)
-        val intersection = intersectionWidth * intersectionHeight
+        val intersection = intersectionArea(first, second)
         if (intersection <= 0F) return 0F
 
-        val firstArea = (first.x2 - first.x1).coerceAtLeast(0F) *
-                (first.y2 - first.y1).coerceAtLeast(0F)
-        val secondArea = (second.x2 - second.x1).coerceAtLeast(0F) *
-                (second.y2 - second.y1).coerceAtLeast(0F)
+        val firstArea = area(first)
+        val secondArea = area(second)
         val union = firstArea + secondArea - intersection
         return if (union > 0F) intersection / union else 0F
     }
+
+    private fun overlapOverSmallerArea(first: Detection, second: Detection): Float {
+        val smallerArea = min(area(first), area(second))
+        return if (smallerArea > 0F) {
+            intersectionArea(first, second) / smallerArea
+        } else {
+            0F
+        }
+    }
+
+    private fun intersectionArea(first: Detection, second: Detection): Float {
+        val width = (min(first.x2, second.x2) - max(first.x1, second.x1))
+            .coerceAtLeast(0F)
+        val height = (min(first.y2, second.y2) - max(first.y1, second.y1))
+            .coerceAtLeast(0F)
+        return width * height
+    }
+
+    private fun area(detection: Detection): Float =
+        (detection.x2 - detection.x1).coerceAtLeast(0F) *
+            (detection.y2 - detection.y1).coerceAtLeast(0F)
 
     /** Match a fast swipe by centre when two correct boxes barely overlap. */
     private fun matchScore(first: Detection, second: Detection): Float? {
         val iou = intersectionOverUnion(first, second)
         if (iou >= matchingIou) return iou
+
+        // Portrait detail tiles often detect a tighter part of the same body.
+        // IoU is low when one correct box is nested inside another, but a high
+        // overlap relative to the smaller box still proves spatial identity.
+        val containment = overlapOverSmallerArea(first, second)
+        if (containment >= DUPLICATE_CONTAINMENT_OVERLAP) {
+            return 0.50F + containment * 0.50F
+        }
 
         val firstWidth = (first.x2 - first.x1).coerceAtLeast(0F)
         val firstHeight = (first.y2 - first.y1).coerceAtLeast(0F)
@@ -201,11 +229,43 @@ internal class ProtectionTracker(
         )
     }
 
+    /**
+     * Detail tiles can return a tighter upper/lower portion of the same body.
+     * Keep the enclosing protection in that case so the window does not pulse
+     * between tile-sized boxes. Equal-sized movement still follows the latest
+     * detector box (or the configured smoothing) normally.
+     */
+    private fun stabilize(previous: Detection, current: Detection): Detection {
+        val previousArea = area(previous)
+        val currentArea = area(current)
+        val largerArea = max(previousArea, currentArea)
+        val sizeRatio = if (largerArea > 0F) {
+            min(previousArea, currentArea) / largerArea
+        } else {
+            1F
+        }
+        val isDifferentTileExtent =
+            sizeRatio <= MAX_TILE_EXTENT_SIZE_RATIO &&
+                overlapOverSmallerArea(previous, current) >= STABLE_TILE_OVERLAP
+        if (isDifferentTileExtent) {
+            return current.copy(
+                x1 = min(previous.x1, current.x1),
+                y1 = min(previous.y1, current.y1),
+                x2 = max(previous.x2, current.x2),
+                y2 = max(previous.y2, current.y2),
+            )
+        }
+        return smooth(previous, current)
+    }
+
     private companion object {
         // Three changed frames tolerate the two-frame oscillation observed on
         // the emulator. Navigation and scroll events reset tracks immediately.
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 3
         const val DEFAULT_MATCHING_IOU = 0.15F
+        const val DUPLICATE_CONTAINMENT_OVERLAP = 0.70F
+        const val STABLE_TILE_OVERLAP = 0.50F
+        const val MAX_TILE_EXTENT_SIZE_RATIO = 0.90F
         const val REPLACEMENT_CONFIRMATION_CHANGES = 1
         const val MAX_CENTER_DISTANCE = 0.35F
         const val MIN_SIZE_RATIO = 0.45F

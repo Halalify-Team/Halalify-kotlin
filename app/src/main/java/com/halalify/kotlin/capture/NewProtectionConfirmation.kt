@@ -15,11 +15,13 @@ internal fun requiresNewProtectionConfirmation(
  */
 internal class NewProtectionConfirmation(
     private val matchingIou: Float = DEFAULT_MATCHING_IOU,
+    private val immediateConfidence: Float = DEFAULT_IMMEDIATE_CONFIDENCE,
 ) {
     private var previousCandidates: List<Detection> = emptyList()
 
     init {
         require(matchingIou in 0F..1F)
+        require(immediateConfidence in 0F..1F)
     }
 
     fun apply(
@@ -38,10 +40,11 @@ internal class NewProtectionConfirmation(
         }
 
         val confirmed = candidates.filter { current ->
-            previousCandidates.any { previous ->
-                previous.classId == current.classId &&
-                    intersectionOverUnion(previous, current) >= matchingIou
-            }
+            current.confidence >= immediateConfidence ||
+                previousCandidates.any { previous ->
+                    previous.classId == current.classId &&
+                        intersectionOverUnion(previous, current) >= matchingIou
+                }
         }.toSet()
         previousCandidates = candidates
 
@@ -74,5 +77,9 @@ internal class NewProtectionConfirmation(
 
     private companion object {
         const val DEFAULT_MATCHING_IOU = 0.30F
+        // Strong, unambiguous detections should not wait for a second model
+        // pass. Weaker results still require temporal confirmation to avoid
+        // flashing a block over text, icons, or male/ignored subjects.
+        const val DEFAULT_IMMEDIATE_CONFIDENCE = 0.50F
     }
 }

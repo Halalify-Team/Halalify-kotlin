@@ -30,6 +30,34 @@ class OverlayBitmapPolicyTest {
     }
 
     @Test
+    fun `spatially continuous region keeps blur when Android redacts its new bitmap`() {
+        assertTrue(
+            shouldPreserveOverlayBitmap(
+                currentProtectionId = 7L,
+                hasFilteredBitmap = true,
+                newProtectionId = 8L,
+                newIsFiltered = true,
+                newBitmapLooksRedacted = true,
+                hasSpatialContinuity = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `redacted bitmap without spatial continuity cannot reuse old blur`() {
+        assertFalse(
+            shouldPreserveOverlayBitmap(
+                currentProtectionId = 7L,
+                hasFilteredBitmap = true,
+                newProtectionId = 8L,
+                newIsFiltered = true,
+                newBitmapLooksRedacted = true,
+                hasSpatialContinuity = false,
+            ),
+        )
+    }
+
+    @Test
     fun `solid style intentionally replaces a filtered bitmap`() {
         assertFalse(
             shouldPreserveOverlayBitmap(

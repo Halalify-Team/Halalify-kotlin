@@ -71,6 +71,7 @@ internal class ScreenProtectionSession(
     private var handledContentGeneration = 0L
 
     private val contentMovementLock = Any()
+    private val contentGenerationLock = Any()
     private var pendingContentDeltaX = 0
     private var pendingContentDeltaY = 0
 
@@ -132,7 +133,7 @@ internal class ScreenProtectionSession(
     private fun onImageAvailable(source: ImageReader) {
         val image = source.acquireLatestImage() ?: return
         try {
-            if (!running) return
+            if (!running || TrustedOverlayHost.isContentAnalysisSuspended) return
             val now = clock()
             if (now - lastChangeCheckAt < CHANGE_CHECK_INTERVAL_MS) return
             lastChangeCheckAt = now
@@ -202,6 +203,10 @@ internal class ScreenProtectionSession(
             // in MediaProjection. A miss in such a frame cannot prove that the
             // protected image disappeared. Scroll movement removes a track only
             // after its box has actually crossed a display edge.
+            // The trusted overlay is redacted in MediaProjection, so a later
+            // miss cannot prove that the protected subject disappeared. Keep
+            // its track until an explicit navigation/scroll invalidation;
+            // ProtectionTracker still merges overlapping tile observations.
             val protectedDetections = protectionTracker.update(detections)
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
@@ -217,6 +222,7 @@ internal class ScreenProtectionSession(
                     protectedDetections = protectedDetections,
                     visualSettings = currentVisualSettings,
                     visualSettingsVersion = currentVisualSettingsVersion,
+                    contentGeneration = observedContentGeneration,
                 )
             } finally {
                 frameBitmap?.recycle()
@@ -240,6 +246,7 @@ internal class ScreenProtectionSession(
         protectedDetections: List<Detection>,
         visualSettings: VisualSettings,
         visualSettingsVersion: Long,
+        contentGeneration: Long,
     ) {
         val settingsChanged = visualSettingsVersion != renderedVisualSettingsVersion ||
                 lastRenderedStyle != visualSettings.style ||
@@ -252,7 +259,18 @@ internal class ScreenProtectionSession(
             return
         }
         if (croppedBitmap == null) {
-            overlay.update(emptyList())
+            val accepted = synchronized(contentGenerationLock) {
+                if (
+                    running &&
+                    requestedContentGeneration.get() == contentGeneration
+                ) {
+                    overlay.update(emptyList())
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!accepted) return
             if (this.visualSettingsVersion == visualSettingsVersion) {
                 renderedVisualSettingsVersion = visualSettingsVersion
             }
@@ -271,7 +289,23 @@ internal class ScreenProtectionSession(
         )
         // The renderer creates independent region bitmaps before the source
         // frame is recycled. The overlay owns those bitmaps from this point.
-        overlay.update(rendered.overlayRegions)
+        val accepted = synchronized(contentGenerationLock) {
+            if (
+                running &&
+                requestedContentGeneration.get() == contentGeneration
+            ) {
+                overlay.update(rendered.overlayRegions)
+                true
+            } else {
+                false
+            }
+        }
+        if (!accepted) {
+            rendered.overlayRegions.forEach { region ->
+                FrameBlurRenderer.releaseOverlayBitmap(region.bitmap)
+            }
+            return
+        }
         if (this.visualSettingsVersion == visualSettingsVersion) {
             renderedVisualSettingsVersion = visualSettingsVersion
         }
@@ -314,14 +348,28 @@ internal class ScreenProtectionSession(
 
     private fun requestContentAnalysis(shouldDiscardExistingProtection: Boolean) {
         if (!running || closed) return
-        if (shouldDiscardExistingProtection) {
-            discardExistingProtection.set(true)
+        synchronized(contentGenerationLock) {
+            if (shouldDiscardExistingProtection) {
+                discardExistingProtection.set(true)
+            }
+            requestedContentGeneration.incrementAndGet()
+            if (shouldDiscardExistingProtection) {
+                // Accessibility events arrive on the main looper. Clear the
+                // obsolete window now instead of waiting behind an inference.
+                overlay.update(emptyList())
+            }
         }
-        requestedContentGeneration.incrementAndGet()
     }
 
     private fun onContentMoved(deltaX: Int, deltaY: Int) {
-        if (!running || closed || (deltaX == 0 && deltaY == 0)) return
+        if (
+            !running ||
+            closed ||
+            TrustedOverlayHost.isContentAnalysisSuspended ||
+            (deltaX == 0 && deltaY == 0)
+        ) {
+            return
+        }
         overlay.offset(deltaX, deltaY)
         synchronized(contentMovementLock) {
             pendingContentDeltaX += deltaX

@@ -9,8 +9,13 @@ internal fun shouldPreserveOverlayBitmap(
     hasFilteredBitmap: Boolean,
     newProtectionId: Long?,
     newIsFiltered: Boolean,
+    newBitmapLooksRedacted: Boolean = false,
+    hasSpatialContinuity: Boolean = false,
 ): Boolean =
     currentProtectionId != null &&
-        currentProtectionId == newProtectionId &&
         hasFilteredBitmap &&
-        newIsFiltered
+        newIsFiltered &&
+        (
+            currentProtectionId == newProtectionId ||
+                (newBitmapLooksRedacted && hasSpatialContinuity)
+        )

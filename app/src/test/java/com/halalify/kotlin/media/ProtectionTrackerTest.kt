@@ -41,16 +41,23 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun `changed classification at same location stays protected and refreshes track`() {
+    fun `unselected classification cannot refresh or move a protected track`() {
         val tracker = ProtectionTracker()
-        tracker.update(listOf(detection(shouldBlur = true)))
+        val original = detection(shouldBlur = true)
+        tracker.update(listOf(original))
 
-        val changedClass = detection(classId = 1, shouldBlur = false)
+        val changedClass = detection(classId = 1, shouldBlur = false).copy(
+            x1 = 0.20F,
+            x2 = 0.70F,
+        )
         val protected = tracker.update(listOf(changedClass), contentChanged = false)
         val stillProtected = tracker.update(emptyList(), contentChanged = false)
 
         assertEquals(1, protected.size)
         assertTrue(protected.single().shouldBlur)
+        assertEquals(0, protected.single().classId)
+        assertEquals(original.x1, protected.single().x1, 0.0001F)
+        assertEquals(original.x2, protected.single().x2, 0.0001F)
         assertEquals(1, stillProtected.size)
     }
 
@@ -222,6 +229,72 @@ class ProtectionTrackerTest {
 
         assertTrue(first.protectionId != null)
         assertEquals(first.protectionId, refreshed.protectionId)
+    }
+
+    @Test
+    fun `nested tile detection keeps one stable enclosing subject`() {
+        val tracker = ProtectionTracker()
+        val fullFrame = detection(shouldBlur = true)
+        val first = tracker.update(listOf(fullFrame)).single()
+
+        val detailTile = fullFrame.copy(
+            x1 = 0.20F,
+            y1 = 0.20F,
+            x2 = 0.50F,
+            y2 = 0.70F,
+        )
+        val refreshed = tracker.update(listOf(detailTile))
+
+        assertEquals(1, refreshed.size)
+        assertEquals(first.protectionId, refreshed.single().protectionId)
+        assertEquals(fullFrame.x1, refreshed.single().x1, 0.0001F)
+        assertEquals(fullFrame.y1, refreshed.single().y1, 0.0001F)
+        assertEquals(fullFrame.x2, refreshed.single().x2, 0.0001F)
+        assertEquals(fullFrame.y2, refreshed.single().y2, 0.0001F)
+    }
+
+    @Test
+    fun `duplicate nested boxes in one frame create one track`() {
+        val tracker = ProtectionTracker()
+        val outer = detection(shouldBlur = true).copy(confidence = 0.80F)
+        val inner = outer.copy(
+            x1 = 0.20F,
+            y1 = 0.20F,
+            x2 = 0.50F,
+            y2 = 0.70F,
+            confidence = 0.90F,
+        )
+
+        val protected = tracker.update(listOf(outer, inner))
+
+        assertEquals(1, protected.size)
+        assertEquals(inner.x1, protected.single().x1, 0.0001F)
+        assertEquals(inner.y1, protected.single().y1, 0.0001F)
+    }
+
+    @Test
+    fun `adjacent portrait tiles expand one stable covering box`() {
+        val tracker = ProtectionTracker()
+        val upperTile = detection(shouldBlur = true).copy(
+            x1 = 0.10F,
+            y1 = 0.10F,
+            x2 = 0.60F,
+            y2 = 0.55F,
+        )
+        tracker.update(listOf(upperTile))
+
+        val lowerTile = upperTile.copy(
+            x1 = 0.15F,
+            y1 = 0.30F,
+            x2 = 0.65F,
+            y2 = 0.95F,
+        )
+        val protected = tracker.update(listOf(lowerTile)).single()
+
+        assertEquals(upperTile.x1, protected.x1, 0.0001F)
+        assertEquals(upperTile.y1, protected.y1, 0.0001F)
+        assertEquals(lowerTile.x2, protected.x2, 0.0001F)
+        assertEquals(lowerTile.y2, protected.y2, 0.0001F)
     }
 
     private fun detection(

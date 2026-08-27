@@ -52,6 +52,7 @@ void LiteRtBackend::Reset() {
     input_quantized_ = false;
     split_quantized_output_ = false;
     single_quantized_output_ = false;
+    single_raw_v5_output_ = false;
     input_scale_ = 1.0F;
     input_zero_point_ = 0;
     output_element_count_ = 0;
@@ -133,6 +134,10 @@ bool LiteRtBackend::Load(
         output_element_count_ = static_cast<size_t>(TfLiteTensorDim(output, 1)) *
                 TfLiteTensorDim(output, 2);
         single_quantized_output_ = output_type == kTfLiteInt8;
+        single_raw_v5_output_ = TfLiteTensorDim(output, 1) == kOutputChannels;
+        if (single_raw_v5_output_) {
+            output_candidate_count_ = TfLiteTensorDim(output, 2);
+        }
         return true;
     }
     if (output_count != 2) {
@@ -234,6 +239,21 @@ bool LiteRtBackend::Invoke(
                 (*output)[index] =
                         (static_cast<float>(quantized_output[index]) - quantization.zero_point) *
                         quantization.scale;
+            }
+        }
+        if (single_raw_v5_output_) {
+            // Keep the model file raw and compensate for the deterministic
+            // channel permutation introduced by the ONNX->TFLite conversion.
+            // The existing C++ decoder expects [cx, cy, width, height].
+            for (int candidate = 0; candidate < output_candidate_count_; ++candidate) {
+                const float raw_x2 = (*output)[2 * output_candidate_count_ + candidate];
+                const float raw_y2 = (*output)[3 * output_candidate_count_ + candidate];
+                const float raw_x1 = (*output)[0 * output_candidate_count_ + candidate];
+                const float raw_y1 = (*output)[1 * output_candidate_count_ + candidate];
+                (*output)[0 * output_candidate_count_ + candidate] = raw_x2 * 0.5F;
+                (*output)[1 * output_candidate_count_ + candidate] = raw_y2 * 0.5F;
+                (*output)[2 * output_candidate_count_ + candidate] = raw_x1 * 2.0F;
+                (*output)[3 * output_candidate_count_ + candidate] = raw_y1 * 2.0F;
             }
         }
         return true;

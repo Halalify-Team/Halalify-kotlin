@@ -11,7 +11,7 @@ class NewProtectionConfirmationTest {
         y1 = 0.20F,
         x2 = 0.60F,
         y2 = 0.80F,
-        confidence = 0.90F,
+        confidence = 0.45F,
         classId = 0,
         shouldBlur = true,
         isNsfw = false,
@@ -33,6 +33,18 @@ class NewProtectionConfirmationTest {
 
         val result = confirmation.apply(
             listOf(protected.copy(x1 = 0.22F, x2 = 0.62F)),
+            confirmationRequired = true,
+        )
+
+        assertTrue(result.single().shouldBlur)
+    }
+
+    @Test
+    fun `strong new result creates protection immediately`() {
+        val confirmation = NewProtectionConfirmation()
+
+        val result = confirmation.apply(
+            listOf(protected.copy(confidence = 0.80F)),
             confirmationRequired = true,
         )
 

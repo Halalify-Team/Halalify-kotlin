@@ -101,6 +101,11 @@ hb_status VisionEngine::Process(const hb_frame& frame, std::vector<hb_detection>
     return HB_STATUS_OK;
 }
 
+void VisionEngine::RestartAnalysisCycle() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    detail_tile_index_ = 0;
+}
+
 hb_status VisionEngine::UpdateConfig(const hb_config& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!ValidateConfig(config, &last_error_)) return HB_STATUS_INVALID_ARGUMENT;
@@ -216,6 +221,12 @@ hb_status hb_engine_process(
     if (!decoded.empty()) {
         std::copy(decoded.begin(), decoded.end(), detections);
     }
+    return HB_STATUS_OK;
+}
+
+hb_status hb_engine_restart_analysis_cycle(hb_engine* engine) {
+    if (engine == nullptr) return HB_STATUS_INVALID_ARGUMENT;
+    engine->impl->RestartAnalysisCycle();
     return HB_STATUS_OK;
 }
 

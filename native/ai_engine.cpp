@@ -110,6 +110,11 @@ hb_status AiEngine::Process(const hb_frame& frame, std::vector<hb_detection>* de
     return HB_STATUS_OK;
 }
 
+void AiEngine::RestartAnalysisCycle() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    gender_engine_->RestartAnalysisCycle();
+}
+
 hb_status AiEngine::UpdateConfig(const hb_config& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!ValidateConfig(config, &last_error_)) return HB_STATUS_INVALID_ARGUMENT;

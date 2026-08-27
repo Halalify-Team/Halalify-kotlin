@@ -164,14 +164,26 @@ internal class ScreenProtectionSession(
             val currentVisualSettingsVersion = visualSettingsVersion
             val visualSettingsChanged = currentVisualSettingsVersion != renderedVisualSettingsVersion
             val activityReason = frameActivityDetector.analysisReason(sample, now)
-            val reason = if (externallyInvalidated || visualSettingsChanged) {
-                frameActivityDetector.reset()
+            val contentChanged =
+                externallyInvalidated ||
+                    activityReason == FrameAnalysisReason.CONTENT_CHANGED
+            val reason = if (contentChanged || visualSettingsChanged) {
                 FrameAnalysisReason.CONTENT_CHANGED
             } else {
                 activityReason
             } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
+            // A moving page must be inspected with the full-screen pass first.
+            // Otherwise the rotating native cycle can begin at the opposite
+            // detail tile and leave new visible images unprotected for another
+            // two inferences.
+            if (
+                contentChanged ||
+                reason == FrameAnalysisReason.SAFETY_REFRESH
+            ) {
+                visionProcessor.restartAnalysisCycle()
+            }
             plane.buffer.rewind()
             val inferenceStartedAt = clock()
             val rawDetections = visionProcessor.process(
@@ -204,12 +216,19 @@ internal class ScreenProtectionSession(
                 requestedContentGeneration.get() != observedContentGeneration
             ) return
 
-            // The native detector rotates between a full-frame pass and two
-            // portrait detail passes. A region absent from one pass is not
-            // stale; ageing it here churns protection IDs and lets redacted
-            // overlay pixels leak into replacement bitmaps. Explicit
-            // navigation and scroll events own invalidation/removal instead.
-            val protectedDetections = protectionTracker.update(detections)
+            // MediaProjection redacts our trusted windows to black, so an
+            // empty detector result cannot prove that a protected subject
+            // disappeared. Age unmatched tracks only when this clean
+            // full-screen pass also found protected content elsewhere; that
+            // is positive evidence that the visible page was replaced.
+            val hasProtectedObservation = detections.any(Detection::shouldBlur)
+            val protectedDetections = protectionTracker.update(
+                detections = detections,
+                contentChanged = contentChanged && hasProtectedObservation,
+                safetyRefresh =
+                    reason == FrameAnalysisReason.SAFETY_REFRESH &&
+                        hasProtectedObservation,
+            )
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
             ) {

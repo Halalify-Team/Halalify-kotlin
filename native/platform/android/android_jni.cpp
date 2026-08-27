@@ -220,6 +220,21 @@ Java_com_halalify_kotlin_model_NativeVisionEngine_nativeProcess(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_halalify_kotlin_model_NativeVisionEngine_nativeRestartAnalysisCycle(
+        JNIEnv* env,
+        jobject /* instance */,
+        jlong handle) {
+    hb_engine* engine = FromHandle(handle);
+    if (engine == nullptr) {
+        Throw(env, "java/lang/IllegalStateException", "Vision engine is closed.");
+        return;
+    }
+    if (hb_engine_restart_analysis_cycle(engine) != HB_STATUS_OK) {
+        Throw(env, "java/lang/IllegalStateException", hb_engine_last_error(engine));
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_halalify_kotlin_model_NativeVisionEngine_nativeUpdateTarget(
         JNIEnv* env,
         jobject /* instance */,

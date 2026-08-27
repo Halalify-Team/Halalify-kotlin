@@ -28,6 +28,13 @@ internal data class Detection(
 private const val DETECTION_FIELDS = 8
 
 internal interface VisionProcessor : Closeable {
+    /**
+     * Makes the next portrait analysis use the full screen before rotating
+     * through the two detail tiles. Implementations without tiled analysis
+     * do not need to override this.
+     */
+    fun restartAnalysisCycle() = Unit
+
     fun process(
         rgbaBuffer: ByteBuffer,
         width: Int,
@@ -65,6 +72,12 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
         NSFW_MODEL_ASSET,
         target.nativeId,
     )
+
+    @Synchronized
+    override fun restartAnalysisCycle() {
+        check(nativeHandle != 0L) { "Vision engine is closed." }
+        nativeRestartAnalysisCycle(nativeHandle)
+    }
 
     @Synchronized
     override fun process(
@@ -119,6 +132,7 @@ internal class NativeVisionEngine(context: Context, target: BlurTarget) : Vision
         timestampNs: Long,
     ): FloatArray
 
+    private external fun nativeRestartAnalysisCycle(handle: Long)
     private external fun nativeUpdateTarget(handle: Long, target: Int)
     private external fun nativeDestroy(handle: Long)
 

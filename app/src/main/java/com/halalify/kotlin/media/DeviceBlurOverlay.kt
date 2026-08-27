@@ -234,6 +234,7 @@ internal class DeviceBlurOverlay(
                 restoreRedactedOverlaps(
                     bitmap = region.bitmap,
                     targetBounds = scaled,
+                    protectionId = region.protectionId,
                 )
             } else {
                 0
@@ -301,7 +302,7 @@ internal class DeviceBlurOverlay(
                 oldBitmap != null &&
                 oldBitmap !== region.bitmap
             ) {
-                FrameBlurRenderer.releaseOverlayBitmap(oldBitmap)
+                retireDisplayedBitmap(oldBitmap)
             }
 
             regionWindow.view.visibility = View.VISIBLE
@@ -330,9 +331,22 @@ internal class DeviceBlurOverlay(
     private fun restoreRedactedOverlaps(
         bitmap: Bitmap,
         targetBounds: Rect,
+        protectionId: Long?,
     ): Int {
         var restored = 0
-        windows.forEach { regionWindow ->
+        // Restore neighbouring windows first and the stable matching window
+        // last. If masks overlap, the previous bitmap of the same subject is
+        // the best source for the shared pixels.
+        windows.sortedBy { regionWindow ->
+            if (
+                protectionId != null &&
+                regionWindow.protectionId == protectionId
+            ) {
+                1
+            } else {
+                0
+            }
+        }.forEach { regionWindow ->
             val params = regionWindow.params
             val sourceBounds = Rect(
                 params.x,
@@ -403,7 +417,7 @@ internal class DeviceBlurOverlay(
 
         available.forEach { removed ->
             removed.view.detachBitmap()?.let {
-                FrameBlurRenderer.releaseOverlayBitmap(it)
+                retireDisplayedBitmap(it)
             }
 
             runCatching {
@@ -436,7 +450,7 @@ internal class DeviceBlurOverlay(
                 )
             ) {
                 regionWindow.view.detachBitmap()?.let {
-                    FrameBlurRenderer.releaseOverlayBitmap(it)
+                    retireDisplayedBitmap(it)
                 }
                 runCatching {
                     windowManager.removeViewImmediate(regionWindow.view)
@@ -627,7 +641,7 @@ internal class DeviceBlurOverlay(
         val removedWindowCount = windows.size
         windows.forEach { regionWindow ->
             regionWindow.view.detachBitmap()?.let {
-                FrameBlurRenderer.releaseOverlayBitmap(it)
+                retireDisplayedBitmap(it)
             }
 
             runCatching {
@@ -642,6 +656,21 @@ internal class DeviceBlurOverlay(
         if (removedWindowCount > 0) {
             Log.d(HALALIFY_OVERLAY_TAG, "cleared $removedWindowCount protected region windows")
         }
+    }
+
+    /**
+     * Hardware rendering can retain the previous bitmap for another display
+     * frame. Returning it to the pool immediately erases it to black while
+     * Android may still be presenting that frame.
+     */
+    private fun retireDisplayedBitmap(bitmap: Bitmap) {
+        mainHandler.postDelayed(
+            {
+                FrameBlurRenderer.releaseOverlayBitmap(bitmap)
+                if (closed) FrameBlurRenderer.clearBitmapPool()
+            },
+            DISPLAYED_BITMAP_RETIRE_DELAY_MS,
+        )
     }
 
     private fun List<OverlayRegion>.releaseBitmaps() {
@@ -732,21 +761,33 @@ internal class DeviceBlurOverlay(
                 targetWidth = target.width,
                 targetHeight = target.height,
             ) ?: return false
-            if (
-                !target.looksLikeRedactedBlack(
-                    sampleBounds = mapping.destination,
-                    requiredRatio = PARTIAL_REDACTION_BLACK_RATIO,
-                )
-            ) {
+
+            val redactedDestinations =
+                if (
+                    target.looksLikeRedactedBlack(
+                        sampleBounds = mapping.destination,
+                        requiredRatio = PARTIAL_REDACTION_BLACK_RATIO,
+                    )
+                ) {
+                    listOf(mapping.destination)
+                } else {
+                    target.findRedactedTiles(mapping.destination)
+                }
+            if (redactedDestinations.isEmpty()) {
                 return false
             }
 
-            Canvas(target).drawBitmap(
-                source,
-                mapping.source,
-                mapping.destination,
-                bitmapPaint,
-            )
+            val canvas = Canvas(target)
+            redactedDestinations.forEach { destination ->
+                val sourceRegion = mapping.sourceForDestination(destination)
+                    ?: return@forEach
+                canvas.drawBitmap(
+                    source,
+                    sourceRegion,
+                    destination,
+                    bitmapPaint,
+                )
+            }
             target.setHasAlpha(false)
             return true
         }
@@ -782,15 +823,50 @@ internal class DeviceBlurOverlay(
 }
 
 private const val MIN_REGION_OVERLAP = 0.15F
+private const val DISPLAYED_BITMAP_RETIRE_DELAY_MS = 64L
 private const val REDACTION_SAMPLE_GRID_SIZE = 8
+private const val REDACTION_TILE_GRID_SIZE = 6
+private const val REDACTION_TILE_SAMPLE_GRID_SIZE = 3
 private const val REDACTION_MIN_ALPHA = 240
 private const val REDACTION_MAX_CHANNEL = 12
 private const val REDACTION_BLACK_RATIO = 0.9F
-private const val PARTIAL_REDACTION_BLACK_RATIO = 0.72F
+private const val PARTIAL_REDACTION_BLACK_RATIO = 0.50F
+private const val REDACTION_TILE_BLACK_RATIO = 0.66F
+
+private fun Bitmap.findRedactedTiles(sampleBounds: Rect): List<Rect> {
+    if (isRecycled || width <= 0 || height <= 0) return emptyList()
+    val clipped = Rect(sampleBounds)
+    if (!clipped.intersect(0, 0, width, height)) return emptyList()
+
+    val redacted = ArrayList<Rect>()
+    repeat(REDACTION_TILE_GRID_SIZE) { row ->
+        repeat(REDACTION_TILE_GRID_SIZE) { column ->
+            val tile = Rect(
+                clipped.left + clipped.width() * column / REDACTION_TILE_GRID_SIZE,
+                clipped.top + clipped.height() * row / REDACTION_TILE_GRID_SIZE,
+                clipped.left + clipped.width() * (column + 1) / REDACTION_TILE_GRID_SIZE,
+                clipped.top + clipped.height() * (row + 1) / REDACTION_TILE_GRID_SIZE,
+            )
+            if (
+                tile.width() > 0 &&
+                tile.height() > 0 &&
+                looksLikeRedactedBlack(
+                    sampleBounds = tile,
+                    requiredRatio = REDACTION_TILE_BLACK_RATIO,
+                    sampleGridSize = REDACTION_TILE_SAMPLE_GRID_SIZE,
+                )
+            ) {
+                redacted += tile
+            }
+        }
+    }
+    return redacted
+}
 
 private fun Bitmap.looksLikeRedactedBlack(
     sampleBounds: Rect = Rect(0, 0, width, height),
     requiredRatio: Float = REDACTION_BLACK_RATIO,
+    sampleGridSize: Int = REDACTION_SAMPLE_GRID_SIZE,
 ): Boolean {
     if (isRecycled || width <= 0 || height <= 0) return false
     val clipped = Rect(sampleBounds)
@@ -799,19 +875,20 @@ private fun Bitmap.looksLikeRedactedBlack(
 
     var blackSamples = 0
     var totalSamples = 0
-    repeat(REDACTION_SAMPLE_GRID_SIZE) { row ->
+    val gridSize = sampleGridSize.coerceAtLeast(1)
+    repeat(gridSize) { row ->
         val y =
             (
                 clipped.top +
-                    ((row + 0.5F) * clipped.height()) / REDACTION_SAMPLE_GRID_SIZE
+                    ((row + 0.5F) * clipped.height()) / gridSize
                 )
                 .toInt()
                 .coerceIn(clipped.top, clipped.bottom - 1)
-        repeat(REDACTION_SAMPLE_GRID_SIZE) { column ->
+        repeat(gridSize) { column ->
             val x =
                 (
                     clipped.left +
-                        ((column + 0.5F) * clipped.width()) / REDACTION_SAMPLE_GRID_SIZE
+                        ((column + 0.5F) * clipped.width()) / gridSize
                     )
                     .toInt()
                     .coerceIn(clipped.left, clipped.right - 1)
@@ -835,6 +912,34 @@ private data class BitmapOverlapMapping(
     val source: Rect,
     val destination: Rect,
 )
+
+private fun BitmapOverlapMapping.sourceForDestination(
+    subregion: Rect,
+): Rect? {
+    val clipped = Rect(subregion)
+    if (!clipped.intersect(destination)) return null
+
+    fun map(
+        coordinate: Int,
+        destinationStart: Int,
+        destinationSize: Int,
+        sourceStart: Int,
+        sourceSize: Int,
+    ): Int = (
+        sourceStart +
+            (coordinate - destinationStart).toFloat() *
+                sourceSize.toFloat() /
+                destinationSize.coerceAtLeast(1).toFloat()
+        ).roundToInt().coerceIn(sourceStart, sourceStart + sourceSize)
+
+    val mapped = Rect(
+        map(clipped.left, destination.left, destination.width(), source.left, source.width()),
+        map(clipped.top, destination.top, destination.height(), source.top, source.height()),
+        map(clipped.right, destination.left, destination.width(), source.left, source.width()),
+        map(clipped.bottom, destination.top, destination.height(), source.top, source.height()),
+    )
+    return mapped.takeIf { it.width() > 0 && it.height() > 0 }
+}
 
 private fun bitmapOverlapMapping(
     sourceBounds: Rect,

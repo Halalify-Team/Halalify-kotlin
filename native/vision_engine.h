@@ -19,6 +19,7 @@ public:
             size_t model_size,
             const hb_config& config);
     hb_status Process(const hb_frame& frame, std::vector<hb_detection>* detections);
+    void RestartAnalysisCycle();
     hb_status UpdateConfig(const hb_config& config);
     std::string LastError() const;
 

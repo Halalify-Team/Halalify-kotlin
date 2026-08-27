@@ -97,6 +97,9 @@ hb_status hb_engine_process(
         size_t detection_capacity,
         size_t* out_detection_count);
 
+// Restarts portrait analysis at the full-screen pass. Detail tiles follow on
+// subsequent calls.
+hb_status hb_engine_restart_analysis_cycle(hb_engine* engine);
 hb_status hb_engine_update_config(hb_engine* engine, const hb_config* config);
 hb_model_info hb_engine_get_model_info(const hb_engine* engine);
 const char* hb_engine_last_error(const hb_engine* engine);

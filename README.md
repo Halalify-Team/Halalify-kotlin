@@ -7,7 +7,7 @@ An Android prototype for on-device content blur. Users select one visual model c
 - English settings screen for blur target and content type.
 - Settings persist locally across app launches.
 - A C++17 vision core performs RGB letterboxing, LiteRT inference, YOLO output decoding, class-agnostic NMS, and the selected-target policy.
-- Full-display Android MediaProjection frames are passed through JNI to the packaged v3 model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
+- Full-display Android MediaProjection frames are passed through JNI to the packaged `halalify_v2` model. Matching detections are blurred both in the protected preview and through a touch-through system overlay.
 - Selected target regions are optionally scored locally with the bundled `nsfw2.tflite` Open-NSFW Android classifier. The classifier can annotate a selected region as NSFW, but it cannot override the male/female target or create a full-screen blur from a classifier-only result.
 - Adult-site protection includes a DNS-only local `VpnService`. It routes DNS queries to the local TUN endpoint, asks the shared native site-policy engine about each domain, and forwards other queries to a family-filtering DNS resolver.
 - The Android playback-audio monitor runs the packaged YAMNet music detector and streaming DTLN speech separator on-device. The Music isolation source action also decodes a selected local audio/video file or a direct HTTP(S) MP4/M4A URL, writes the DTLN speech stem as AAC, and saves a new file under Movies/Music > Halalify. Video samples are retained while only the audio track is replaced.
@@ -21,7 +21,7 @@ Playback capture is limited to apps and players that allow it. Android gives a n
 
 The source action accepts direct media URLs. A YouTube watch/share URL is a web page, not a stable media file, and is intentionally not scraped by the app; download the clip with a permitted tool and choose the resulting file, or provide a permitted direct MP4/M4A URL.
 
-The gender detector remains a separate v3 model; NSFW is intentionally a second, small classifier because the existing YOLO output contract is unchanged. The NSFW model only annotates regions already selected by the gender-target policy, so a classifier-only positive result cannot create a full-frame blur. Thresholds and accuracy still require validation on representative app screenshots.
+The gender detector is the separate `halalify_v2` model; NSFW is intentionally a second, small classifier because the YOLO output contract is kept behind the native adapter. The NSFW model only annotates regions already selected by the gender-target policy, so a classifier-only positive result cannot create a full-frame blur. Thresholds and accuracy still require validation on representative app screenshots.
 
 ## Native AI Engine layout
 

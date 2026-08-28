@@ -1,25 +1,20 @@
 {
   "schema_version": 1,
-  "model_id": "halalify-gender-detector-v3-full-int8-split-output",
-  "model_file": "halalify_gender_v3_full_int8.tflite",
+  "model_id": "halalify_v2",
+  "model_file": "halalify_v2.tflite",
   "format": "tflite",
-  "version": "3.0.0",
-  "size_bytes": 3292400,
-  "sha256": "65E2B0BE46BC7E865EEDD2E084E6FC8CCB4258C81213A3EBE1D8333218A503B0",
+  "version": "2.0.0",
+  "size_bytes": 2849880,
+  "sha256": "44F0CEE3A5AABE2074042DC1D8AA50A02C703D9B0EB97D32082C78DC6A2C8945",
   "input": {
     "name": "images",
     "shape": [1, 416, 416, 3],
     "layout": "NHWC",
-    "data_type": "int8",
+    "data_type": "float32",
     "color_space": "RGB",
     "normalization": {
       "formula": "value / 255.0",
       "range": [0.0, 1.0]
-    },
-    "quantization": {
-      "scale": 0.003921568859368563,
-      "zero_point": -128,
-      "source_data_type": "float32"
     },
     "resize": {
       "strategy": "aspect_fit_letterbox",
@@ -31,25 +26,20 @@
     }
   },
   "output": {
-    "name": "split_box_and_confidence",
-    "shape": [1, 7, 3549],
-    "layout": "split_channels_first_candidates",
-    "data_type": "int8",
-    "branches": [
-      {"name": "boxes", "shape": [1, 4, 3549], "channels": ["center_x", "center_y", "width", "height"]},
-      {"name": "scores", "shape": [1, 3, 3549], "channels": ["class_a", "class_b", "class_c"]}
-    ],
-    "dequantized_data_type": "float32",
+    "name": "Identity",
+    "shape": [1, 7, 14365],
+    "layout": "channels_first_candidates",
+    "data_type": "float32",
     "channels": ["center_x", "center_y", "width", "height", "class_a", "class_b", "class_c"],
-    "box_encoding": "cxcywh",
+    "box_encoding": "native_normalized_v5_layout",
+    "raw_box_layout_before_native_normalization": ["x2/2", "y2/2", "2*x1", "2*y1"],
     "coordinate_mode": "legacy_auto_normalized_or_pixels"
   },
   "quantization": {
-    "method": "post_training_full_integer_internal",
-    "weights": "int8_per_channel",
-    "activations": "int8",
-    "io_boundary": "int8",
-    "output_strategy": "independent_box_and_confidence_dequantization_before_concat"
+    "method": "post_training_dynamic_range",
+    "weights": "int8_dynamic_range",
+    "activations": "float32",
+    "io_boundary": "float32"
   },
   "classes": [
     {"id": 0, "label": "a", "meaning": "female", "blur_eligible": true},

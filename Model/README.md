@@ -1,14 +1,14 @@
 # Image Model Package
 
-This package contains the version that was actually deployed in the inspected HaramBlur application, after removing the original app's XOR wrapper. The decrypted contents of `merge_base/assets/data.bin` were verified to match this file byte-for-byte.
+This package contains the current `halalify_v2` vision detector selected after fine-tuning, ONNX-to-TFLite conversion, and benchmark pass. The Android app packages this directory directly as uncompressed assets.
 
 ## Approved model file
 
-- Model: `halalify_gender_v3_full_int8.tflite`
-- Size: `3,292,400` bytes
-- SHA-256: `65E2B0BE46BC7E865EEDD2E084E6FC8CCB4258C81213A3EBE1D8333218A503B0`
-- Input: RGB `int8`, shape `[1, 416, 416, 3]`
-- Output: two `int8` tensors, shapes `[1, 4, 3549]` and `[1, 3, 3549]`
+- Model: `halalify_v2.tflite`
+- Size: `2,849,880` bytes
+- SHA-256: `44F0CEE3A5AABE2074042DC1D8AA50A02C703D9B0EB97D32082C78DC6A2C8945`
+- Input: RGB `float32`, shape `[1, 416, 416, 3]`
+- Output: one `float32` tensor, shape `[1, 7, 14365]`
 - Classes: `a = female`, `b = male`, `c = ignored`
 
 ## NSFW classifier
@@ -26,22 +26,12 @@ Preprocessing details are defined in `model_manifest.json`. This directory is th
 
 ## Quantization status
 
-The approved artifact uses full INT8 quantization for weights, activations,
-input, and output. The detector's four box channels and three confidence
-channels are exposed as separate INT8 output tensors, each with its own scale.
-The native adapter dequantizes those branches into the existing Float32
-`[1,7,3549]` postprocess buffer. This avoids forcing small confidence values
-onto the much coarser coordinate scale.
-
-The approved export was produced with
-`training/quantize_split_output_tflite.py` and the original source graph. The
-large source and experimental artifacts were removed from this package after
-approval; only the deployable INT8 model is retained here.
-
-The old single-output all-INT8 artifact remains research-only because its
-combined detector output cannot represent coordinates and confidence scores
-accurately with one INT8 scale. The production artifact solves that by using
-split INT8 outputs and a native dequantization adapter.
+The deployed artifact uses post-training dynamic-range quantization for the
+weights while keeping Float32 activations and Float32 input/output tensors.
+The native LiteRT adapter accepts the raw `[1,7,14365]` output and normalizes
+the converted box-channel layout before shared postprocessing. This keeps
+the confidence scores usable, unlike the rejected single-scale full-INT8
+export.
 
 ## What the model does
 
@@ -58,15 +48,16 @@ The preprocessing that matches the inspected application is:
 
 ## Available source results
 
-The local v3 validation record, using `1,475` images and `1,839` objects, reported approximately:
+The production-suite benchmark used 340 cases and reported approximately:
 
-| Class | Precision | Recall | mAP50 | mAP50-95 |
-|---|---:|---:|---:|---:|
-| `a` (female) | 0.563 | 0.588 | 0.598 | 0.448 |
-| `b` (male) | 0.694 | 0.794 | 0.784 | 0.622 |
-| Overall | 0.629 | 0.691 | 0.691 | 0.535 |
+| Metric | Result |
+|---|---:|
+| Female recall | 0.881 |
+| Male recall | 0.898 |
+| Specificity | 0.950 |
+| Overall benchmark score | 64.3 |
 
-These are reference numbers, not production acceptance results. In particular, the current `female` accuracy is not sufficient to claim reliable protection without an evaluation set representative of real app screens, per-class threshold calibration, and model improvement where needed.
+These are comparison results, not a production acceptance claim. Avatar recall remained a gap and the release still requires broader device testing and representative screenshots.
 
 ## Licensing notice
 

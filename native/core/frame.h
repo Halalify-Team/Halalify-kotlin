@@ -11,7 +11,7 @@ constexpr int kModelWidth = 416;
 constexpr int kModelHeight = 416;
 constexpr int kModelChannels = 3;
 constexpr int kOutputChannels = 7;
-constexpr int kOutputCandidates = 3549;
+constexpr int kOutputCandidates = 14365;
 
 struct FrameRegion {
     int x = 0;

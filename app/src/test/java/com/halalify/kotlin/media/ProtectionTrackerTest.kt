@@ -75,16 +75,18 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun oldRegionIsReplacedImmediatelyWhenMovedSubjectIsConfirmed() {
-        val tracker = ProtectionTracker()
+    fun `old region expires only after the moved subject is observed repeatedly`() {
+        val tracker = ProtectionTracker(maxMissedContentChanges = 2)
         tracker.update(listOf(detection(shouldBlur = true)))
 
         val moved = detection(shouldBlur = true).copy(
             x1 = 0.60F,
             x2 = 0.95F,
         )
+        val firstMovedFrame = tracker.update(listOf(moved), contentChanged = true)
         val protected = tracker.update(listOf(moved), contentChanged = true)
 
+        assertEquals(2, firstMovedFrame.size)
         assertEquals(1, protected.size)
         assertEquals(moved.x1, protected.single().x1, 0.0001F)
     }
@@ -105,10 +107,40 @@ class ProtectionTrackerTest {
     }
 
     @Test
-    fun defaultTrackerRemovesStaleRegionAfterThreeChangedFrames() {
+    fun `alternating detector batches keep all four protected people`() {
+        val tracker = ProtectionTracker()
+        val upperLeft = detection(shouldBlur = true).copy(
+            x1 = 0.05F, y1 = 0.10F, x2 = 0.25F, y2 = 0.30F,
+        )
+        val upperRight = upperLeft.copy(x1 = 0.70F, x2 = 0.90F)
+        val lowerLeft = upperLeft.copy(y1 = 0.70F, y2 = 0.90F)
+        val lowerRight = upperRight.copy(y1 = 0.70F, y2 = 0.90F)
+
+        tracker.update(listOf(upperLeft))
+        tracker.update(listOf(upperRight), contentChanged = true)
+        tracker.update(listOf(lowerLeft), contentChanged = true)
+        val accumulated = tracker.update(listOf(lowerRight), contentChanged = true)
+        assertEquals(4, accumulated.size)
+        tracker.update(listOf(upperLeft, upperRight), contentChanged = true)
+        repeat(6) { index ->
+            val currentBatch = if (index % 2 == 0) {
+                listOf(lowerLeft, lowerRight)
+            } else {
+                listOf(upperLeft, upperRight)
+            }
+
+            val protected = tracker.update(currentBatch, contentChanged = true)
+
+            assertEquals(4, protected.size)
+        }
+    }
+
+    @Test
+    fun defaultTrackerRemovesStaleRegionAfterFourChangedFrames() {
         val tracker = ProtectionTracker()
         tracker.update(listOf(detection(shouldBlur = true)))
 
+        assertEquals(1, tracker.update(emptyList(), contentChanged = true).size)
         assertEquals(1, tracker.update(emptyList(), contentChanged = true).size)
         assertEquals(1, tracker.update(emptyList(), contentChanged = true).size)
         assertTrue(tracker.update(emptyList(), contentChanged = true).isEmpty())
@@ -130,7 +162,7 @@ class ProtectionTrackerTest {
         tracker.update(listOf(detection(shouldBlur = true)))
         tracker.update(emptyList(), contentChanged = true)
 
-        tracker.update(emptyList(), safetyRefresh = true)
+        repeat(2) { tracker.update(emptyList(), safetyRefresh = true) }
         val protected = tracker.update(emptyList(), safetyRefresh = true)
 
         assertTrue(protected.isEmpty())

@@ -1,10 +1,91 @@
 package com.halalify.kotlin.media
 
+import android.os.Build
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrivacyOverlayAccessibilityPolicyTest {
+    @Test
+    fun `real scroll schedules a clean protection refresh`() {
+        assertTrue(
+            shouldRefreshProtectionAfterScroll(
+                sdkInt = Build.VERSION_CODES.P,
+                scrollDeltaX = 0,
+                scrollDeltaY = 240,
+            ),
+        )
+    }
+
+    @Test
+    fun `zero delta framework scroll does not churn protection`() {
+        assertFalse(
+            shouldRefreshProtectionAfterScroll(
+                sdkInt = Build.VERSION_CODES.P,
+                scrollDeltaX = 0,
+                scrollDeltaY = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun `legacy scroll without delta still schedules refresh`() {
+        assertTrue(
+            shouldRefreshProtectionAfterScroll(
+                sdkInt = Build.VERSION_CODES.O_MR1,
+                scrollDeltaX = 0,
+                scrollDeltaY = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun `content change shortly after user interaction schedules stale protection discard`() {
+        assertTrue(
+            shouldScheduleSettledProtectionDiscard(
+                lastPotentialContentReplacementAtMs = 1_000L,
+                lastPotentialContentReplacementPackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+                contentChangeEventAtMs = 1_500L,
+                contentChangePackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+            ),
+        )
+    }
+
+    @Test
+    fun `background content animation does not discard stable protection`() {
+        assertFalse(
+            shouldScheduleSettledProtectionDiscard(
+                lastPotentialContentReplacementAtMs = Long.MIN_VALUE,
+                lastPotentialContentReplacementPackageName = null,
+                contentChangeEventAtMs = 1_500L,
+                contentChangePackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+            ),
+        )
+        assertFalse(
+            shouldScheduleSettledProtectionDiscard(
+                lastPotentialContentReplacementAtMs = 1_000L,
+                lastPotentialContentReplacementPackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+                contentChangeEventAtMs = 11_001L,
+                contentChangePackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+            ),
+        )
+        assertFalse(
+            shouldScheduleSettledProtectionDiscard(
+                lastPotentialContentReplacementAtMs = 1_000L,
+                lastPotentialContentReplacementPackageName =
+                    PrivacyOverlayAccessibilityService::class.java.name,
+                contentChangeEventAtMs = 1_500L,
+                contentChangePackageName =
+                    PrivacyOverlayAccessibilityPolicyTest::class.java.name,
+            ),
+        )
+    }
+
     @Test
     fun `switching application discards previous protection`() {
         assertTrue(

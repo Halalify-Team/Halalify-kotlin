@@ -3,6 +3,8 @@ package com.halalify.kotlin.media
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArraySet
@@ -16,12 +18,29 @@ import java.util.concurrent.CopyOnWriteArraySet
  * discarded. It also supplies a trusted fully-opaque pass-through window.
  */
 internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var lastTrackedContentEventAtMs = Long.MIN_VALUE
     private var lastWindowPackageName: String? = null
+    private var lastPotentialContentReplacementAtMs = Long.MIN_VALUE
+    private var lastPotentialContentReplacementPackageName: String? = null
     private var chromeTabOverviewActive = false
+    private val settledContentDiscard = Runnable {
+        lastPotentialContentReplacementAtMs = Long.MIN_VALUE
+        lastPotentialContentReplacementPackageName = null
+        TrustedOverlayHost.invalidateContent(discardExistingProtection = true)
+    }
+    private val settledScrollRefresh = Runnable {
+        lastTrackedContentEventAtMs = Long.MIN_VALUE
+        TrustedOverlayHost.invalidateContent(
+            discardExistingProtection = true,
+            suppressDiscardedReappearance = false,
+        )
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        cancelSettledContentDiscard()
+        cancelSettledScrollRefresh()
         TrustedOverlayHost.connect(this)
     }
 
@@ -34,6 +53,7 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                cancelSettledScrollRefresh()
                 val sourceClassName = event.className?.toString()
                 val resumedAfterLeavingChromeOverview =
                     chromeTabOverviewActive &&
@@ -59,11 +79,13 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
 
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 lastWindowPackageName = sourcePackageName
-                val hasRealScrollDelta =
-                    Build.VERSION.SDK_INT < Build.VERSION_CODES.P ||
-                        event.scrollDeltaX != 0 ||
-                        event.scrollDeltaY != 0
-                if (!hasRealScrollDelta) return
+                if (
+                    !shouldRefreshProtectionAfterScroll(
+                        sdkInt = Build.VERSION.SDK_INT,
+                        scrollDeltaX = event.scrollDeltaX,
+                        scrollDeltaY = event.scrollDeltaY,
+                    )
+                ) return
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     // Accessibility reports how far the scroll position moved;
                     // visible content moves in the opposite direction.
@@ -79,9 +101,18 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
                 if (startsNewInteraction) {
                     TrustedOverlayHost.invalidateContent()
                 }
+                mainHandler.removeCallbacks(settledScrollRefresh)
+                mainHandler.postDelayed(
+                    settledScrollRefresh,
+                    SCROLL_SETTLE_DELAY_MS,
+                )
             }
 
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                markPotentialContentReplacement(
+                    eventTimeMs = event.eventTime,
+                    sourcePackageName = sourcePackageName,
+                )
                 val sourceClassName = event.className?.toString()
                 val contentDescription = event.contentDescription?.toString()
                 if (
@@ -126,29 +157,109 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
                     TrustedOverlayHost.invalidateContent(discardExistingProtection = true)
                 }
             }
+
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                // Typing in a browser address/search field can replace the
+                // page without creating a new Activity or Android window.
+                markPotentialContentReplacement(
+                    eventTimeMs = event.eventTime,
+                    sourcePackageName = sourcePackageName,
+                )
+            }
+
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                if (
+                    shouldScheduleSettledProtectionDiscard(
+                        lastPotentialContentReplacementAtMs =
+                            lastPotentialContentReplacementAtMs,
+                        lastPotentialContentReplacementPackageName =
+                            lastPotentialContentReplacementPackageName,
+                        contentChangeEventAtMs = event.eventTime,
+                        contentChangePackageName = sourcePackageName,
+                    )
+                ) {
+                    // Web pages emit many changes while loading. Debouncing
+                    // until the stream becomes quiet clears stale protection
+                    // once, after the user-driven transition has settled.
+                    mainHandler.removeCallbacks(settledContentDiscard)
+                    mainHandler.postDelayed(
+                        settledContentDiscard,
+                        CONTENT_SETTLE_DELAY_MS,
+                    )
+                }
+            }
         }
     }
 
     override fun onInterrupt() = Unit
 
     override fun onUnbind(intent: Intent?): Boolean {
+        cancelSettledContentDiscard()
+        cancelSettledScrollRefresh()
         TrustedOverlayHost.disconnect(this)
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        cancelSettledContentDiscard()
+        cancelSettledScrollRefresh()
         TrustedOverlayHost.disconnect(this)
         super.onDestroy()
+    }
+
+    private fun markPotentialContentReplacement(
+        eventTimeMs: Long,
+        sourcePackageName: String,
+    ) {
+        cancelSettledScrollRefresh()
+        lastPotentialContentReplacementAtMs = eventTimeMs
+        lastPotentialContentReplacementPackageName = sourcePackageName
+        mainHandler.removeCallbacks(settledContentDiscard)
+    }
+
+    private fun cancelSettledContentDiscard() {
+        mainHandler.removeCallbacks(settledContentDiscard)
+        lastPotentialContentReplacementAtMs = Long.MIN_VALUE
+        lastPotentialContentReplacementPackageName = null
+    }
+
+    private fun cancelSettledScrollRefresh() {
+        mainHandler.removeCallbacks(settledScrollRefresh)
     }
 
     private companion object {
         // Web pages can emit a continuous stream of synthetic scroll events.
         // Treat only the first event after a quiet gap as a new interaction.
-        // TYPE_WINDOW_CONTENT_CHANGED is intentionally omitted: image loading
-        // and animated web pages emit it continuously and can otherwise starve
-        // the clean-frame analysis. FrameActivityDetector covers those changes.
+        // Window-content changes are used only after a user click/text edit and
+        // are debounced, so ordinary animations cannot churn stable protection.
         const val CONTENT_EVENT_QUIET_GAP_MS = 350L
+        const val CONTENT_SETTLE_DELAY_MS = 500L
+        const val SCROLL_SETTLE_DELAY_MS = 450L
     }
+}
+
+internal fun shouldRefreshProtectionAfterScroll(
+    sdkInt: Int,
+    scrollDeltaX: Int,
+    scrollDeltaY: Int,
+): Boolean =
+    sdkInt < Build.VERSION_CODES.P || scrollDeltaX != 0 || scrollDeltaY != 0
+
+internal fun shouldScheduleSettledProtectionDiscard(
+    lastPotentialContentReplacementAtMs: Long,
+    lastPotentialContentReplacementPackageName: String?,
+    contentChangeEventAtMs: Long,
+    contentChangePackageName: String,
+    replacementWindowMs: Long = 10_000L,
+): Boolean {
+    if (
+        lastPotentialContentReplacementAtMs == Long.MIN_VALUE ||
+        lastPotentialContentReplacementPackageName != contentChangePackageName ||
+        contentChangeEventAtMs < lastPotentialContentReplacementAtMs
+    ) {
+        return false
+    }
+    return contentChangeEventAtMs - lastPotentialContentReplacementAtMs <= replacementWindowMs
 }
 
 /**
@@ -241,7 +352,8 @@ internal object TrustedOverlayHost {
     private var service: PrivacyOverlayAccessibilityService? = null
     @Volatile
     private var contentAnalysisSuspended = false
-    private val contentInvalidationListeners = CopyOnWriteArraySet<(Boolean) -> Unit>()
+    private val contentInvalidationListeners =
+        CopyOnWriteArraySet<(Boolean, Boolean) -> Unit>()
     private val contentMovementListeners = CopyOnWriteArraySet<(Int, Int) -> Unit>()
 
     val isConnected: Boolean
@@ -266,7 +378,9 @@ internal object TrustedOverlayHost {
         }
     }
 
-    fun subscribeToContentInvalidation(listener: (Boolean) -> Unit): Closeable {
+    fun subscribeToContentInvalidation(
+        listener: (Boolean, Boolean) -> Unit,
+    ): Closeable {
         contentInvalidationListeners += listener
         return object : Closeable {
             override fun close() {
@@ -284,9 +398,17 @@ internal object TrustedOverlayHost {
         }
     }
 
-    fun invalidateContent(discardExistingProtection: Boolean = false) {
+    fun invalidateContent(
+        discardExistingProtection: Boolean = false,
+        suppressDiscardedReappearance: Boolean = discardExistingProtection,
+    ) {
         contentInvalidationListeners.forEach { listener ->
-            runCatching { listener(discardExistingProtection) }
+            runCatching {
+                listener(
+                    discardExistingProtection,
+                    suppressDiscardedReappearance,
+                )
+            }
         }
     }
 

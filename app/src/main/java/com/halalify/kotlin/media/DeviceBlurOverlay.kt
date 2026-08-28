@@ -151,7 +151,11 @@ internal class DeviceBlurOverlay(
         }
 
         oldPending?.releaseBitmaps()
-        mainHandler.post { clearOnMainThread() }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            clearOnMainThread()
+        } else {
+            mainHandler.post { clearOnMainThread() }
+        }
     }
 
     private fun applyPending() {

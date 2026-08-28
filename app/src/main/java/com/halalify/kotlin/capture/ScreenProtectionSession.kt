@@ -67,6 +67,9 @@ internal class ScreenProtectionSession(
     private var contentMovementSubscription: Closeable? = null
     private val requestedContentGeneration = AtomicLong(0L)
     private val discardExistingProtection = AtomicBoolean(false)
+    private val suppressDiscardedReappearance = AtomicBoolean(false)
+    private var recentlyDiscardedDetections: List<Detection> = emptyList()
+    private var protectionDiscardedAt = Long.MIN_VALUE
     @Volatile
     private var handledContentGeneration = 0L
 
@@ -145,6 +148,12 @@ internal class ScreenProtectionSession(
             val externallyInvalidated = observedContentGeneration != handledContentGeneration
             if (externallyInvalidated) {
                 if (discardExistingProtection.getAndSet(false)) {
+                    if (suppressDiscardedReappearance.getAndSet(false)) {
+                        recentlyDiscardedDetections = lastRenderedDetections
+                        protectionDiscardedAt = now
+                    } else {
+                        recentlyDiscardedDetections = emptyList()
+                    }
                     protectionTracker.reset()
                     newProtectionConfirmation.reset()
                     lastRenderedDetections = emptyList()
@@ -198,6 +207,17 @@ internal class ScreenProtectionSession(
                 TAG,
                 "inference_ms=${clock() - inferenceStartedAt} raw=${rawDetections.size} reason=$reason",
             )
+            val inferenceFinishedAt = clock()
+            val discardedSuppressionActive =
+                recentlyDiscardedDetections.isNotEmpty() &&
+                    inferenceFinishedAt - protectionDiscardedAt <
+                    RECENTLY_DISCARDED_SUPPRESSION_MS
+            val eligibleRawDetections = filterRecentlyDiscardedDetections(
+                detections = rawDetections,
+                discardedDetections = recentlyDiscardedDetections,
+                suppressionActive = discardedSuppressionActive,
+            )
+            if (!discardedSuppressionActive) recentlyDiscardedDetections = emptyList()
             // INITIAL/content-change detections still require two-frame
             // confirmation. A STABILIZATION result is already a delayed clean
             // observation, and may come from a non-overlapping portrait tile;
@@ -208,7 +228,7 @@ internal class ScreenProtectionSession(
                 reason = reason,
             )
             val detections = newProtectionConfirmation.apply(
-                detections = rawDetections,
+                detections = eligibleRawDetections,
                 confirmationRequired = confirmationRequired,
             )
             if (
@@ -216,18 +236,16 @@ internal class ScreenProtectionSession(
                 requestedContentGeneration.get() != observedContentGeneration
             ) return
 
-            // MediaProjection redacts our trusted windows to black, so an
-            // empty detector result cannot prove that a protected subject
-            // disappeared. Age unmatched tracks only when this clean
-            // full-screen pass also found protected content elsewhere; that
-            // is positive evidence that the visible page was replaced.
             val hasProtectedObservation = detections.any(Detection::shouldBlur)
+            val protectionAging = decideProtectionAging(
+                contentChanged = contentChanged,
+                reason = reason,
+                hasProtectedObservation = hasProtectedObservation,
+            )
             val protectedDetections = protectionTracker.update(
                 detections = detections,
-                contentChanged = contentChanged && hasProtectedObservation,
-                safetyRefresh =
-                    reason == FrameAnalysisReason.SAFETY_REFRESH &&
-                        hasProtectedObservation,
+                contentChanged = protectionAging.contentChanged,
+                safetyRefresh = protectionAging.safetyRefresh,
             )
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
@@ -244,6 +262,7 @@ internal class ScreenProtectionSession(
                     visualSettings = currentVisualSettings,
                     visualSettingsVersion = currentVisualSettingsVersion,
                     contentGeneration = observedContentGeneration,
+                    forceOverlayRender = externallyInvalidated,
                 )
             } finally {
                 frameBitmap?.recycle()
@@ -268,12 +287,16 @@ internal class ScreenProtectionSession(
         visualSettings: VisualSettings,
         visualSettingsVersion: Long,
         contentGeneration: Long,
+        forceOverlayRender: Boolean,
     ) {
         val settingsChanged = visualSettingsVersion != renderedVisualSettingsVersion ||
                 lastRenderedStyle != visualSettings.style ||
                 lastRenderedIntensity != visualSettings.intensity
         val protectionChanged = !sameDetections(lastRenderedDetections, protectedDetections)
-        val needsOverlayRender = settingsChanged || protectionChanged ||
+        // The accessibility overlay host can be destroyed and recreated while
+        // the detector/tracker state stays unchanged. An external invalidation
+        // must therefore rebuild the actual WindowManager surfaces as well.
+        val needsOverlayRender = forceOverlayRender || settingsChanged || protectionChanged ||
                 statePublisher.isPreviewRequested
         if (!needsOverlayRender) {
             publishDetectionStatus(detections, protectedDetections.size)
@@ -367,11 +390,17 @@ internal class ScreenProtectionSession(
         }
     }
 
-    private fun requestContentAnalysis(shouldDiscardExistingProtection: Boolean) {
+    private fun requestContentAnalysis(
+        shouldDiscardExistingProtection: Boolean,
+        shouldSuppressDiscardedReappearance: Boolean,
+    ) {
         if (!running || closed) return
         synchronized(contentGenerationLock) {
             if (shouldDiscardExistingProtection) {
                 discardExistingProtection.set(true)
+            }
+            if (shouldSuppressDiscardedReappearance) {
+                suppressDiscardedReappearance.set(true)
             }
             requestedContentGeneration.incrementAndGet()
             if (shouldDiscardExistingProtection) {
@@ -529,6 +558,7 @@ internal class ScreenProtectionSession(
         // for the next 30 FPS boundary. Inference still runs on the vision
         // thread and ImageReader drops stale frames when it is busy.
         const val CHANGE_CHECK_INTERVAL_MS = 16L
+        const val RECENTLY_DISCARDED_SUPPRESSION_MS = 3_000L
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20

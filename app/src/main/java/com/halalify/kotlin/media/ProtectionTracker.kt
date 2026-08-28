@@ -81,22 +81,14 @@ internal class ProtectionTracker(
         }
 
         // A static or periodically refreshed screen never ages protected regions.
-        // When a new protected box appears after a real change, remove unmatched
-        // old boxes immediately. The current frame already contains a confirmed
-        // replacement, so retaining the previous page's boxes only creates the
-        // stacked mosaics users see during a fast swipe.
+        // Detector passes can report different people from the same unchanged
+        // screen. A newly observed box therefore cannot prove that every
+        // unmatched person disappeared; age each missing track independently.
         if (contentChanged) {
             availableTracks.forEach { track -> track.missedContentChanges += 1 }
-            // A matched detection only confirms its own track. It must not
-            // immediately delete a second person that the model missed in this
-            // frame. Only a genuinely new protected box confirms replacement.
-            val replacementConfirmed = newProtectedDetections.isNotEmpty()
-            val expiryLimit = if (replacementConfirmed) {
-                REPLACEMENT_CONFIRMATION_CHANGES.coerceAtMost(maxMissedContentChanges)
-            } else {
-                maxMissedContentChanges
+            tracks.removeAll { track ->
+                track.missedContentChanges >= maxMissedContentChanges
             }
-            tracks.removeAll { track -> track.missedContentChanges >= expiryLimit }
         }
 
         // If a page moved and the detector missed the subject during that
@@ -268,14 +260,14 @@ internal class ProtectionTracker(
     }
 
     private companion object {
-        // Three changed frames tolerate the two-frame oscillation observed on
-        // the emulator. Navigation and scroll events reset tracks immediately.
-        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 3
+        // Four changed observations let independently detected people coexist
+        // through a full four-region cycle. Navigation and scroll events still
+        // clear or move obsolete tracks immediately.
+        const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 4
         const val DEFAULT_MATCHING_IOU = 0.15F
         const val DUPLICATE_CONTAINMENT_OVERLAP = 0.70F
         const val STABLE_TILE_OVERLAP = 0.85F
         const val MAX_TILE_EXTENT_SIZE_RATIO = 0.75F
-        const val REPLACEMENT_CONFIRMATION_CHANGES = 1
         const val MAX_CENTER_DISTANCE = 0.35F
         // An absolute screen-distance limit alone can associate two separate
         // image cards in the same column. Scale the fallback by the boxes too:

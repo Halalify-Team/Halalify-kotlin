@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.annotation.RequiresApi
+import com.halalify.kotlin.BuildConfig
 import java.io.Closeable
 import kotlin.math.roundToInt
 
@@ -318,10 +319,12 @@ internal class DeviceBlurOverlay(
                 )
             }
 
-            Log.d(
-                HALALIFY_OVERLAY_TAG,
-                "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} redacted=${region.looksRedactedBlack} restored=${region.restoredOverlapCount} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    HALALIFY_OVERLAY_TAG,
+                    "protected region[$index] id=${region.protectionId} bounds=$rect filtered=${region.isFiltered} redacted=${region.looksRedactedBlack} restored=${region.restoredOverlapCount} preserved=$preserveBitmap type=$windowType alpha=${params.alpha}",
+                )
+            }
         }
     }
 
@@ -379,10 +382,12 @@ internal class DeviceBlurOverlay(
             windowManager.addView(view, params)
             windows += RegionWindow(view, params)
 
-            Log.d(
-                HALALIFY_OVERLAY_TAG,
-                "added pass-through protected region window type=$windowType alpha=${params.alpha}",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    HALALIFY_OVERLAY_TAG,
+                    "added pass-through protected region window type=$windowType alpha=${params.alpha}",
+                )
+            }
         }
 
         val incomingIds = regions.mapNotNull(PreparedRegion::protectionId).toSet()
@@ -532,10 +537,12 @@ internal class DeviceBlurOverlay(
         }
 
         if (retained.isNotEmpty()) {
-            Log.d(
-                HALALIFY_OVERLAY_TAG,
-                "migrated ${retained.size} protected region windows without replacing their bitmaps type=$windowType alpha=$windowAlpha",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    HALALIFY_OVERLAY_TAG,
+                    "migrated ${retained.size} protected region windows without replacing their bitmaps type=$windowType alpha=$windowAlpha",
+                )
+            }
         }
     }
 
@@ -658,7 +665,9 @@ internal class DeviceBlurOverlay(
         windows.clear()
         FrameBlurRenderer.clearBitmapPool()
         if (removedWindowCount > 0) {
-            Log.d(HALALIFY_OVERLAY_TAG, "cleared $removedWindowCount protected region windows")
+            if (BuildConfig.DEBUG) {
+                Log.d(HALALIFY_OVERLAY_TAG, "cleared $removedWindowCount protected region windows")
+            }
         }
     }
 

@@ -13,6 +13,7 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.graphics.createBitmap
+import com.halalify.kotlin.BuildConfig
 import com.halalify.kotlin.media.FrameBlurRenderer
 import com.halalify.kotlin.media.ProtectionOverlay
 import com.halalify.kotlin.media.ProtectionTracker
@@ -161,7 +162,9 @@ internal class ScreenProtectionSession(
                 }
                 frameActivityDetector.reset()
                 handledContentGeneration = observedContentGeneration
-                Log.d(TAG, "Analyzing changed content while retaining visible protection.")
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Analyzing changed content while retaining visible protection.")
+                }
             }
 
             val sample = plane.sampleGrid(
@@ -203,10 +206,12 @@ internal class ScreenProtectionSession(
                 rotationDegrees = 0,
                 timestampNs = image.timestamp,
             ).filter(Detection::isUsableDetection)
-            Log.d(
-                TAG,
-                "inference_ms=${clock() - inferenceStartedAt} raw=${rawDetections.size} reason=$reason",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    TAG,
+                    "inference_ms=${clock() - inferenceStartedAt} raw=${rawDetections.size} reason=$reason",
+                )
+            }
             val inferenceFinishedAt = clock()
             val discardedSuppressionActive =
                 recentlyDiscardedDetections.isNotEmpty() &&
@@ -382,7 +387,9 @@ internal class ScreenProtectionSession(
         val femaleCount = detections.count { it.classId == FEMALE_CLASS_ID }
         val maleCount = detections.count { it.classId == MALE_CLASS_ID }
         val nsfwCount = detections.count(Detection::isNsfw)
-        Log.d(TAG, "detections female=$femaleCount male=$maleCount nsfw=$nsfwCount blurred=$blurredCount")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "detections female=$femaleCount male=$maleCount nsfw=$nsfwCount blurred=$blurredCount")
+        }
         statePublisher.updateState { current ->
             current.copy(
                 message = "Detected: $femaleCount female, $maleCount male, $nsfwCount NSFW - blurred: $blurredCount",

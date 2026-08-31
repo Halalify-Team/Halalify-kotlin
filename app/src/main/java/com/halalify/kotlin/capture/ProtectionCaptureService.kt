@@ -47,7 +47,7 @@ internal class ProtectionCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PREPARE -> publishMessage(
-                "Choose the app or screen to protect in Android's sharing dialog.",
+                "Allow full-screen sharing in Android's dialog to keep protection active across apps.",
             )
 
             ACTION_START -> startCapture(intent)

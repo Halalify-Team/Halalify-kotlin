@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Halalify</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="brand">
+        <div class="brand-mark">H</div>
+        <div>
+          <h1>Halalify</h1>
+          <p>تصفح أكثر أمانًا</p>
+        </div>
+      </header>
+
+      <label class="switch-row">
+        <span>
+          <strong>الحماية مفعّلة</strong>
+          <small>حجب النطاقات وإخفاء المحتوى المكتشف</small>
+        </span>
+        <input id="protection-toggle" type="checkbox" />
+        <span class="switch"></span>
+      </label>
+
+      <p id="status" class="status" role="status"></p>
+
+      <button id="open-options" class="secondary-button" type="button">
+        فتح الإعدادات
+      </button>
+
+      <footer>الإصدار 0.1.0 — نسخة بداية</footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

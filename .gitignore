@@ -77,3 +77,7 @@ training/
 bancmark/
 model_backups/
 
+
+# Standalone Halalify autoresearch project
+!autoresearch-halalify-v2/
+!autoresearch-halalify-v2/**

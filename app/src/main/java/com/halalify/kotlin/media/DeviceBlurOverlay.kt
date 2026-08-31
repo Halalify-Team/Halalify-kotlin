@@ -572,6 +572,10 @@ internal class DeviceBlurOverlay(
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            // Keep Halalify's rendered protection out of its own MediaProjection input.
+            // View content sensitivity also makes the window secure, but Android 15+
+            // displays a disruptive "content hidden" toast for every new sensitive window.
+            WindowManager.LayoutParams.FLAG_SECURE or
             WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         return WindowManager.LayoutParams(
@@ -715,13 +719,6 @@ internal class DeviceBlurOverlay(
             setBackgroundColor(Color.BLACK)
             setWillNotDraw(false)
             isClickable = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                // Android marks this small region window secure only while a
-                // MediaProjection is active. The user still sees the blur, but
-                // Halalify's detector receives a redacted region instead of a
-                // recursive copy of its own pixelated output.
-                contentSensitivity = View.CONTENT_SENSITIVITY_SENSITIVE
-            }
         }
 
         fun replaceRegion(

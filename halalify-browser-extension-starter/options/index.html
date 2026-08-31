@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>إعدادات Halalify</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="settings-card">
+      <h1>إعدادات Halalify</h1>
+      <p class="hint">أضف النطاقات التي تريد حجبها. مثال: example.com</p>
+
+      <form id="domain-form" class="domain-form">
+        <input id="domain-input" type="text" placeholder="example.com" autocomplete="off" />
+        <button type="submit">إضافة</button>
+      </form>
+
+      <p id="message" class="message" role="status"></p>
+      <ul id="domain-list" class="domain-list"></ul>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

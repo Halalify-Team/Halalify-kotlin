@@ -55,19 +55,35 @@ internal object FrameBlurRenderer {
             return FrameBlurResult(0, emptyList())
         }
 
-        val regions = ArrayList<OverlayRegion>(selected.size)
+        val candidates = selected.mapNotNull { detection ->
+            val raw = detection.toProtectedBounds(
+                width = bitmap.width,
+                height = bitmap.height,
+                paddingFraction = 0F,
+            ) ?: return@mapNotNull null
+            val padded = detection.toProtectedBounds(
+                width = bitmap.width,
+                height = bitmap.height,
+                paddingFraction = PROTECTION_PADDING_FRACTION,
+            ) ?: return@mapNotNull null
+            DetectionRegionCandidate(
+                detection = detection,
+                bounds = PaddedOverlayBounds(raw = raw, padded = padded),
+            )
+        }
+        val resolvedBounds = resolvePaddingOnlyOverlaps(
+            candidates.map(DetectionRegionCandidate::bounds),
+        )
+        val regions = ArrayList<OverlayRegion>(candidates.size)
 
         try {
-            selected.forEach { detection ->
-                val rect = detection.toProtectedRect(bitmap.width, bitmap.height)
-                    ?: return@forEach
-
+            candidates.forEachIndexed { index, candidate ->
                 regions += createOverlayRegion(
                     source = bitmap,
-                    rect = rect,
+                    rect = resolvedBounds[index].toRect(),
                     style = style,
                     intensity = intensity,
-                ).copy(protectionId = detection.protectionId)
+                ).copy(protectionId = candidate.detection.protectionId)
             }
 
             if (includePreview) {
@@ -418,10 +434,11 @@ internal object FrameBlurRenderer {
         }
     }
 
-    private fun Detection.toProtectedRect(
+    private fun Detection.toProtectedBounds(
         width: Int,
         height: Int,
-    ): Rect? {
+        paddingFraction: Float,
+    ): OverlayBounds? {
         if (width <= 0 || height <= 0) return null
 
         val boxWidth = x2 - x1
@@ -439,8 +456,9 @@ internal object FrameBlurRenderer {
         // Keep the protection close to the detector's body box. A large
         // margin makes a woman-sized detection look like a full-page mosaic
         // on narrow phone screens.
-        val padX = boxWidth * 0.03F
-        val padY = boxHeight * 0.03F
+        val padding = paddingFraction.coerceAtLeast(0F)
+        val padX = boxWidth * padding
+        val padY = boxHeight * padding
 
         val left = ceil((x1 - padX) * width)
             .toInt()
@@ -459,11 +477,13 @@ internal object FrameBlurRenderer {
             .coerceIn(top + 1, height)
 
         return if (right > left && bottom > top) {
-            Rect(left, top, right, bottom)
+            OverlayBounds(left, top, right, bottom)
         } else {
             null
         }
     }
+
+    private fun OverlayBounds.toRect(): Rect = Rect(left, top, right, bottom)
 
     private fun lerp(
         start: Float,
@@ -480,5 +500,11 @@ internal object FrameBlurRenderer {
         }
     }
 
+    private data class DetectionRegionCandidate(
+        val detection: Detection,
+        val bounds: PaddedOverlayBounds,
+    )
+
+    private const val PROTECTION_PADDING_FRACTION = 0.03F
     private const val MAX_POOLED_BITMAPS = 10
 }

@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
             val projectionManager = getSystemService(MediaProjectionManager::class.java)
             val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 projectionManager.createScreenCaptureIntent(
-                    MediaProjectionConfig.createConfigForDefaultDisplay(),
+                    MediaProjectionConfig.createConfigForUserChoice(),
                 )
             } else {
                 projectionManager.createScreenCaptureIntent()

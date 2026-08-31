@@ -81,3 +81,6 @@ model_backups/
 # Standalone Halalify autoresearch project
 !autoresearch-halalify-v2/
 !autoresearch-halalify-v2/**
+
+# Local browser-extension notes
+/halalify-browser-extension-starter/README.md

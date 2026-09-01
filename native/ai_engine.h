@@ -22,7 +22,8 @@ class AiEngine {
 public:
     AiEngine(
             std::unique_ptr<InferenceBackend> gender_backend,
-            std::unique_ptr<NsfwBackend> nsfw_backend);
+            std::unique_ptr<NsfwBackend> nsfw_backend,
+            std::unique_ptr<InferenceBackend> parallel_gender_backend = nullptr);
     ~AiEngine();
 
     bool Initialize(

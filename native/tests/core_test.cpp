@@ -102,6 +102,25 @@ void TestDecodeEndToEndOutput() {
     assert(std::fabs(detections.front().x1 - 100.0F / 416.0F) < 1e-5F);
 }
 
+void TestNmsPrefersProtectedOverlap() {
+    hb_detection unprotected{};
+    unprotected.x1 = 0.1F;
+    unprotected.y1 = 0.1F;
+    unprotected.x2 = 0.8F;
+    unprotected.y2 = 0.8F;
+    unprotected.confidence = 0.95F;
+    unprotected.should_blur = 0;
+
+    hb_detection protected_detection = unprotected;
+    protected_detection.confidence = 0.70F;
+    protected_detection.should_blur = 1;
+
+    const std::vector<hb_detection> selected = halalify::ApplyClassAgnosticNms(
+            {unprotected, protected_detection}, 0.5F, 100);
+    assert(selected.size() == 1);
+    assert(selected.front().should_blur == 1);
+}
+
 void TestAudioSignalConversionAndResidualScore() {
     const std::vector<int16_t> pcm = {0, 16384, -32768};
     std::vector<float> normalized;
@@ -165,6 +184,7 @@ int main() {
     TestNsfwPreprocessUsesBgrVggMeans();
     TestDecodeAndNms();
     TestDecodeEndToEndOutput();
+    TestNmsPrefersProtectedOverlap();
     TestAudioSignalConversionAndResidualScore();
     TestSiteFilterReadsExternalRules();
     return 0;

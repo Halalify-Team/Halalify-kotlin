@@ -29,9 +29,9 @@ private const val DETECTION_FIELDS = 8
 
 internal interface VisionProcessor : Closeable {
     /**
-     * Makes the next portrait analysis use the full screen before rotating
-     * through the two detail tiles. Implementations without tiled analysis
-     * do not need to override this.
+     * Restarts any backend-specific analysis batch. The native portrait
+     * processor currently publishes both detail tiles atomically, so its
+     * implementation is intentionally a compatibility no-op.
      */
     fun restartAnalysisCycle() = Unit
 

@@ -229,6 +229,43 @@ class ProtectionTrackerTest {
     }
 
     @Test
+    fun `short video movement updates one track instead of leaving blur trails`() {
+        val tracker = ProtectionTracker()
+        // Normalized from the consecutive id=1/id=2 overlay bounds captured
+        // in the failing emulator session. The boxes are similar in size and
+        // only just exceeded the old relative centre-distance threshold.
+        val first = detection(shouldBlur = true).copy(
+            x1 = 0.324F,
+            y1 = 0.375F,
+            x2 = 0.747F,
+            y2 = 0.598F,
+        )
+        val firstTrack = tracker.update(listOf(first)).single()
+        val moved = first.copy(
+            x1 = 0.166F,
+            y1 = 0.276F,
+            x2 = 0.399F,
+            y2 = 0.580F,
+        )
+
+        val secondPosition = tracker.update(listOf(moved), contentChanged = true)
+        val movedAgain = moved.copy(
+            x1 = 0.009F,
+            y1 = 0.347F,
+            x2 = 0.173F,
+            y2 = 0.593F,
+        )
+
+        val protected = tracker.update(listOf(movedAgain), contentChanged = true)
+
+        assertEquals(1, secondPosition.size)
+        assertEquals(1, protected.size)
+        assertEquals(firstTrack.protectionId, protected.single().protectionId)
+        assertEquals(movedAgain.x1, protected.single().x1, 0.0001F)
+        assertEquals(movedAgain.y1, protected.single().y1, 0.0001F)
+    }
+
+    @Test
     fun `separate stacked image cards cannot steal the same protection identity`() {
         val tracker = ProtectionTracker()
         // Coordinates are normalized from the two regions that alternated as
@@ -330,6 +367,94 @@ class ProtectionTrackerTest {
         assertEquals(1, protected.size)
         assertEquals(inner.x1, protected.single().x1, 0.0001F)
         assertEquals(inner.y1, protected.single().y1, 0.0001F)
+    }
+
+    @Test
+    fun `adjacent overlapping people in one frame keep separate tracks`() {
+        val tracker = ProtectionTracker()
+        // Normalized from the two simultaneous female boxes in the live
+        // failing session (09:55:35.393).
+        val right = detection(shouldBlur = true).copy(
+            x1 = 0.685F,
+            y1 = 0.409F,
+            x2 = 1.000F,
+            y2 = 0.597F,
+            confidence = 0.80F,
+        )
+        val overlapping = right.copy(
+            x1 = 0.500F,
+            y1 = 0.334F,
+            x2 = 0.786F,
+            y2 = 0.598F,
+            confidence = 0.70F,
+        )
+
+        val protected = tracker.update(listOf(right, overlapping))
+
+        assertEquals(2, protected.size)
+    }
+
+    @Test
+    fun `nearby video movement immediately reuses an unmatched track`() {
+        val tracker = ProtectionTracker()
+        val first = tracker.update(listOf(detection(shouldBlur = true))).single()
+        val moved = detection(shouldBlur = true).copy(
+            x1 = 0.55F,
+            y1 = 0.20F,
+            x2 = 0.85F,
+            y2 = 0.75F,
+        )
+
+        val protected = tracker.update(
+            detections = listOf(moved),
+            contentChanged = true,
+            allowStaleReassociation = true,
+        )
+
+        assertEquals(1, protected.size)
+        assertEquals(first.protectionId, protected.single().protectionId)
+        assertEquals(moved.x1, protected.single().x1, 0.0001F)
+    }
+
+    @Test
+    fun `distant page region cannot steal an unmatched window`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+        val second = detection(shouldBlur = true).copy(
+            x1 = 0.70F,
+            y1 = 0.20F,
+            x2 = 0.95F,
+            y2 = 0.70F,
+        )
+
+        val protected = tracker.update(
+            detections = listOf(second),
+            contentChanged = true,
+            allowStaleReassociation = true,
+        )
+
+        assertEquals(2, protected.size)
+    }
+
+    @Test
+    fun `static screen never reassigns a distant stale track`() {
+        val tracker = ProtectionTracker()
+        tracker.update(listOf(detection(shouldBlur = true)))
+        repeat(3) { tracker.update(emptyList()) }
+        val second = detection(shouldBlur = true).copy(
+            x1 = 0.70F,
+            y1 = 0.20F,
+            x2 = 0.95F,
+            y2 = 0.70F,
+        )
+
+        val protected = tracker.update(
+            detections = listOf(second),
+            contentChanged = false,
+            allowStaleReassociation = false,
+        )
+
+        assertEquals(2, protected.size)
     }
 
     @Test

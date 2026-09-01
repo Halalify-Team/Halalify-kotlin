@@ -26,6 +26,12 @@ std::vector<hb_detection> ApplyClassAgnosticNms(
     std::stable_sort(
             candidates.begin(), candidates.end(),
             [](const hb_detection& left, const hb_detection& right) {
+                // When two class hypotheses overlap, privacy takes priority:
+                // keep the class selected for protection even if the model's
+                // competing unprotected score is slightly higher.
+                if (left.should_blur != right.should_blur) {
+                    return left.should_blur > right.should_blur;
+                }
                 return left.confidence > right.confidence;
             });
     std::vector<hb_detection> selected;

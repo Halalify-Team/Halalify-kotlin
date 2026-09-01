@@ -10,8 +10,11 @@ namespace halalify {
 
 AiEngine::AiEngine(
         std::unique_ptr<InferenceBackend> gender_backend,
-        std::unique_ptr<NsfwBackend> nsfw_backend)
-    : gender_engine_(std::make_unique<VisionEngine>(std::move(gender_backend))) {
+        std::unique_ptr<NsfwBackend> nsfw_backend,
+        std::unique_ptr<InferenceBackend> parallel_gender_backend)
+    : gender_engine_(std::make_unique<VisionEngine>(
+              std::move(gender_backend),
+              std::move(parallel_gender_backend))) {
     if (nsfw_backend != nullptr) {
         nsfw_classifier_ = std::make_unique<NsfwClassifier>(std::move(nsfw_backend));
     }

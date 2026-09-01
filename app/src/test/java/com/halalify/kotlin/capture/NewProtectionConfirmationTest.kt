@@ -72,11 +72,23 @@ class NewProtectionConfirmationTest {
     }
 
     @Test
-    fun `stabilization tile is already a confirmed observation`() {
+    fun `non-initial observations protect without another slow pass`() {
         assertFalse(
             requiresNewProtectionConfirmation(
                 hasExistingProtection = false,
                 reason = FrameAnalysisReason.STABILIZATION,
+            ),
+        )
+        assertFalse(
+            requiresNewProtectionConfirmation(
+                hasExistingProtection = false,
+                reason = FrameAnalysisReason.CONTENT_CHANGED,
+            ),
+        )
+        assertFalse(
+            requiresNewProtectionConfirmation(
+                hasExistingProtection = false,
+                reason = FrameAnalysisReason.SAFETY_REFRESH,
             ),
         )
         assertTrue(

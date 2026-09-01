@@ -33,6 +33,7 @@ internal class ProtectionTracker(
         detections: List<Detection>,
         contentChanged: Boolean = false,
         safetyRefresh: Boolean = false,
+        allowStaleReassociation: Boolean = false,
     ): List<Detection> {
         val availableTracks = tracks.toMutableList()
         val matchedDetections = mutableSetOf<Int>()
@@ -42,18 +43,31 @@ internal class ProtectionTracker(
             .sortedByDescending { it.value.confidence }
             .forEach { candidate ->
                 val duplicatesStrongerCandidate = protectedCandidates.any { stronger ->
-                    overlapOverSmallerArea(stronger.value, candidate.value) >=
-                        DUPLICATE_CONTAINMENT_OVERLAP
+                    sameFrameDuplicate(stronger.value, candidate.value)
                 }
                 if (!duplicatesStrongerCandidate) protectedCandidates += candidate
             }
 
         protectedCandidates.forEach { indexedDetection ->
             val detection = indexedDetection.value
-            val track = availableTracks
+            val strictTrack = availableTracks
                 .map { candidate -> candidate to matchScore(candidate.detection, detection) }
                 .filter { (_, score) -> score != null }
                 .maxByOrNull { (_, score) -> score ?: Float.NEGATIVE_INFINITY }
+                ?.first
+            val track = strictTrack ?: availableTracks
+                .takeIf { allowStaleReassociation }
+                ?.asSequence()
+                ?.filter { candidate ->
+                    candidate.detection.classId == detection.classId
+                }
+                ?.map { candidate ->
+                    candidate to centerDistance(candidate.detection, detection)
+                }
+                ?.filter { (_, distance) ->
+                    distance <= STALE_REASSOCIATION_MAX_CENTER_DISTANCE
+                }
+                ?.minByOrNull { (_, distance) -> distance }
                 ?.first
                 ?: return@forEach
 
@@ -156,6 +170,34 @@ internal class ProtectionTracker(
         }
     }
 
+    private fun sameFrameDuplicate(first: Detection, second: Detection): Boolean {
+        val iou = intersectionOverUnion(first, second)
+        if (iou >= SAME_FRAME_DUPLICATE_IOU) return true
+
+        val containment = overlapOverSmallerArea(first, second)
+        if (containment < SAME_FRAME_DUPLICATE_CONTAINMENT) return false
+
+        val firstWidth = (first.x2 - first.x1).coerceAtLeast(0F)
+        val firstHeight = (first.y2 - first.y1).coerceAtLeast(0F)
+        val secondWidth = (second.x2 - second.x1).coerceAtLeast(0F)
+        val secondHeight = (second.y2 - second.y1).coerceAtLeast(0F)
+        val smallerDiagonal = min(
+            hypot(firstWidth, firstHeight),
+            hypot(secondWidth, secondHeight),
+        )
+        return smallerDiagonal > 0F &&
+            centerDistance(first, second) <=
+            smallerDiagonal * SAME_FRAME_DUPLICATE_CENTER_DISTANCE
+    }
+
+    private fun centerDistance(first: Detection, second: Detection): Float {
+        val firstCenterX = (first.x1 + first.x2) * 0.5F
+        val firstCenterY = (first.y1 + first.y2) * 0.5F
+        val secondCenterX = (second.x1 + second.x2) * 0.5F
+        val secondCenterY = (second.y1 + second.y2) * 0.5F
+        return hypot(firstCenterX - secondCenterX, firstCenterY - secondCenterY)
+    }
+
     private fun intersectionArea(first: Detection, second: Detection): Float {
         val width = (min(first.x2, second.x2) - max(first.x1, second.x1))
             .coerceAtLeast(0F)
@@ -197,14 +239,7 @@ internal class ProtectionTracker(
             return null
         }
 
-        val firstCenterX = (first.x1 + first.x2) * 0.5F
-        val firstCenterY = (first.y1 + first.y2) * 0.5F
-        val secondCenterX = (second.x1 + second.x2) * 0.5F
-        val secondCenterY = (second.y1 + second.y2) * 0.5F
-        val centerDistance = hypot(
-            firstCenterX - secondCenterX,
-            firstCenterY - secondCenterY,
-        )
+        val centerDistance = centerDistance(first, second)
         val averageBoxDiagonal = (
             hypot(firstWidth, firstHeight) +
                 hypot(secondWidth, secondHeight)
@@ -266,6 +301,9 @@ internal class ProtectionTracker(
         const val DEFAULT_MAX_MISSED_CONTENT_CHANGES = 4
         const val DEFAULT_MATCHING_IOU = 0.15F
         const val DUPLICATE_CONTAINMENT_OVERLAP = 0.70F
+        const val SAME_FRAME_DUPLICATE_IOU = 0.60F
+        const val SAME_FRAME_DUPLICATE_CONTAINMENT = 0.85F
+        const val SAME_FRAME_DUPLICATE_CENTER_DISTANCE = 0.40F
         const val STABLE_TILE_OVERLAP = 0.85F
         const val MAX_TILE_EXTENT_SIZE_RATIO = 0.75F
         const val MAX_CENTER_DISTANCE = 0.35F
@@ -273,9 +311,18 @@ internal class ProtectionTracker(
         // image cards in the same column. Scale the fallback by the boxes too:
         // a large subject can move farther, while small neighbouring cards
         // must remain separate tracks.
-        const val MAX_CENTER_DISTANCE_IN_BOX_DIAGONALS = 0.55F
+        // A 200-400 ms inference interval lets a person in a short-form video
+        // move farther than half of the average box diagonal. Keep the absolute
+        // cap above, but allow enough relative movement to preserve one track
+        // instead of leaving a trail of stale overlay windows.
+        const val MAX_CENTER_DISTANCE_IN_BOX_DIAGONALS = 0.70F
         const val MIN_SIZE_RATIO = 0.45F
         const val MAX_SIZE_RATIO = 2.20F
+        // Secure overlay pixels are black in MediaProjection. During
+        // continuous video motion, an unmatched fresh target must therefore
+        // reclaim the nearest unmatched protected window immediately; adding
+        // another track would leave a visible trail of old boxes.
+        const val STALE_REASSOCIATION_MAX_CENTER_DISTANCE = 0.45F
 
         // Follow the latest detector box immediately so a page flip cannot
         // leave part of the previous location covered.

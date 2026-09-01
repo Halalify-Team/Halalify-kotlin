@@ -7,7 +7,8 @@ import kotlin.math.min
 internal fun requiresNewProtectionConfirmation(
     hasExistingProtection: Boolean,
     reason: FrameAnalysisReason,
-): Boolean = !hasExistingProtection && reason != FrameAnalysisReason.STABILIZATION
+): Boolean = !hasExistingProtection &&
+    reason == FrameAnalysisReason.INITIAL
 
 /**
  * Prevents a single unstable model result from creating a new overlay on an

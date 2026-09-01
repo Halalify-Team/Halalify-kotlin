@@ -13,7 +13,9 @@ namespace halalify {
 
 class VisionEngine {
 public:
-    explicit VisionEngine(std::unique_ptr<InferenceBackend> backend);
+    VisionEngine(
+            std::unique_ptr<InferenceBackend> backend,
+            std::unique_ptr<InferenceBackend> parallel_backend = nullptr);
     bool Initialize(
             const uint8_t* model_data,
             size_t model_size,
@@ -27,13 +29,15 @@ private:
     bool ValidateConfig(const hb_config& config, std::string* error) const;
 
     std::unique_ptr<InferenceBackend> backend_;
+    std::unique_ptr<InferenceBackend> parallel_backend_;
     mutable std::mutex mutex_;
     hb_config config_{};
     std::vector<float> input_;
     std::vector<float> output_;
+    std::vector<float> parallel_input_;
+    std::vector<float> parallel_output_;
     std::string last_error_;
     bool initialized_ = false;
-    int detail_tile_index_ = 0;
 };
 
 }  // namespace halalify

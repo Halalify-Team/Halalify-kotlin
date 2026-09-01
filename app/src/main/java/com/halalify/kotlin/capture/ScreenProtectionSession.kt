@@ -10,6 +10,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.graphics.createBitmap
@@ -64,6 +65,7 @@ internal class ScreenProtectionSession(
     private var lastRenderedStyle: BlurStyle? = null
     private var lastRenderedIntensity = Float.NaN
     private var lastChangeCheckAt = 0L
+    private var lastAnalysisReason: FrameAnalysisReason? = null
     private var contentInvalidationSubscription: Closeable? = null
     private var contentMovementSubscription: Closeable? = null
     private val requestedContentGeneration = AtomicLong(0L)
@@ -71,6 +73,7 @@ internal class ScreenProtectionSession(
     private val suppressDiscardedReappearance = AtomicBoolean(false)
     private var recentlyDiscardedDetections: List<Detection> = emptyList()
     private var protectionDiscardedAt = Long.MIN_VALUE
+    private var replacementRefreshAnalysesRemaining = 0
     @Volatile
     private var handledContentGeneration = 0L
 
@@ -107,7 +110,14 @@ internal class ScreenProtectionSession(
             .roundToInt()
             .coerceAtLeast(1)
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_IMAGES)
-        val handlerThread = HandlerThread(VISION_THREAD_NAME).apply { start() }
+        // Video decoding and browser rendering can otherwise starve the
+        // detector on the emulator for more than a second. Foreground priority
+        // keeps privacy inference responsive without using display/urgent
+        // priorities reserved for Android's rendering pipeline.
+        val handlerThread = HandlerThread(
+            VISION_THREAD_NAME,
+            Process.THREAD_PRIORITY_FOREGROUND,
+        ).apply { start() }
         imageReader = reader
         visionThread = handlerThread
         captureWidth = width
@@ -149,18 +159,30 @@ internal class ScreenProtectionSession(
             val externallyInvalidated = observedContentGeneration != handledContentGeneration
             if (externallyInvalidated) {
                 if (discardExistingProtection.getAndSet(false)) {
-                    if (suppressDiscardedReappearance.getAndSet(false)) {
+                    val strictReplacement = suppressDiscardedReappearance.getAndSet(false)
+                    if (strictReplacement) {
                         recentlyDiscardedDetections = lastRenderedDetections
                         protectionDiscardedAt = now
+                        protectionTracker.reset()
+                        replacementRefreshAnalysesRemaining = 0
                     } else {
                         recentlyDiscardedDetections = emptyList()
+                        // Video controls and settled scrolls are not proof that
+                        // the protected subject disappeared. Keep moved tracks
+                        // and expire them only if a complete run stays clean.
+                        replacementRefreshAnalysesRemaining =
+                            REPLACEMENT_REFRESH_ANALYSES
                     }
-                    protectionTracker.reset()
                     newProtectionConfirmation.reset()
-                    lastRenderedDetections = emptyList()
-                    overlay.update(emptyList())
+                    // Keep the currently visible protection until this fresh
+                    // frame has completed inference. Clearing here creates an
+                    // avoidable unprotected gap after every Short swipe or
+                    // video play/pause click. renderFrame replaces the old
+                    // regions atomically with the new result (including an
+                    // empty result when the new screen needs no protection).
                 }
                 frameActivityDetector.reset()
+                lastAnalysisReason = null
                 handledContentGeneration = observedContentGeneration
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "Analyzing changed content while retaining visible protection.")
@@ -186,16 +208,14 @@ internal class ScreenProtectionSession(
             } ?: return
             if (!analysisPolicy.shouldAnalyze(reason)) return
 
-            // A moving page must be inspected with the full-screen pass first.
-            // Otherwise the rotating native cycle can begin at the opposite
-            // detail tile and leave new visible images unprotected for another
-            // two inferences.
-            if (
-                contentChanged ||
-                reason == FrameAnalysisReason.SAFETY_REFRESH
-            ) {
+            // Give backends a chance to restart a multi-pass batch when a new
+            // motion burst begins. The current native portrait engine merges
+            // both tiles in one atomic result, so this call is a no-op there.
+            val previousAnalysisReason = lastAnalysisReason
+            if (shouldRestartAnalysisCycle(reason, previousAnalysisReason, externallyInvalidated)) {
                 visionProcessor.restartAnalysisCycle()
             }
+            lastAnalysisReason = reason
             plane.buffer.rewind()
             val inferenceStartedAt = clock()
             val rawDetections = visionProcessor.process(
@@ -223,11 +243,10 @@ internal class ScreenProtectionSession(
                 suppressionActive = discardedSuppressionActive,
             )
             if (!discardedSuppressionActive) recentlyDiscardedDetections = emptyList()
-            // INITIAL/content-change detections still require two-frame
-            // confirmation. A STABILIZATION result is already a delayed clean
-            // observation, and may come from a non-overlapping portrait tile;
-            // requiring the same box in the next tile would make small bottom
-            // avatars impossible to confirm.
+            // Only the very first static observation requires two-frame
+            // confirmation. Motion and stabilization results must protect on
+            // their first usable detection: another model pass can take more
+            // than a second and may inspect a non-overlapping portrait tile.
             val confirmationRequired = requiresNewProtectionConfirmation(
                 hasExistingProtection = lastRenderedDetections.isNotEmpty(),
                 reason = reason,
@@ -242,6 +261,16 @@ internal class ScreenProtectionSession(
             ) return
 
             val hasProtectedObservation = detections.any(Detection::shouldBlur)
+            val replacementRefreshAction = decideReplacementRefreshAction(
+                analysesRemaining = replacementRefreshAnalysesRemaining,
+                hasProtectedObservation = hasProtectedObservation,
+            )
+            if (replacementRefreshAction == ReplacementRefreshAction.EXPIRE) {
+                // A fully target-free refresh can clear the old set atomically.
+                // Fresh partial detections are merged with moved tracks so a
+                // transient model miss cannot expose a still-visible subject.
+                protectionTracker.reset()
+            }
             val protectionAging = decideProtectionAging(
                 contentChanged = contentChanged,
                 reason = reason,
@@ -251,7 +280,16 @@ internal class ScreenProtectionSession(
                 detections = detections,
                 contentChanged = protectionAging.contentChanged,
                 safetyRefresh = protectionAging.safetyRefresh,
+                allowStaleReassociation =
+                    reason == FrameAnalysisReason.CONTENT_CHANGED &&
+                        previousAnalysisReason == FrameAnalysisReason.CONTENT_CHANGED,
             )
+            replacementRefreshAnalysesRemaining = when (replacementRefreshAction) {
+                ReplacementRefreshAction.KEEP -> replacementRefreshAnalysesRemaining - 1
+                ReplacementRefreshAction.EXPIRE,
+                ReplacementRefreshAction.INACTIVE,
+                -> 0
+            }
             val frameBitmap = if (
                 protectedDetections.isNotEmpty() || statePublisher.isPreviewRequested
             ) {
@@ -410,11 +448,10 @@ internal class ScreenProtectionSession(
                 suppressDiscardedReappearance.set(true)
             }
             requestedContentGeneration.incrementAndGet()
-            if (shouldDiscardExistingProtection) {
-                // Accessibility events arrive on the main looper. Clear the
-                // obsolete window now instead of waiting behind an inference.
-                overlay.update(emptyList())
-            }
+            // Leave the current overlay visible while the vision thread
+            // analyzes the replacement frame. It is safer and visually much
+            // smoother to replace a possibly shifted region after inference
+            // than to expose the screen for the duration of that inference.
         }
     }
 
@@ -566,6 +603,9 @@ internal class ScreenProtectionSession(
         // thread and ImageReader drops stale frames when it is busy.
         const val CHANGE_CHECK_INTERVAL_MS = 16L
         const val RECENTLY_DISCARDED_SUPPRESSION_MS = 3_000L
+        // Six complete atomic portrait analyses tolerate intermittent
+        // misclassification before a genuinely target-free screen clears.
+        const val REPLACEMENT_REFRESH_ANALYSES = 6
         const val JPEG_QUALITY = 70
         const val RGBA_PIXEL_STRIDE = 4
         const val SAMPLE_COLUMNS = 20
@@ -576,3 +616,14 @@ internal class ScreenProtectionSession(
         const val TAG = "HalalifyVision"
     }
 }
+
+internal fun shouldRestartAnalysisCycle(
+    reason: FrameAnalysisReason,
+    previousReason: FrameAnalysisReason?,
+    externallyInvalidated: Boolean,
+): Boolean =
+    externallyInvalidated ||
+        reason == FrameAnalysisReason.INITIAL ||
+        reason == FrameAnalysisReason.SAFETY_REFRESH ||
+        (reason == FrameAnalysisReason.CONTENT_CHANGED &&
+            previousReason != FrameAnalysisReason.CONTENT_CHANGED)

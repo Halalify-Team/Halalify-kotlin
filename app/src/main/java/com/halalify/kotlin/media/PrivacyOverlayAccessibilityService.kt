@@ -27,14 +27,22 @@ internal class PrivacyOverlayAccessibilityService : AccessibilityService() {
     private val settledContentDiscard = Runnable {
         lastPotentialContentReplacementAtMs = Long.MIN_VALUE
         lastPotentialContentReplacementPackageName = null
-        TrustedOverlayHost.invalidateContent(discardExistingProtection = true)
-    }
-    private val settledScrollRefresh = Runnable {
-        lastTrackedContentEventAtMs = Long.MIN_VALUE
+        // A video play/pause control can look like an in-page navigation click
+        // to accessibility. Do not suppress a same-position detection after
+        // the replacement analysis: on Shorts that made a valid blur vanish
+        // and stay absent for the discarded-result suppression window.
         TrustedOverlayHost.invalidateContent(
             discardExistingProtection = true,
             suppressDiscardedReappearance = false,
         )
+    }
+    private val settledScrollRefresh = Runnable {
+        lastTrackedContentEventAtMs = Long.MIN_VALUE
+        // Scroll deltas already move every protected window with its content
+        // and remove it when it leaves the display. Request a fresh analysis
+        // without starting the target-free expiry timer; that timer produced
+        // a visible clear-then-redetect gap on long YouTube pages.
+        TrustedOverlayHost.invalidateContent()
     }
 
     override fun onServiceConnected() {

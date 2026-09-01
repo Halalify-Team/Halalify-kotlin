@@ -4,8 +4,10 @@
 #include <cmath>
 #include <cstring>
 #include <new>
+#include <thread>
 #include <utility>
 
+#include <core/nms.h>
 #include "ai_engine.h"
 #include "backends/litert_backend.h"
 #include "backends/litert_nsfw_backend.h"
@@ -14,8 +16,11 @@
 
 namespace halalify {
 
-VisionEngine::VisionEngine(std::unique_ptr<InferenceBackend> backend)
-    : backend_(std::move(backend)) {}
+VisionEngine::VisionEngine(
+        std::unique_ptr<InferenceBackend> backend,
+        std::unique_ptr<InferenceBackend> parallel_backend)
+    : backend_(std::move(backend)),
+      parallel_backend_(std::move(parallel_backend)) {}
 
 bool VisionEngine::ValidateConfig(const hb_config& config, std::string* error) const {
     if (config.target != HB_BLUR_TARGET_FEMALE && config.target != HB_BLUR_TARGET_MALE) {
@@ -43,9 +48,20 @@ bool VisionEngine::Initialize(
         const hb_config& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!ValidateConfig(config, &last_error_)) return false;
-    if (!backend_->Load(model_data, model_size, config.num_threads, &last_error_)) return false;
+    const int threads_per_backend =
+            parallel_backend_ != nullptr
+            ? std::max(1, config.num_threads / 2)
+            : config.num_threads;
+    if (!backend_->Load(
+                model_data, model_size, threads_per_backend, &last_error_)) {
+        return false;
+    }
+    if (parallel_backend_ != nullptr &&
+        !parallel_backend_->Load(
+                model_data, model_size, threads_per_backend, &last_error_)) {
+        return false;
+    }
     config_ = config;
-    detail_tile_index_ = 0;
     initialized_ = true;
     last_error_.clear();
     return true;
@@ -57,53 +73,111 @@ hb_status VisionEngine::Process(const hb_frame& frame, std::vector<hb_detection>
         last_error_ = "Vision engine is not initialized or output is null.";
         return HB_STATUS_INVALID_ARGUMENT;
     }
-    // A portrait screenshot that is letterboxed as one square makes a 28px
-    // avatar only about five input pixels wide. Rotate one inference between
-    // the full screen and two overlapping detail regions. Android already
-    // schedules an initial/content-change analysis plus two stabilization
-    // analyses, so a stable screen is covered without increasing the cost of
-    // an individual call beyond one inference.
+    // A tall portrait screenshot loses too much detail when letterboxed into
+    // one square. Analyze both overlapping portrait tiles from this exact
+    // captured frame, merge them, and publish only the complete result. This
+    // prevents protected regions from appearing one tile at a time.
     const bool swaps_axes = frame.rotation_degrees == 90 || frame.rotation_degrees == 270;
     const int upright_width = swaps_axes ? frame.height : frame.width;
     const int upright_height = swaps_axes ? frame.width : frame.height;
     constexpr float kPortraitRatio = 1.4F;
     constexpr float kDetailTileHeightInWidths = 1.25F;
     constexpr int kDetailTileCount = 2;
-    constexpr int kAnalysisPassCount = kDetailTileCount + 1;
-    FrameRegion region{};
+    std::vector<FrameRegion> regions;
     if (upright_height >= static_cast<int>(std::round(upright_width * kPortraitRatio))) {
-        const int analysis_pass = detail_tile_index_++ % kAnalysisPassCount;
-        if (analysis_pass > 0) {
-            const int tile_height = std::min(
-                    upright_height,
-                    std::max(
-                            upright_width,
-                            static_cast<int>(
-                                    std::round(upright_width * kDetailTileHeightInWidths))));
-            const int maximum_y = upright_height - tile_height;
-            const int tile_index = analysis_pass - 1;
+        const int tile_height = std::min(
+                upright_height,
+                std::max(
+                        upright_width,
+                        static_cast<int>(
+                                std::round(upright_width * kDetailTileHeightInWidths))));
+        const int maximum_y = upright_height - tile_height;
+        for (int tile_index = 0; tile_index < kDetailTileCount; ++tile_index) {
             const int tile_y = maximum_y * tile_index / (kDetailTileCount - 1);
-            region = {0, tile_y, upright_width, tile_height};
+            regions.push_back({0, tile_y, upright_width, tile_height});
+        }
+    } else {
+        regions.push_back({});
+    }
+
+    std::vector<hb_detection> combined;
+    if (regions.size() == 2 && parallel_backend_ != nullptr) {
+        FrameTransform first_transform;
+        FrameTransform second_transform;
+        if (!PreprocessFrameRegion(
+                    frame, regions[0], &input_, &first_transform, &last_error_)) {
+            return HB_STATUS_INVALID_ARGUMENT;
+        }
+        if (!PreprocessFrameRegion(
+                    frame, regions[1], &parallel_input_, &second_transform,
+                    &last_error_)) {
+            return HB_STATUS_INVALID_ARGUMENT;
+        }
+
+        bool parallel_ok = false;
+        std::string parallel_error;
+        std::thread parallel_inference([&]() {
+            parallel_ok = parallel_backend_->Invoke(
+                    parallel_input_.data(),
+                    parallel_input_.size(),
+                    &parallel_output_,
+                    &parallel_error);
+        });
+        std::string primary_error;
+        const bool primary_ok = backend_->Invoke(
+                input_.data(), input_.size(), &output_, &primary_error);
+        parallel_inference.join();
+        if (!primary_ok || !parallel_ok) {
+            last_error_ = primary_ok ? parallel_error : primary_error;
+            return HB_STATUS_INFERENCE_ERROR;
+        }
+
+        std::vector<hb_detection> first_detections;
+        if (!DecodeDetections(
+                    output_.data(), output_.size(), first_transform, config_,
+                    &first_detections, &last_error_)) {
+            return HB_STATUS_INFERENCE_ERROR;
+        }
+        std::vector<hb_detection> second_detections;
+        if (!DecodeDetections(
+                    parallel_output_.data(), parallel_output_.size(),
+                    second_transform, config_, &second_detections,
+                    &last_error_)) {
+            return HB_STATUS_INFERENCE_ERROR;
+        }
+        combined.insert(
+                combined.end(), first_detections.begin(), first_detections.end());
+        combined.insert(
+                combined.end(), second_detections.begin(), second_detections.end());
+    } else {
+        for (const FrameRegion& region : regions) {
+            FrameTransform transform;
+            if (!PreprocessFrameRegion(frame, region, &input_, &transform, &last_error_)) {
+                return HB_STATUS_INVALID_ARGUMENT;
+            }
+            if (!backend_->Invoke(input_.data(), input_.size(), &output_, &last_error_)) {
+                return HB_STATUS_INFERENCE_ERROR;
+            }
+            std::vector<hb_detection> region_detections;
+            if (!DecodeDetections(
+                        output_.data(), output_.size(), transform, config_,
+                        &region_detections, &last_error_)) {
+                return HB_STATUS_INFERENCE_ERROR;
+            }
+            combined.insert(
+                    combined.end(), region_detections.begin(), region_detections.end());
         }
     }
-    FrameTransform transform;
-    if (!PreprocessFrameRegion(frame, region, &input_, &transform, &last_error_)) {
-        return HB_STATUS_INVALID_ARGUMENT;
-    }
-    if (!backend_->Invoke(input_.data(), input_.size(), &output_, &last_error_)) {
-        return HB_STATUS_INFERENCE_ERROR;
-    }
-    if (!DecodeDetections(
-                output_.data(), output_.size(), transform, config_, detections, &last_error_)) {
-        return HB_STATUS_INFERENCE_ERROR;
-    }
+    *detections = ApplyClassAgnosticNms(
+            std::move(combined), config_.iou_threshold, config_.max_detections);
     last_error_.clear();
     return HB_STATUS_OK;
 }
 
 void VisionEngine::RestartAnalysisCycle() {
     std::lock_guard<std::mutex> lock(mutex_);
-    detail_tile_index_ = 0;
+    // Portrait processing is now an atomic two-tile batch, so there is no
+    // rotating pass index to reset. Keep the API for adapter compatibility.
 }
 
 hb_status VisionEngine::UpdateConfig(const hb_config& config) {
@@ -141,8 +215,8 @@ hb_config hb_default_config(void) {
     config.ignored_confidence_threshold = 0.25F;
     config.iou_threshold = 0.5F;
     config.max_detections = 100;
-    // Two threads are faster on the emulator and avoid oversubscribing the
-    // detector and the optional NSFW classifier.
+    // Two threads are the total real-time detector budget. Atomic portrait
+    // processing splits them across its two parallel interpreters.
     config.num_threads = 2;
     config.nsfw_confidence_threshold = 0.70F;
     // Female/male detections already make the localized protection decision.
@@ -165,7 +239,9 @@ hb_status hb_engine_create_from_buffer(
     std::unique_ptr<hb_engine> engine(new (std::nothrow) hb_engine{});
     if (!engine) return HB_STATUS_MODEL_ERROR;
     engine->impl = std::make_unique<halalify::AiEngine>(
-            std::make_unique<halalify::LiteRtBackend>(), nullptr);
+            std::make_unique<halalify::LiteRtBackend>(),
+            nullptr,
+            std::make_unique<halalify::LiteRtBackend>());
     if (!engine->impl->Initialize(model_data, model_size, nullptr, 0, *config)) {
         return HB_STATUS_MODEL_ERROR;
     }
@@ -190,7 +266,8 @@ hb_status hb_engine_create_from_buffers(
     if (!engine) return HB_STATUS_MODEL_ERROR;
     engine->impl = std::make_unique<halalify::AiEngine>(
             std::make_unique<halalify::LiteRtBackend>(),
-            std::make_unique<halalify::LiteRtNsfwBackend>());
+            std::make_unique<halalify::LiteRtNsfwBackend>(),
+            std::make_unique<halalify::LiteRtBackend>());
     if (!engine->impl->Initialize(
                 gender_model_data,
                 gender_model_size,

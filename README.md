@@ -51,10 +51,3 @@ The playback-capture architecture, exact TFLite waveform contract, integration p
 
 The audio-model preparation scripts, licensing notes, local Python environment instructions, and fine-tuning/export commands are documented. Downloaded datasets, virtual environments, and intermediate training artifacts are intentionally excluded from the repository.
 
-## Verification
-
-Run the following from the repository root:
-
-```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
-```
